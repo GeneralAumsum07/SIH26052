@@ -1,6 +1,6 @@
 .superpowers/
-data/
-runs/
+/data/
+/runs/
 deploy/model*.onnx
 .venv/
 __pycache__/
