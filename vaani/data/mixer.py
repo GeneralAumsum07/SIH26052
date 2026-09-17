@@ -102,7 +102,7 @@ def mix(rng, speech, noises, impulse, impulse_onsets_s, bank, cfg: MixConfig):
     snr = float(rng.uniform(*cfg.snr_range))
     ps = speech_active_power(clean); pn = (noise2[0] ** 2).mean() + 1e-12
     noise2 *= np.sqrt(ps / (pn * 10 ** (snr / 10)))
-    meta["snr_db"] = snr
+    meta["snr_db"] = snr  # target SNR the noise was scaled to hit; later augmentations deliberately perturb it, not recomputed
 
     out = s2 + noise2
 

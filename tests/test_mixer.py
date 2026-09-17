@@ -1,5 +1,7 @@
 import numpy as np
-from vaani.data import mixer, rirs
+from scipy.signal import coherence
+
+from vaani.data import mixer, rirs, impulses
 
 
 def _speech(rng, n=32000):
@@ -37,3 +39,90 @@ def test_clean_bucket_is_identity():
     s = _speech(rng)
     mix, clean, meta = mixer.mix(rng, s, [rng.standard_normal(len(s)).astype(np.float32)], None, [], None, cfg)
     assert meta["clean_bucket"] and np.allclose(mix[0], clean, atol=1e-6)
+
+
+def test_room_path_reference_speech_level_within_physical_range(tmp_path):
+    # geometry-driven leakage: primary is louder than reference by a plausible, but not huge, margin
+    rirs.build_bank(tmp_path / "b.npz", n=4, seed=0)
+    bank = rirs.RirBank(tmp_path / "b.npz")
+    cfg = mixer.MixConfig(p_room=1.0, p_clean=0.0, p_clip=0.0, p_wind=0.0, p_ref_dropout=0.0, snr_range=(30.0, 30.0))
+    for seed in range(5):
+        rng = np.random.default_rng(seed)
+        s = _speech(rng); n = [rng.standard_normal(len(s)).astype(np.float32)]
+        mix, clean, meta = mixer.mix(rng, s, n, None, [], bank, cfg)
+        diff = 10 * np.log10(mixer.speech_active_power(mix[0]) / mixer.speech_active_power(mix[1]))
+        assert 3.0 < diff < 25.0, f"seed {seed}: observed {diff:.1f} dB"
+
+
+def test_noise_coherence_param_high_room_lower():
+    # noise-dominated mix (very low SNR) isolates the noise-path coherence structure
+    cfg_param = mixer.MixConfig(p_room=0.0, p_clean=0.0, p_clip=0.0, p_wind=0.0, p_ref_dropout=0.0, snr_range=(-30.0, -30.0))
+    rng = np.random.default_rng(0)
+    s = _speech(rng); n = [rng.standard_normal(len(s)).astype(np.float32)]
+    mix, _, _ = mixer.mix(rng, s, n, None, [], None, cfg_param)
+    f, cxy = coherence(mix[0], mix[1], fs=mixer.SR, nperseg=512)
+    band = (f >= 100) & (f <= 4000)
+    coh_param = float(cxy[band].mean())
+    assert coh_param > 0.5, f"observed {coh_param:.2f}"
+
+
+def test_noise_coherence_room_path_lower(tmp_path):
+    rirs.build_bank(tmp_path / "b.npz", n=4, seed=0)
+    bank = rirs.RirBank(tmp_path / "b.npz")
+    cfg_room = mixer.MixConfig(p_room=1.0, p_clean=0.0, p_clip=0.0, p_wind=0.0, p_ref_dropout=0.0, snr_range=(-30.0, -30.0))
+    rng = np.random.default_rng(0)
+    s = _speech(rng); n = [rng.standard_normal(len(s)).astype(np.float32)]
+    mix, _, _ = mixer.mix(rng, s, n, None, [], bank, cfg_room)
+    f, cxy = coherence(mix[0], mix[1], fs=mixer.SR, nperseg=512)
+    band = (f >= 100) & (f <= 4000)
+    coh_room = float(cxy[band].mean())
+    assert coh_room > 0.3, f"observed {coh_room:.2f}"
+
+
+def test_determinism_param_and_room(tmp_path):
+    rirs.build_bank(tmp_path / "b.npz", n=4, seed=0)
+    bank = rirs.RirBank(tmp_path / "b.npz")
+    for bank_arg, p_room in [(None, 0.0), (bank, 1.0)]:
+        cfg = mixer.MixConfig(p_room=p_room, p_clean=0.0)
+        rng1 = np.random.default_rng(7); rng2 = np.random.default_rng(7)
+        s = _speech(rng1); n = [np.random.default_rng(7).standard_normal(len(s)).astype(np.float32)]
+        s2 = _speech(rng2); n2 = [np.random.default_rng(7).standard_normal(len(s)).astype(np.float32)]
+        mix1, clean1, meta1 = mixer.mix(rng1, s, n, None, [], bank_arg, cfg)
+        mix2, clean2, meta2 = mixer.mix(rng2, s2, n2, None, [], bank_arg, cfg)
+        assert np.array_equal(mix1, mix2) and np.array_equal(clean1, clean2)
+        assert meta1 == meta2
+
+
+def test_impulse_injection_recorded_and_audible():
+    rng = np.random.default_rng(0)
+    imp, imp_meta = impulses.generate(np.random.default_rng(1), sr=mixer.SR, kind="burst")
+    # force a loud, deterministic burst (well above the speech+noise floor) so the assertion isn't flaky
+    cfg = mixer.MixConfig(p_room=0.0, p_clean=0.0, impulse_peak_db=(12.0, 12.0))
+    s = _speech(rng); n = [rng.standard_normal(len(s)).astype(np.float32) * 0.01]
+    mix, clean, meta = mixer.mix(rng, s, n, imp, imp_meta["onsets_s"], None, cfg)
+    assert np.isfinite(meta["impulse_peak_db"])
+    assert len(meta["impulse_onsets_s"]) > 0
+    onset_sample = int(meta["impulse_onsets_s"][0] * mixer.SR)
+    noise_floor = np.abs(mix[0][:onset_sample]).mean() if onset_sample > 0 else np.abs(mix[0]).mean()
+    burst_peak = np.abs(mix[0][onset_sample:onset_sample + 200]).max()
+    assert burst_peak > 3 * (noise_floor + 1e-9)
+
+
+def test_clip_bucket_forces_clip_and_stays_bounded():
+    rng = np.random.default_rng(0)
+    cfg = mixer.MixConfig(p_room=0.0, p_clean=0.0, p_clip=1.0, p_wind=0.0, p_ref_dropout=0.0)
+    s = _speech(rng); n = [rng.standard_normal(len(s)).astype(np.float32)]
+    mix, clean, meta = mixer.mix(rng, s, n, None, [], None, cfg)
+    assert meta["clipped"] and np.abs(mix[0]).max() <= 1.0
+
+
+def test_ref_dropout_bucket_creates_low_energy_span():
+    rng = np.random.default_rng(0)
+    cfg = mixer.MixConfig(p_room=0.0, p_clean=0.0, p_clip=0.0, p_wind=0.0, p_ref_dropout=1.0)
+    s = _speech(rng); n = [rng.standard_normal(len(s)).astype(np.float32)]
+    mix, clean, meta = mixer.mix(rng, s, n, None, [], None, cfg)
+    assert meta["ref_dropout"]
+    # a 20 ms sliding window should find a near-silent span somewhere in the reference channel
+    w = 320
+    frames = mix[1][: len(mix[1]) // w * w].reshape(-1, w)
+    assert (np.abs(frames).max(axis=1) < 0.05 * np.abs(mix[1]).max()).any()
