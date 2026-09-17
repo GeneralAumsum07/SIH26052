@@ -1,0 +1,18 @@
+# Round-1 lean data. Paths are relative to repo root.
+raw_root: data/raw
+manifest_dir: data/manifests
+sources:
+  librispeech:
+    url: https://www.openslr.org/resources/12/train-clean-100.tar.gz
+    extract_to: data/download/librispeech
+    max_hours: 20
+  cv_hi:
+    # Common Voice requires a logged-in download; place the extracted
+    # hi/ folder at data/download/cv_hi manually. fetch_data.py skips it if absent.
+    extract_to: data/download/cv_hi
+    min_snr_db: 30
+  mad:
+    # https://github.com/kaen2891/military_audio_dataset -> packaged download.
+    # Place extracted class folders at data/download/mad. Record the version here:
+    version: "TBD-record-after-download"
+    extract_to: data/download/mad
