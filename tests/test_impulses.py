@@ -18,9 +18,7 @@ def test_burst_is_actually_impulsive():
         rng = np.random.default_rng(seed)
         x, meta = impulses.generate(rng, kind="burst")
         on = int(meta["onsets_s"][0] * 16000)
-        # Skip if signal too short to hold 1s offset
-        if on + 16160 >= len(x):
-            continue
+        x = np.pad(x, (0, max(0, on + 16160 - len(x))))  # short bursts end in silence
         e0 = (x[on:on + 160] ** 2).mean()
         e1 = (x[on + 16000:on + 16160] ** 2).mean() + 1e-12
         assert 10 * np.log10(e0 / e1) > 20, seed
