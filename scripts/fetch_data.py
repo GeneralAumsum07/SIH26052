@@ -18,8 +18,12 @@ def download(url: str, dst: Path) -> None:
         if r.status_code == 416:
             return
         r.raise_for_status()
+        # Server may ignore Range and send 200 + full body; appending that would corrupt the file.
+        if have and r.status_code != 206:
+            have = 0
+        mode = "ab" if have else "wb"
         total = int(r.headers.get("content-length", 0)) + have
-        with open(dst, "ab") as f, tqdm(total=total, initial=have, unit="B", unit_scale=True, desc=dst.name) as bar:
+        with open(dst, mode) as f, tqdm(total=total, initial=have, unit="B", unit_scale=True, desc=dst.name) as bar:
             for chunk in r.iter_content(1 << 20):
                 f.write(chunk)
                 bar.update(len(chunk))
