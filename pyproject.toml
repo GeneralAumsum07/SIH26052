@@ -1,0 +1,46 @@
+[project]
+name = "vaani"
+version = "0.1.0"
+description = "SIH26052 - two-channel speech enhancement training stack"
+requires-python = ">=3.12"
+dependencies = [
+  "torch>=2.7",
+  "torchaudio>=2.7",
+  "numpy>=2.0",
+  "scipy>=1.14",
+  "soundfile>=0.12",
+  "pyroomacoustics>=0.8",
+  "pyarrow>=17",
+  "pandas>=2.2",
+  "pyyaml>=6",
+  "pystoi>=0.4",
+  "onnx>=1.16",
+  "onnxruntime>=1.19",
+  "tensorboard>=2.17",
+  "tqdm>=4.66",
+  "requests>=2.32",
+]
+
+[project.optional-dependencies]
+asr = ["faster-whisper>=1.0"]
+dev = ["pytest>=8", "pytest-timeout>=2.3"]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchaudio = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+timeout = 300
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["vaani"]
