@@ -2,7 +2,7 @@
 name = "vaani"
 version = "0.1.0"
 description = "SIH26052 - two-channel speech enhancement training stack"
-requires-python = ">=3.12"
+requires-python = ">=3.12"  # 3.12 pinned: pesq wheel in wheels/ is cp312 (no upstream Windows wheels)
 dependencies = [
   "torch>=2.7",
   "torchaudio>=2.7",
@@ -14,6 +14,7 @@ dependencies = [
   "pandas>=2.2",
   "pyyaml>=6",
   "pystoi>=0.4",
+  "pesq>=0.0.4",
   "onnx>=1.16",
   "onnxruntime>=1.19",
   "tensorboard>=2.17",
@@ -28,6 +29,7 @@ dev = ["pytest>=8", "pytest-timeout>=2.3"]
 [tool.uv.sources]
 torch = { index = "pytorch-cu128" }
 torchaudio = { index = "pytorch-cu128" }
+pesq = { path = "wheels/pesq-0.0.4-cp312-cp312-win_amd64.whl" }
 
 [[tool.uv.index]]
 name = "pytorch-cu128"

@@ -1109,6 +1109,14 @@ wheels = [
 ]
 
 [[package]]
+name = "pesq"
+version = "0.0.4"
+source = { path = "wheels/pesq-0.0.4-cp312-cp312-win_amd64.whl" }
+wheels = [
+    { filename = "pesq-0.0.4-cp312-cp312-win_amd64.whl", hash = "sha256:31fbddd9a7025d1e6bd61be9d587b77a330e396f032e4383c04c7e5dbd950c14" },
+]
+
+[[package]]
 name = "pillow"
 version = "12.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1700,6 +1708,7 @@ dependencies = [
     { name = "onnx" },
     { name = "onnxruntime" },
     { name = "pandas" },
+    { name = "pesq" },
     { name = "pyarrow" },
     { name = "pyroomacoustics" },
     { name = "pystoi" },
@@ -1729,6 +1738,7 @@ requires-dist = [
     { name = "onnx", specifier = ">=1.16" },
     { name = "onnxruntime", specifier = ">=1.19" },
     { name = "pandas", specifier = ">=2.2" },
+    { name = "pesq", path = "wheels/pesq-0.0.4-cp312-cp312-win_amd64.whl" },
     { name = "pyarrow", specifier = ">=17" },
     { name = "pyroomacoustics", specifier = ">=0.8" },
     { name = "pystoi", specifier = ">=0.4" },

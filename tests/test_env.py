@@ -1,6 +1,5 @@
-"""Day-1 gate: if CUDA does not work on this laptop nothing else matters.
-Blackwell (sm_120) needs a cu128 wheel; a CPU-only wheel silently installs
-and would waste a day of 'why is training slow'."""
+"""Day-1 CUDA gate: cu128 wheel required for Blackwell sm_120.
+CPU-only wheel silently installs and wastes days of debugging."""
 import torch
 
 
