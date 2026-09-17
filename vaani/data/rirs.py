@@ -7,14 +7,23 @@ import pyroomacoustics as pra
 SR = 16000
 MIC_SPACING = 0.12       # rigid mount, reference 12 cm from primary
 MOUTH_TO_PRIMARY = 0.025
-MOUTH_TO_REF = 0.14
 MAX_LEN = int(0.6 * SR)  # 600 ms covers RT60 <= 0.5 s
+MAX_SABINE_ATTEMPTS = 50
 
 
 def simulate_pair_set(rng: np.random.Generator, sr: int = SR, n_noise: int = 2) -> dict:
-    dims = rng.uniform(2.5, 6.0, size=3); dims[2] = rng.uniform(2.4, 3.2)
-    rt60 = float(rng.uniform(0.1, 0.5))
-    e_abs, max_order = pra.inverse_sabine(rt60, dims)
+    # inverse_sabine rejects (dims, rt60) combos where the room is too large for
+    # that RT60; resample both together rather than clipping so the drawn RT60 stays honest.
+    for _ in range(MAX_SABINE_ATTEMPTS):
+        dims = rng.uniform(2.5, 6.0, size=3); dims[2] = rng.uniform(2.4, 3.2)
+        rt60 = float(rng.uniform(0.1, 0.5))
+        try:
+            e_abs, max_order = pra.inverse_sabine(rt60, dims)
+            break
+        except ValueError:
+            continue
+    else:
+        raise ValueError(f"no valid (dims, rt60) found in {MAX_SABINE_ATTEMPTS} attempts")
     room = pra.ShoeBox(dims, fs=sr, materials=pra.Material(e_abs), max_order=min(max_order, 12))
 
     # mics roughly at head height near the room centre, random heading

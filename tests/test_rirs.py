@@ -14,9 +14,23 @@ def test_pair_set_shapes_and_leakage():
     assert abs(10 * np.log10(en[0] / en[1])) < 4
 
 
+def test_simulate_pair_set_never_raises_across_seeds():
+    for seed in range(20):
+        rng = np.random.default_rng(seed)
+        s = rirs.simulate_pair_set(rng, n_noise=2)
+        assert s["speech"].shape == (2, rirs.MAX_LEN)
+        assert s["speech"].dtype == np.float32
+        for h in s["noise"]:
+            assert h.shape == (2, rirs.MAX_LEN)
+            assert h.dtype == np.float32
+
+
 def test_bank_roundtrip(tmp_path):
     p = tmp_path / "bank.npz"
     rirs.build_bank(p, n=3, seed=1)
     b = rirs.RirBank(p)
     s = b.sample(np.random.default_rng(0))
     assert s["speech"].shape[0] == 2
+    assert s["speech"].dtype == np.float32
+    assert s["noise"].dtype == np.float32
+    assert isinstance(s["rt60"], float)
