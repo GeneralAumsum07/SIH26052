@@ -25,6 +25,7 @@ dependencies = [
 [project.optional-dependencies]
 asr = ["faster-whisper>=1.0"]
 dev = ["pytest>=8", "pytest-timeout>=2.3"]
+fast = ["numba>=0.60"]  # optional JIT path for vaani/dsp/nlms.py, falls back to pure numpy loop
 
 [tool.uv.sources]
 torch = { index = "pytorch-cu128" }
