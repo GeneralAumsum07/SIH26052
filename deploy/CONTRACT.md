@@ -41,14 +41,13 @@ conv wrappers nest keys one level deeper), and traces one frame with
 
 `vaani/export.py::parity_and_timing(ckpt_path, onnx_path, seconds)` runs the ONNX Runtime
 session frame-by-frame (CPU, `intra_op_num_threads=1`) against the batch `VaaniNet` doing the
-same, carrying caches forward exactly as the embedded loop must. On the DNS3-initialised
-VaaniNet checkpoint (`vaani/models/checkpoints/model_trained_on_dns3.tar`, via
-`VaaniNet.from_pretrained_gtcrn`), a 10-second random-input run measured (CPU, ONNX Runtime,
-`intra_op_num_threads=1`, dev laptop, frame 0 excluded from timing as a warm-up frame but
-still included in the parity check):
-- `max_abs_err` = 4.7e-7 (tolerance: < 1e-4)
+same, carrying caches forward exactly as the embedded loop must. On the round-1 trained
+checkpoint (`runs/vaani_full/best.pt`, exported to `deploy/model.onnx`), a 10-second
+random-input run measured (CPU, ONNX Runtime, `intra_op_num_threads=1`, dev laptop, frame 0
+excluded from timing as a warm-up frame but still included in the parity check):
+- `max_abs_err` = 1.2e-6 (tolerance: < 1e-4)
 - `ms_per_frame_mean` = 1.86 ms
-- `ms_per_frame_p99` = 2.91 ms
+- `ms_per_frame_p99` = 3.25 ms
 - ONNX file size: 424 KB
 
 These are measured single-core desktop-CPU/ORT numbers from `parity_and_timing` run on the
