@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import soundfile as sf
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, Sampler
 
 from vaani.data import impulses, manifests
 from vaani.data.mixer import MixConfig, mix
@@ -41,7 +41,6 @@ class DynamicMixDataset(Dataset):
         self.cfg, self.n, self.epoch_len, self.seed = cfg, int(crop_s * SR), epoch_len, seed
         # with_dsp: run NLMS+features here so the ~150 ms/clip DSP lands in DataLoader workers, not the trainer
         self.with_dsp, self.controller_on = with_dsp, controller_on
-        self.epoch = 0
         assert len(self.speech) and len(self.noise), "empty manifest split"
 
     @property
@@ -51,14 +50,13 @@ class DynamicMixDataset(Dataset):
             self._bank = RirBank(self.bank_path)
         return self._bank
 
-    def set_epoch(self, e: int):  # different mixtures each epoch, still reproducible
-        self.epoch = e
-
     def __len__(self):
         return self.epoch_len
 
-    def __getitem__(self, i):
-        rng = np.random.default_rng([self.seed, self.epoch, i])
+    def __getitem__(self, idx):
+        # epoch rides in the index (see EpochSampler): persistent workers never see attribute changes
+        epoch, i = divmod(int(idx), self.epoch_len)
+        rng = np.random.default_rng([self.seed, epoch, i])
         s = _load(self.speech.path.iloc[int(rng.integers(len(self.speech)))], self.n, rng)
         s = np.pad(s, (0, self.n - len(s)))
         # noise draw: continuous class(es) plus optionally an impulsive one
@@ -82,6 +80,22 @@ class DynamicMixDataset(Dataset):
             r = pipeline.run(mixed, controller_on=self.controller_on)
             out["n_hat"] = torch.from_numpy(r["n_hat"]); out["feats"] = torch.from_numpy(r["features"])
         return out
+
+
+class EpochSampler(Sampler):
+    """Yields epoch*epoch_len + i so DynamicMixDataset draws fresh mixtures per epoch."""
+    def __init__(self, epoch_len: int):
+        self.epoch_len, self.epoch = epoch_len, 0
+
+    def set_epoch(self, e: int):
+        self.epoch = e
+
+    def __len__(self):
+        return self.epoch_len
+
+    def __iter__(self):
+        base = self.epoch * self.epoch_len
+        return iter(range(base, base + self.epoch_len))
 
 
 class RenderedDataset(Dataset):

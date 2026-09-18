@@ -26,10 +26,10 @@ class HybridLoss(nn.Module):
 
 
 class SpeechPreservationLoss(HybridLoss):
-    """HybridLoss + L1 identity penalty on clean-bucket items; burst up-weighting
-    arrives via frame_weight from the caller."""
-    def __init__(self, clean_l1: float = 1.0):
-        super().__init__(); self.clean_l1 = clean_l1
+    """HybridLoss + L1 to the clean target on clean-bucket items (== input for the
+    clean bucket up to room path); burst_weight is read by the trainer for frame_weight."""
+    def __init__(self, burst_weight: float = 3.0, clean_l1: float = 1.0):
+        super().__init__(); self.burst_weight, self.clean_l1 = burst_weight, clean_l1
 
     def forward(self, pred, true, frame_weight=None, is_clean=None):
         base = super().forward(pred, true, frame_weight, is_clean)
