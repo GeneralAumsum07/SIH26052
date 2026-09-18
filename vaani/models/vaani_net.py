@@ -81,6 +81,10 @@ class VaaniNet(nn.Module):
         out = self.mask(m, prim.permute(0, 3, 2, 1))
         return out.permute(0, 3, 2, 1)
 
+    def load_state_dict(self, sd, strict=True):
+        # checkpoints saved before feat_scale became non-persistent carry the constant
+        return super().load_state_dict({k: v for k, v in sd.items() if k != "encoder.feat_scale"}, strict)
+
     @classmethod
     def from_pretrained_gtcrn(cls, ckpt_path):
         """Copy every GTCRN weight; first conv gets primary slice, rest stays zero."""

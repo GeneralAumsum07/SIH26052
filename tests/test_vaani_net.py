@@ -77,3 +77,9 @@ def test_feature_scaling_keeps_film_input_bounded():
     torch.nn.init.ones_(m.encoder.film.weight)
     out = m.encoder._cond(x, feats)
     assert out.abs().max() <= 3.0 * 18 + 1e-6 and torch.isfinite(out).all()
+
+
+def test_legacy_checkpoint_with_persisted_feat_scale_loads():
+    from vaani.models.vaani_net import VaaniNet
+    v = VaaniNet(); sd = v.state_dict(); sd["encoder.feat_scale"] = v.encoder.feat_scale.clone()
+    VaaniNet().load_state_dict(sd)
