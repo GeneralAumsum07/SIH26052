@@ -33,7 +33,7 @@ class _Encoder(nn.Module):
         nn.init.zeros_(self.film.weight); nn.init.zeros_(self.film.bias)  # inert at step 0
         # dB-valued features reach +/-40 while the rest are 0..1; unscaled they wreck the pretrained
         # encoder within the first epoch. Raw features stay the deploy contract, scaling lives here.
-        self.register_buffer("feat_scale", torch.tensor(FEAT_SCALE))
+        self.register_buffer("feat_scale", torch.tensor(FEAT_SCALE), persistent=False)
 
     def _cond(self, x, feats):
         # x: (B,16,T,F). feats: (B,T,18) -> shift (B,16,T,1)
@@ -97,7 +97,7 @@ class VaaniNet(nn.Module):
                 own[k] = w
             else:
                 raise KeyError(f"checkpoint key {k!r} has no matching VaaniNet parameter")
-        missing = set(own) - set(sd) - {"encoder.film.weight", "encoder.film.bias", "encoder.feat_scale"}
+        missing = set(own) - set(sd) - {"encoder.film.weight", "encoder.film.bias"}
         if missing:
             raise KeyError(f"checkpoint lacks {sorted(missing)}")
         v.load_state_dict(own)
