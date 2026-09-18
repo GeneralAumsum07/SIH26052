@@ -50,21 +50,30 @@ def main():
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
     cols = ["system", "id", "bucket", "noise_class", "snr_in", "clipped", "ref_dropout", "impulse_peak_db",
             "snr_out", "si_sdr", "stoi", "pesq_wb", "recovery_s", "asr_text"]
-    with open(a.out, "w", newline="") as fh:
+    with open(a.out, "w", encoding="utf-8", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=cols); w.writeheader()
         for it in tqdm(ds, desc=a.system):
-            mix, clean, meta = it["mix"].numpy(), it["clean"].numpy(), it["meta"]
-            est = fn(mix)
-            row = dict(system=a.system, id=meta["id"], bucket=meta["bucket"], noise_class=meta["noise_class"],
-                       snr_in=meta["snr_db"], clipped=meta["clipped"], ref_dropout=meta["ref_dropout"],
-                       impulse_peak_db=meta["impulse_peak_db"], snr_out=metrics.snr_db(clean, est),
-                       si_sdr=metrics.si_sdr_db(clean, est), stoi=metrics.stoi(clean, est), pesq_wb=metrics.pesq_wb(clean, est),
-                       recovery_s=float("nan"), asr_text="")
-            if "twin" in it and meta["impulse_onsets_s"]:
-                row["recovery_s"] = metrics.recovery_time_s(est, fn(it["twin"].numpy()), meta["impulse_onsets_s"][0])
-            if asr is not None:
-                segs, _ = asr.transcribe(est, language=None, beam_size=1)
-                row["asr_text"] = " ".join(s.text for s in segs).strip()
+            meta = it["meta"]
+            # one bad clip must never abort the whole run: log and fall through to a NaN row
+            try:
+                mix, clean = it["mix"].numpy(), it["clean"].numpy()
+                est = fn(mix)
+                row = dict(system=a.system, id=meta["id"], bucket=meta["bucket"], noise_class=meta["noise_class"],
+                           snr_in=meta["snr_db"], clipped=meta["clipped"], ref_dropout=meta["ref_dropout"],
+                           impulse_peak_db=meta["impulse_peak_db"], snr_out=metrics.snr_db(clean, est),
+                           si_sdr=metrics.si_sdr_db(clean, est), stoi=metrics.stoi(clean, est), pesq_wb=metrics.pesq_wb(clean, est),
+                           recovery_s=float("nan"), asr_text="")
+                if "twin" in it and meta["impulse_onsets_s"]:
+                    row["recovery_s"] = metrics.recovery_time_s(est, fn(it["twin"].numpy()), meta["impulse_onsets_s"][0])
+                if asr is not None:
+                    segs, _ = asr.transcribe(est, language=None, beam_size=1)
+                    row["asr_text"] = " ".join(s.text for s in segs).strip()
+            except Exception as e:
+                print(f"clip {meta.get('id')} failed: {e!r}")
+                row = dict(system=a.system, id=meta.get("id"), bucket=meta.get("bucket"), noise_class=meta.get("noise_class"),
+                           snr_in=meta.get("snr_db"), clipped=meta.get("clipped"), ref_dropout=meta.get("ref_dropout"),
+                           impulse_peak_db=meta.get("impulse_peak_db"), snr_out=float("nan"), si_sdr=float("nan"),
+                           stoi=float("nan"), pesq_wb=float("nan"), recovery_s=float("nan"), asr_text="")
             w.writerow(row)
 
 

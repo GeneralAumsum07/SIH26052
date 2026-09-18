@@ -27,6 +27,18 @@ def _mark(metric, mean):
     return " ✓" if mean > TARGETS[metric] else " ✗"
 
 
+def _cell(g):
+    """One system's row in the per-bucket table: SNR/SI-SDR/STOI/PESQ (✓/✗ against target) + recovery median."""
+    if len(g) == 0: return "-"
+    parts = []
+    for m in METRICS:
+        t = ci(g[m]); parts.append(f"{m}={t[0]:.2f}{_mark(m, t[0])}")
+    if "recovery_s" in g and g.recovery_s.notna().any():
+        r = pd.to_numeric(g.recovery_s, errors="coerce")
+        parts.append(f"rec={r.median():.2f}s")
+    return f"{', '.join(parts)} (n={len(g)})"
+
+
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("csvs", nargs="+"); ap.add_argument("--out", required=True)
     a = ap.parse_args()
@@ -43,12 +55,13 @@ def main():
         for m in METRICS:
             t = ci(g[m]); cells.append(fmt(t) + _mark(m, t[0]))
         lines.append(f"| {sysname} | {len(g)} | " + " | ".join(cells) + " |")
+    systems = sorted(df.system.unique())
     lines += ["", "## Per bucket (all systems)", ""]
-    for (sysname, bucket), g in df.groupby(["system", "bucket"]):
-        parts = []
-        for m in METRICS:
-            t = ci(g[m]); parts.append(f"{m}={fmt(t)}{_mark(m, t[0])}")
-        lines.append(f"- **{sysname} / {bucket}** (n={len(g)}): " + ", ".join(parts))
+    lines += ["| bucket | " + " | ".join(systems) + " |", "|---|" + "---|" * len(systems)]
+    for bucket, gb in df.groupby("bucket"):
+        cells = [_cell(gb[gb.system == s]) for s in systems]
+        lines.append(f"| {bucket} | " + " | ".join(cells) + " |")
+    lines.append("| **Overall** | " + " | ".join(_cell(df[df.system == s]) for s in systems) + " |")
     if "recovery_s" in df and df.recovery_s.notna().any():
         lines += ["", "## Recovery time after burst (s)", ""]
         for sysname, g in df[df.recovery_s.notna()].groupby("system"):

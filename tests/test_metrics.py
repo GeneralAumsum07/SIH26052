@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 from vaani import metrics
 
 
@@ -100,3 +101,64 @@ def test_report_main_writes_markdown(tmp_path):
     assert "# Ablation matrix" in text
     assert "raw" in text
     assert "✓" in text  # both rows clear all three targets
+
+
+def _train_two_steps(tmp_path, model_name):
+    """Reuses tests/test_train_smoke.py's fixture: train 2 real steps, return the checkpoint path."""
+    import yaml
+    from vaani import train
+    from tests.test_train_smoke import _tiny
+
+    m = _tiny(tmp_path)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    cfg = dict(name=f"eval_smoke_{model_name}", model=model_name, controller_on=True, loss="hybrid",
+               init_from="vaani/models/checkpoints/model_trained_on_dns3.tar",
+               data=dict(manifests=[str(m)], bank=None, crop_s=1.0, epoch_len=4, mix={"p_room": 0.0}),
+               val=dict(dynamic_items=2),
+               optim=dict(lr=1e-4, lr_new=1e-3, warmup=1, clip=5.0), batch_size=2, epochs=1, max_steps=2,
+               amp=False, device=device, runs_dir=str(tmp_path / "runs"), num_workers=0, seed=0)
+    cp = tmp_path / f"{model_name}.yaml"; yaml.safe_dump(cfg, open(cp, "w"))
+    train.main(str(cp))
+    return tmp_path / "runs" / f"eval_smoke_{model_name}" / "best.pt"
+
+
+def test_enhance_fn_ckpt_gtcrn(tmp_path):
+    import torch as _torch
+    from vaani.eval import enhance_fn
+
+    ck = _train_two_steps(tmp_path, "gtcrn")
+    mix = np.random.default_rng(0).standard_normal((2, 32000)).astype(np.float32)
+    est = enhance_fn(f"ckpt:{ck}")(mix)
+    assert est.shape == (32000,)
+    assert _torch.isfinite(_torch.from_numpy(est)).all()
+
+
+def test_enhance_fn_ckpt_vaani(tmp_path):
+    import torch as _torch
+    from vaani.eval import enhance_fn
+
+    ck = _train_two_steps(tmp_path, "vaani")
+    mix = np.random.default_rng(0).standard_normal((2, 32000)).astype(np.float32)
+    est = enhance_fn(f"ckpt:{ck}")(mix)
+    assert est.shape == (32000,)
+    assert _torch.isfinite(_torch.from_numpy(est)).all()
+
+
+def test_eval_main_skips_bad_clip(tmp_path, monkeypatch):
+    """A clip that raises during enhancement must not abort the run - row is written with NaN metrics."""
+    import sys
+    from vaani import eval as vaani_eval
+
+    eval_root = _mini_eval_set(tmp_path)
+    out = tmp_path / "raw.csv"
+    argv = ["eval.py", "--system", "raw", "--split", "test", "--eval-root", str(eval_root), "--out", str(out)]
+    monkeypatch.setattr(sys, "argv", argv)
+    def _boom(mix): raise RuntimeError("boom")
+    monkeypatch.setattr(vaani_eval, "enhance_fn", lambda spec: _boom)
+    vaani_eval.main()
+
+    import pandas as pd
+    df = pd.read_csv(out)
+    assert len(df) == 1
+    assert np.isnan(df.snr_out.iloc[0])
+    assert str(df.id.iloc[0]) in ("0000", "0")
