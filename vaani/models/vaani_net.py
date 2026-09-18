@@ -1,18 +1,6 @@
-"""VaaniNet: GTCRN widened to three input signals (primary, reference, NLMS
-noise estimate) and conditioned on the 18-dim DSP feature vector.
-
-Design rules (spec 6.2):
-- Each signal becomes (mag, re, im) like upstream, so 9 feature maps before
-  SFE and 27 after, feeding a 27->16 first conv. Only that conv changes.
-- Conditioning is a FiLM-style *shift* on the first encoder block output.
-  Shift-only keeps the pretrained scale statistics intact at init.
-- The mask is applied to the PRIMARY spectrum only.
-- Zero-init of the new input slices and the FiLM projection makes the
-  network numerically identical to pretrained GTCRN at step 0.
-
-Encoder/StreamEncoder are re-declared here (not in the vendored files) only to
-change the first block's in-channels and insert the FiLM shift.
-"""
+"""VaaniNet: GTCRN widened to three inputs (primary, reference, NLMS estimate; 27->16
+first conv) with a zero-init FiLM shift from the 18-dim DSP features; mask on primary only.
+Encoder/StreamEncoder are re-declared here (vendored files untouched) for those two changes."""
 import torch
 import torch.nn as nn
 
@@ -92,12 +80,19 @@ class VaaniNet(nn.Module):
         v = cls()
         sd = torch.load(ckpt_path, map_location="cpu", weights_only=True)["model"]
         own = v.state_dict()
+        first = "encoder.en_convs.0.conv.weight"
+        # Every GTCRN key must map 1:1 (only the first conv differs in shape); no silent skips.
         for k, w in sd.items():
-            if k == "encoder.en_convs.0.conv.weight":
+            if k == first:
                 new = torch.zeros_like(own[k]); new[:, :N_PRIM] = w   # primary slice
                 own[k] = new
             elif k in own and own[k].shape == w.shape:
                 own[k] = w
+            else:
+                raise KeyError(f"checkpoint key {k!r} has no matching VaaniNet parameter")
+        missing = set(own) - set(sd) - {"encoder.film.weight", "encoder.film.bias"}
+        if missing:
+            raise KeyError(f"checkpoint lacks {sorted(missing)}")
         v.load_state_dict(own)
         return v
 

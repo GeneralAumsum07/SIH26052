@@ -17,6 +17,7 @@ def _gtcrn():
 
 def test_shapes_and_param_budget():
     m = VaaniNet()
+    # Counts all parameters incl. frozen ERB banks; excludes BN running buffers (~600, foldable).
     n = sum(p.numel() for p in m.parameters())
     assert n <= vaani_net.MAX_PARAMS, n
     spec = torch.randn(2, 257, 20, 6); f = torch.randn(2, 20, 18)
@@ -43,7 +44,11 @@ def test_zero_init_slices_are_trainable():
 
 def test_stream_parity():
     torch.manual_seed(0)
-    v = VaaniNet().eval(); s = StreamVaaniNet().eval()
+    v = VaaniNet.from_pretrained_gtcrn(CKPT).eval(); s = StreamVaaniNet().eval()
+    # Zero-init slices would make parity vacuous; perturb them so FiLM and ref/n_hat paths are exercised.
+    with torch.no_grad():
+        for t in (v.encoder.en_convs[0].conv.weight[:, 9:], v.encoder.film.weight, v.encoder.film.bias):
+            torch.nn.init.normal_(t, std=0.1)
     # Stream conv wrappers nest weights one level deeper; upstream's converter remaps them.
     convert_to_stream(s, v)
     spec = torch.randn(1, 257, 25, 6); f = torch.randn(1, 25, 18)
