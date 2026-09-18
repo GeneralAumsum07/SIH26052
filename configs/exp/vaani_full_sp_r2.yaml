@@ -7,7 +7,9 @@ data:
   manifests:
   - data/manifests/librispeech.parquet
   - data/manifests/esc50.parquet
-  - data/manifests/dns_datasets_fullband.noise_fullband.freesound_000.parquet
+  - data/manifests/dns_datasets_fullband.noise_fullband.freesound_000.tar.parquet
+  - data/manifests/cv_hi.parquet
+  - data/manifests/mad.parquet
   bank: data/rirs/bank.npz
   crop_s: 4.0
   epoch_len: 20000
