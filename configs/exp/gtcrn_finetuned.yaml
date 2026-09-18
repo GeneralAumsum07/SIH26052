@@ -4,7 +4,7 @@ controller_on: false
 loss: hybrid
 init_from: vaani/models/checkpoints/model_trained_on_dns3.tar
 data:
-  manifests: [data/manifests/librispeech.parquet, data/manifests/cv_hi.parquet, data/manifests/mad.parquet]
+  manifests: [data/manifests/librispeech.parquet, data/manifests/esc50.parquet]
   bank: data/rirs/bank.npz
   crop_s: 4.0
   epoch_len: 20000
