@@ -100,7 +100,7 @@ class EpochSampler(Sampler):
 
 class RenderedDataset(Dataset):
     def __init__(self, root: Path):
-        self.items = sorted(Path(root).glob("*/*.mix.wav"))
+        self.items = sorted(p for p in Path(root).glob("*/*.mix.wav") if not p.name.endswith(".twin.mix.wav"))
 
     def __len__(self):
         return len(self.items)

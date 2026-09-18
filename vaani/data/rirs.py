@@ -1,6 +1,7 @@
 """pyroomacoustics RIR pairs for the headset geometry."""
 from pathlib import Path
 
+import os
 import numpy as np
 import pyroomacoustics as pra
 
@@ -67,9 +68,18 @@ def build_bank(path: Path, n: int = 5000, seed: int = 0, n_noise: int = 3) -> No
 
 
 class RirBank:
+    """Memory-mapped so DataLoader workers (spawned on Windows) share one page cache instead of 2 GB each."""
+    KEYS = ("speech", "noise", "rt60")
+
     def __init__(self, path: Path):
-        z = np.load(path)
-        self.speech, self.noise, self.rt60 = z["speech"], z["noise"], z["rt60"]
+        path = Path(path)
+        parts = {k: path.with_name(f"{path.stem}.{k}.npy") for k in self.KEYS}
+        if not all(f.exists() for f in parts.values()):
+            z = np.load(path)
+            for k, f in parts.items():
+                tmp = f.with_suffix(".tmp.npy")
+                np.save(tmp, z[k]); os.replace(tmp, f)
+        self.speech, self.noise, self.rt60 = (np.load(parts[k], mmap_mode="r") for k in self.KEYS)
 
     def __len__(self):
         return len(self.rt60)

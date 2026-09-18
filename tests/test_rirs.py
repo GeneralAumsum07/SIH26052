@@ -34,3 +34,12 @@ def test_bank_roundtrip(tmp_path):
     assert s["speech"].dtype == np.float32
     assert s["noise"].dtype == np.float32
     assert isinstance(s["rt60"], float)
+
+
+def test_bank_is_memmapped_and_reloads_from_npy(tmp_path):
+    p = tmp_path / "b.npz"
+    rirs.build_bank(p, n=2, seed=0)
+    b = rirs.RirBank(p)
+    assert isinstance(b.speech, np.memmap) and (tmp_path / "b.speech.npy").exists()
+    b2 = rirs.RirBank(p)
+    assert np.array_equal(b.speech, b2.speech) and len(b2) == 2

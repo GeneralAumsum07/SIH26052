@@ -84,6 +84,9 @@ def test_rendered_roundtrip(tmp_path):
     x = np.random.randn(2, 16000).astype(np.float32) * 0.1
     sf.write(root / "stationary_0" / "a.mix.wav", x.T, 16000); sf.write(root / "stationary_0" / "a.clean.wav", x[0], 16000)
     json.dump({"snr_db": 0}, open(root / "stationary_0" / "a.json", "w"))
+    sf.write(root / "stationary_0" / "a.twin.mix.wav", x.T, 16000)  # twin is an attachment, not an item
     ds = dataset.RenderedDataset(root)
+    assert len(ds) == 1
     it = ds[0]
     assert it["mix"].shape == (2, 16000) and it["meta"]["bucket"] == "stationary_0" and it["meta"]["id"] == "a"
+    assert it["twin"].shape == (2, 16000)
