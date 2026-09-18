@@ -2,8 +2,12 @@
 
 Audio: 16 kHz, 2 channels (0 = primary near-mouth, 1 = reference), float32 [-1,1].
 STFT: n_fft 512, hop 256, window = sqrt(periodic Hann 512), center=True (reflect pad 256).
-One model call per hop (16 ms). Latency = one hop (16 ms) + the STFT window's lookahead
-(centre framing straddles the hop, so the last half-window, 16 ms, is not yet available) ~= 32 ms.
+One model call per hop (16 ms).
+
+Latency (derived, not measured): one hop (16 ms) + the STFT window's lookahead. With
+center=True the window straddles the hop, so the last half-window (16 ms) is not yet
+available -- this is arithmetic from the STFT framing above, not a runtime measurement.
+Total: 16 ms + 16 ms = 32 ms.
 
 ## Per frame, in order
 1. NLMS block on the 256 new samples with gate = previous frame's `adapt_gate` (64 taps, mu 0.05, eps 1e-6) -> `n_hat` block. See `dsp_reference/` and `vaani/dsp/nlms.py`.
@@ -39,14 +43,18 @@ conv wrappers nest keys one level deeper), and traces one frame with
 session frame-by-frame (CPU, `intra_op_num_threads=1`) against the batch `VaaniNet` doing the
 same, carrying caches forward exactly as the embedded loop must. On the DNS3-initialised
 VaaniNet checkpoint (`vaani/models/checkpoints/model_trained_on_dns3.tar`, via
-`VaaniNet.from_pretrained_gtcrn`), a 10-second random-input run measured:
+`VaaniNet.from_pretrained_gtcrn`), a 10-second random-input run measured (CPU, ONNX Runtime,
+`intra_op_num_threads=1`, dev laptop, frame 0 excluded from timing as a warm-up frame but
+still included in the parity check):
 - `max_abs_err` = 4.7e-7 (tolerance: < 1e-4)
-- `ms_per_frame_mean` = 2.20 ms
-- `ms_per_frame_p99` = 3.32 ms
+- `ms_per_frame_mean` = 1.86 ms
+- `ms_per_frame_p99` = 2.91 ms
 - ONNX file size: 424 KB
 
-These are single-core desktop-CPU numbers from `parity_and_timing`, not a Pi measurement --
-they only establish that the model is well inside the 16 ms/hop budget in principle. The
+These are measured single-core desktop-CPU/ORT numbers from `parity_and_timing` run on the
+dev laptop, not a Pi measurement -- they only establish that the model is well inside the
+16 ms/hop budget in principle (unlike the latency line above, which is arithmetic, not
+measured). The
 embedded lead must re-run `parity_and_timing`-equivalent timing on the actual target.
 
 A port passes when its `max_abs_err` against the PyTorch stream reference is < 1e-4.

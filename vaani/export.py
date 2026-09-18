@@ -2,6 +2,7 @@
 timing proxy. The Pi measurement belongs to the embedded lead; this number
 only tells us whether we are in the right order of magnitude."""
 import time
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -28,10 +29,14 @@ def export(ckpt_path, out_path):
     s = StreamVaaniNet().eval()
     convert_to_stream(s, v)  # load_state_dict fails: stream conv wrappers nest keys one level deeper
     spec = torch.zeros(1, 257, 1, 6); f = torch.zeros(1, 1, 18); caches = init_caches()
-    torch.onnx.export(s, (spec, f, *caches), str(out_path), opset_version=17,
-                       input_names=["spec6", "feats", "conv_cache", "tra_cache", "inter_cache"],
-                       output_names=["spec_out", "conv_cache_out", "tra_cache_out", "inter_cache_out"],
-                       dynamo=False)
+    with warnings.catch_warnings():
+        # Legacy TorchScript exporter warns on the GRU bool trace and Slice folding; shapes
+        # are static batch-1 so the trace is exact, as proven by parity_and_timing.
+        warnings.simplefilter("ignore")
+        torch.onnx.export(s, (spec, f, *caches), str(out_path), opset_version=17,
+                           input_names=["spec6", "feats", "conv_cache", "tra_cache", "inter_cache"],
+                           output_names=["spec_out", "conv_cache_out", "tra_cache_out", "inter_cache_out"],
+                           dynamo=False)
     return Path(out_path)
 
 
@@ -56,7 +61,8 @@ def parity_and_timing(ckpt_path, onnx_path, seconds=10):
                "conv_cache": caches[0], "tra_cache": caches[1], "inter_cache": caches[2]}
         t0 = time.perf_counter()
         o = sess.run(None, inp)
-        times.append((time.perf_counter() - t0) * 1000)
+        if t > 0:  # frame 0 is a warm-up (session/allocator warm-up skews timing); still used for parity
+            times.append((time.perf_counter() - t0) * 1000)
         outs.append(o[0]); caches = o[1:]
 
     got = np.concatenate(outs, axis=2)
