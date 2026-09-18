@@ -21,15 +21,8 @@ except ImportError:
 
 
 def _process_pure(w, buf, primary, reference, mu, eps):
-    """Reference loop: this exact structure is what gets ported to C.
-
-    Sums accumulate sequentially k=0..taps-1, and never through Python
-    float() -- w/buf are float32, so an unwrapped dot product stays
-    np.float32; float() would silently promote e and the weight update
-    to float64 and the numba kernel would no longer be the same algorithm.
-    Uses explicit loops (not `w @ buf`) so accumulation order matches the
-    numba kernel exactly -- BLAS dot products are free to sum out of order.
-    """
+    """Reference loop, ported to C as-is. Explicit float32 sums in k order (no Python
+    float(), no BLAS dot) so the numba kernel and the C port are the same algorithm."""
     n = len(primary)
     taps = len(w)
     n_hat = np.empty(n, np.float32)
