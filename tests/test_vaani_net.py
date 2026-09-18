@@ -66,3 +66,14 @@ def test_cuda_forward_backward_smoke():
     spec = torch.randn(4, 257, 63, 6, device="cuda"); f = torch.randn(4, 63, 18, device="cuda")
     y = m(spec, f); y.abs().mean().backward()
     assert y.shape == (4, 257, 63, 2) and torch.isfinite(y).all()
+
+
+def test_feature_scaling_keeps_film_input_bounded():
+    from vaani.models.vaani_net import FEAT_SCALE
+    m = VaaniNet()
+    assert len(FEAT_SCALE) == 18 and m.encoder.feat_scale.shape == (18,)
+    feats = torch.full((1, 4, 18), 40.0)  # dB-range extremes
+    x = torch.zeros(1, 16, 4, 129)
+    torch.nn.init.ones_(m.encoder.film.weight)
+    out = m.encoder._cond(x, feats)
+    assert out.abs().max() <= 3.0 * 18 + 1e-6 and torch.isfinite(out).all()

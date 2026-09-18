@@ -22,16 +22,23 @@ def _sig_feats(spec6):
     return torch.stack(outs, dim=1)
 
 
+FEAT_SCALE = [1 / 10.0, 1.0, 1 / 5.0, 1.0, 1.0, 1.0, *([1.0] * 8), 1 / 10.0, 1.0, 1.0, 1.0]
+
+
 class _Encoder(nn.Module):
     def __init__(self, blocks):
         super().__init__()
         self.en_convs = nn.ModuleList(blocks)
         self.film = nn.Linear(N_FEAT, 16)
         nn.init.zeros_(self.film.weight); nn.init.zeros_(self.film.bias)  # inert at step 0
+        # dB-valued features reach +/-40 while the rest are 0..1; unscaled they wreck the pretrained
+        # encoder within the first epoch. Raw features stay the deploy contract, scaling lives here.
+        self.register_buffer("feat_scale", torch.tensor(FEAT_SCALE))
 
     def _cond(self, x, feats):
         # x: (B,16,T,F). feats: (B,T,18) -> shift (B,16,T,1)
-        return x + self.film(feats).permute(0, 2, 1)[..., None]
+        f = torch.clamp(feats * self.feat_scale, -3.0, 3.0)
+        return x + self.film(f).permute(0, 2, 1)[..., None]
 
 
 class Encoder(_Encoder):
@@ -90,7 +97,7 @@ class VaaniNet(nn.Module):
                 own[k] = w
             else:
                 raise KeyError(f"checkpoint key {k!r} has no matching VaaniNet parameter")
-        missing = set(own) - set(sd) - {"encoder.film.weight", "encoder.film.bias"}
+        missing = set(own) - set(sd) - {"encoder.film.weight", "encoder.film.bias", "encoder.feat_scale"}
         if missing:
             raise KeyError(f"checkpoint lacks {sorted(missing)}")
         v.load_state_dict(own)
