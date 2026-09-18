@@ -12,11 +12,16 @@ from vaani.data import manifests, sources
 
 
 def download(url: str, dst: Path) -> None:
+    # Hosts that ignore Range (GitHub archives) would otherwise re-download a finished file on every run.
+    ok = dst.with_name(dst.name + ".ok")
+    if ok.exists():
+        return
     dst.parent.mkdir(parents=True, exist_ok=True)
     have = dst.stat().st_size if dst.exists() else 0
     headers = {"Range": f"bytes={have}-"} if have else {}
     with requests.get(url, stream=True, headers=headers, timeout=60) as r:
         if r.status_code == 416:
+            ok.touch()
             return
         r.raise_for_status()
         # Server may ignore Range and send 200 + full body; appending that would corrupt the file.
@@ -28,6 +33,7 @@ def download(url: str, dst: Path) -> None:
             for chunk in r.iter_content(1 << 20):
                 f.write(chunk)
                 bar.update(len(chunk))
+    ok.touch()
 
 
 def extract(tar: Path, to: Path) -> None:

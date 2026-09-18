@@ -57,3 +57,18 @@ def test_download_restarts_when_server_ignores_range(tmp_path, monkeypatch):
     monkeypatch.setattr(fetch_data.requests, "get", fake_get)
     fetch_data.download("http://x/f.bin", dst)
     assert dst.read_bytes() == b"FULLBODY"
+
+
+def test_download_skips_finished_file_even_if_server_ignores_range(tmp_path, monkeypatch):
+    dst = tmp_path / "f.bin"
+    dst.write_bytes(b"AAAA")
+    monkeypatch.setattr(fetch_data.requests, "get", lambda *a, **k: _FakeResponse(200, b"DONE"))
+    fetch_data.download("http://x/f.bin", dst)
+    assert dst.read_bytes() == b"DONE" and (tmp_path / "f.bin.ok").exists()
+
+    def boom(*a, **k):
+        raise AssertionError("must not refetch a finished file")
+
+    monkeypatch.setattr(fetch_data.requests, "get", boom)
+    fetch_data.download("http://x/f.bin", dst)
+    assert dst.read_bytes() == b"DONE"
