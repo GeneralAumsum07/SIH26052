@@ -2,7 +2,7 @@
 name = "vaani"
 version = "0.1.0"
 description = "SIH26052 - two-channel speech enhancement training stack"
-requires-python = ">=3.12"  # 3.12 pinned: pesq wheel in wheels/ is cp312 (no upstream Windows wheels)
+requires-python = ">=3.12,<3.13"  # 3.12 pinned: pesq wheel in wheels/ is cp312 (no upstream Windows wheels)
 dependencies = [
   "torch>=2.7",
   "torchaudio>=2.7",
