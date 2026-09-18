@@ -5,6 +5,7 @@ from vaani.data import manifests
 from vaani.data.dataset import DynamicMixDataset, EpochSampler, collate
 from vaani.data.mixer import MixConfig
 from vaani.dsp.features import N_FEATURES
+from vaani.models.vaani_net import VaaniNet
 from vaani import losses, train
 
 
@@ -50,6 +51,16 @@ def test_two_steps_each_model(tmp_path):
     ck = torch.load(rd / "last.pt", weights_only=True)
     assert ck["step"] == 3 and "optim" in ck and "sched" in ck
     print(f"smoke wall {time.time() - t0:.1f}s on {device}")
+
+
+def test_build_model_vaani_resumes_from_vaani_checkpoint(tmp_path):
+    m = VaaniNet()
+    ck = tmp_path / "last.pt"
+    torch.save({"model": m.state_dict(), "config": {"model": "vaani"}, "step": 5}, ck)
+    m2 = train.build_model("vaani", str(ck))
+    sd, sd2 = m.state_dict(), m2.state_dict()
+    assert sd.keys() == sd2.keys()
+    assert all(torch.equal(sd[k], sd2[k]) for k in sd)
 
 
 def test_dataset_with_dsp_runs_pipeline_in_getitem(tmp_path):

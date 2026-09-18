@@ -40,6 +40,10 @@ def build_model(name, init_from=None):
             m.load_state_dict(torch.load(init_from, map_location="cpu", weights_only=True)["model"])
         return m
     if name == "vaani":
+        if init_from and init_from.suffix == ".pt":
+            ck = torch.load(init_from, map_location="cpu", weights_only=True)
+            if ck.get("config", {}).get("model") == "vaani":
+                m = VaaniNet(); m.load_state_dict(ck["model"]); return m  # already-trained vaani run, not a gtcrn seed
         return VaaniNet.from_pretrained_gtcrn(init_from) if init_from else VaaniNet()
     raise ValueError(name)
 

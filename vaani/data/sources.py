@@ -36,6 +36,26 @@ def estimate_snr_db(x: np.ndarray, sr: int, frame_ms: float = 20.0) -> float:
     return float(10 * np.log10(speech / noise))
 
 
+# thresholds picked on synthetic probes (white/pink/AM-hum vs gated bursts/chirp): see
+# .superpowers/sdd/2026-09-18-vaani-training-stack/task-16-prep-report.md
+STATIONARY_ENERGY_STD_DB = 5.0
+STATIONARY_FLUX_MAX = 0.15
+
+
+def stationarity_class(x: np.ndarray, sr: int, frame_ms: float = 32.0) -> str:
+    """Low frame-energy variance + low spectral flux => stationary; either high => changing."""
+    n = int(sr * frame_ms / 1000)
+    frames = x[: len(x) // n * n].reshape(-1, n)
+    if len(frames) < 2:
+        return "changing"
+    e_db = 10 * np.log10((frames ** 2).mean(axis=1) + 1e-10)
+    spec = np.abs(np.fft.rfft(frames * np.hanning(n), axis=1))
+    spec = spec / (spec.sum(axis=1, keepdims=True) + 1e-10)  # normalise so loudness doesn't drive flux
+    flux = np.sqrt(((spec[1:] - spec[:-1]) ** 2).sum(axis=1)).mean()
+    stationary = e_db.std() < STATIONARY_ENERGY_STD_DB and flux < STATIONARY_FLUX_MAX
+    return "stationary" if stationary else "changing"
+
+
 def _row(source_id, corpus, kind, group_id, speaker_id, path, dur, licence, noise_class=""):
     sha1 = hashlib.sha1(Path(path).read_bytes()).hexdigest()[:12]
     row = dict(source_id=source_id, corpus=corpus, kind=kind, group_id=group_id,
@@ -103,11 +123,15 @@ def scan_mad(root: Path, out: Path) -> list[dict]:
 
 
 def scan_dns_noise(root: Path, out: Path) -> list[dict]:
+    """DNS clips arrive unlabelled by stationarity; classify each from its own 16k audio."""
     rows = []
     for f in sorted(root.rglob("*.wav")):
         dst = out / "dns_noise" / (f.stem + ".flac")
         dur = to_flac16k(f, dst) if not dst.exists() else sf.info(dst).duration
-        rows.append(_row(f"dnsn:{f.stem}", "dns_noise", "noise", f"dnsn-{f.stem}", "", dst, dur, "DNS-5 (per-shard)", "changing"))
+        x, sr = sf.read(dst, dtype="float32")
+        noise_class = stationarity_class(x, sr)
+        rows.append(_row(f"dnsn:{f.stem}", "dns_noise", "noise", f"dnsn-{f.stem}", "", dst, dur,
+                          "DNS-4 archive noise_fullband (see DNS README per-clip licences)", noise_class))
     return rows
 
 
