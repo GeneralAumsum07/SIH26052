@@ -13,6 +13,7 @@ from torch.utils.data import Dataset
 from vaani.data import impulses, manifests
 from vaani.data.mixer import MixConfig, mix
 from vaani.data.rirs import RirBank
+from vaani.dsp import pipeline
 
 SR = 16000
 BUCKET_SNRS = [-10, -5, 0, 5, 10, 15]
@@ -28,7 +29,8 @@ def _load(path: str, n: int | None, rng) -> np.ndarray:
 
 
 class DynamicMixDataset(Dataset):
-    def __init__(self, manifest_paths, split, bank_path, cfg: MixConfig, crop_s=4.0, epoch_len=20000, seed=0):
+    def __init__(self, manifest_paths, split, bank_path, cfg: MixConfig, crop_s=4.0, epoch_len=20000, seed=0,
+                 with_dsp=False, controller_on=True):
         df = pd.concat([manifests.read(p) for p in manifest_paths])
         df = df[df.split == split]
         self.speech = df[df.kind == "speech"].reset_index(drop=True)
@@ -37,6 +39,8 @@ class DynamicMixDataset(Dataset):
         self.bank_path = bank_path
         self._bank = None
         self.cfg, self.n, self.epoch_len, self.seed = cfg, int(crop_s * SR), epoch_len, seed
+        # with_dsp: run NLMS+features here so the ~150 ms/clip DSP lands in DataLoader workers, not the trainer
+        self.with_dsp, self.controller_on = with_dsp, controller_on
         self.epoch = 0
         assert len(self.speech) and len(self.noise), "empty manifest split"
 
@@ -73,7 +77,11 @@ class DynamicMixDataset(Dataset):
             noise_class = "impulsive+stationary" if noise_class == "stationary" else "impulsive"
         mixed, clean, meta = mix(rng, s, noises, imp, onsets, self.bank, self.cfg)
         meta["noise_class"] = "clean" if meta["clean_bucket"] else noise_class
-        return {"mix": torch.from_numpy(mixed), "clean": torch.from_numpy(clean), "meta": meta}
+        out = {"mix": torch.from_numpy(mixed), "clean": torch.from_numpy(clean), "meta": meta}
+        if self.with_dsp:
+            r = pipeline.run(mixed, controller_on=self.controller_on)
+            out["n_hat"] = torch.from_numpy(r["n_hat"]); out["feats"] = torch.from_numpy(r["features"])
+        return out
 
 
 class RenderedDataset(Dataset):
@@ -98,6 +106,7 @@ class RenderedDataset(Dataset):
 def collate(batch):
     out = {"mix": torch.stack([b["mix"] for b in batch]), "clean": torch.stack([b["clean"] for b in batch]),
            "meta": [b["meta"] for b in batch]}
-    if "twin" in batch[0]:
-        out["twin"] = torch.stack([b["twin"] for b in batch])
+    for k in ("twin", "n_hat", "feats"):
+        if k in batch[0]:
+            out[k] = torch.stack([b[k] for b in batch])
     return out

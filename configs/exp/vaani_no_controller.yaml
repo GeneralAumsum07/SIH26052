@@ -1,0 +1,19 @@
+name: vaani_no_controller
+model: vaani
+controller_on: false
+loss: hybrid
+init_from: vaani/models/checkpoints/model_trained_on_dns3.tar
+data:
+  manifests: [data/manifests/librispeech.parquet, data/manifests/cv_hi.parquet, data/manifests/mad.parquet]
+  bank: data/rirs/bank.npz
+  crop_s: 4.0
+  epoch_len: 20000
+  mix: {}
+val: {dynamic_items: 200}
+optim: {lr: 5.0e-4, lr_new: 1.0e-3, warmup: 500, clip: 5.0}
+batch_size: 32
+epochs: 12
+amp: true
+device: cuda
+num_workers: 4
+seed: 0
