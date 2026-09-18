@@ -1,0 +1,26 @@
+name: gtcrn_finetuned_r2
+model: gtcrn
+controller_on: false
+loss: hybrid
+init_from: runs/gtcrn_finetuned/best.pt
+data:
+  manifests:
+  - data/manifests/librispeech.parquet
+  - data/manifests/esc50.parquet
+  - data/manifests/dns_datasets_fullband.noise_fullband.freesound_000.parquet
+  bank: data/rirs/bank.npz
+  crop_s: 4.0
+  epoch_len: 20000
+  mix: {}
+val:
+  dynamic_items: 200
+optim:
+  lr: 0.00025
+  warmup: 200
+  clip: 5.0
+batch_size: 32
+epochs: 6
+amp: true
+device: cuda
+num_workers: 4
+seed: 0
