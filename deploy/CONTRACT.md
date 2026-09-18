@@ -1,0 +1,58 @@
+# VAANI deployment contract (v1)
+
+Audio: 16 kHz, 2 channels (0 = primary near-mouth, 1 = reference), float32 [-1,1].
+STFT: n_fft 512, hop 256, window = sqrt(periodic Hann 512), center=True (reflect pad 256).
+One model call per hop (16 ms). Latency = one hop (16 ms) + the STFT window's lookahead
+(centre framing straddles the hop, so the last half-window, 16 ms, is not yet available) ~= 32 ms.
+
+## Per frame, in order
+1. NLMS block on the 256 new samples with gate = previous frame's `adapt_gate` (64 taps, mu 0.05, eps 1e-6) -> `n_hat` block. See `dsp_reference/` and `vaani/dsp/nlms.py`.
+2. Features (18, order below) from the current 512-sample primary/reference frames and their spectra. `vaani/dsp/features.py`.
+3. Controller -> `adapt_gate`, `burst_flag`, `reliability`. `vaani/dsp/controller.py`. Thresholds: jump 12 dB, level-diff <= 3 dB, hold 4 frames, ramp 12 frames, speech-freeze 0.6.
+4. ONNX `model.onnx`: inputs `spec6 (1,257,1,6)` = [prim_re, prim_im, ref_re, ref_im, nhat_re, nhat_im], `feats (1,1,18)`, `conv_cache (2,1,16,16,33)`, `tra_cache (2,3,1,1,16)`, `inter_cache (2,1,33,16)`, all float32, all zero-initialised at stream start; outputs `spec_out (1,257,1,2)` (enhanced primary re/im) + the three caches, same shapes, updated. Feed caches back unchanged into the next frame's call.
+5. iSTFT overlap-add with the same sqrt-Hann window, on `spec_out`.
+
+For the *no-controller* configuration: gate = 1, feats = zeros.
+
+## Feature order
+log_energy_delta, spectral_flux, peak_to_rms, clip_frac_primary, clip_frac_reference, speech_presence, coherence_b0..b7, level_diff_db, ref_dropout, nlms_health, prev_gate
+
+(18 total; exact order and definitions in `vaani/dsp/features.py::FEATURE_NAMES`.)
+
+## Cache shapes and zero-init
+All three caches are per-stream (batch=1) state carried frame-to-frame; zero-initialise once
+at stream start (`vaani/models/gtcrn_stream.py::init_caches`), never between frames of the
+same stream:
+- `conv_cache (2,1,16,16,33)` -- dim0 indexes {encoder, decoder}; per-block receptive-field
+  history for the three dilated GTConvBlocks.
+- `tra_cache (2,3,1,1,16)` -- dim0 {encoder, decoder}, dim1 indexes the 3 GTConvBlocks; hidden
+  state for their internal temporal recurrence.
+- `inter_cache (2,1,33,16)` -- dim0 indexes {dpgrnn1, dpgrnn2}; inter-frame GRU hidden state.
+
+## Export and parity
+`vaani/export.py::export(ckpt_path, out_path)` builds the streaming twin (`StreamVaaniNet`),
+loads weights via `convert_to_stream` (a plain `load_state_dict` does not work -- the stream
+conv wrappers nest keys one level deeper), and traces one frame with
+`torch.onnx.export(..., opset_version=17, dynamo=False)` at the shapes above (batch 1, static).
+
+`vaani/export.py::parity_and_timing(ckpt_path, onnx_path, seconds)` runs the ONNX Runtime
+session frame-by-frame (CPU, `intra_op_num_threads=1`) against the batch `VaaniNet` doing the
+same, carrying caches forward exactly as the embedded loop must. On the DNS3-initialised
+VaaniNet checkpoint (`vaani/models/checkpoints/model_trained_on_dns3.tar`, via
+`VaaniNet.from_pretrained_gtcrn`), a 10-second random-input run measured:
+- `max_abs_err` = 4.7e-7 (tolerance: < 1e-4)
+- `ms_per_frame_mean` = 2.20 ms
+- `ms_per_frame_p99` = 3.32 ms
+- ONNX file size: 424 KB
+
+These are single-core desktop-CPU numbers from `parity_and_timing`, not a Pi measurement --
+they only establish that the model is well inside the 16 ms/hop budget in principle. The
+embedded lead must re-run `parity_and_timing`-equivalent timing on the actual target.
+
+A port passes when its `max_abs_err` against the PyTorch stream reference is < 1e-4.
+
+## Golden vectors
+`dsp_reference/vectors/<case>.wav` (stereo input) and `<case>.npz` (n_hat, features, gate, burst, reliability). A port passes when n_hat matches to 1e-4 and gate/burst match exactly.
+
+## Not covered here
+Output crossfade/bypass on low reliability, overrun handling, and radio interfacing are the DSP/embedded leads' responsibility.
