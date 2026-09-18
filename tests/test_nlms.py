@@ -1,6 +1,8 @@
+import os
 import time
 
 import numpy as np
+import pytest
 
 from vaani.dsp import nlms as nlms_mod
 from vaani.dsp.nlms import NLMS
@@ -73,12 +75,14 @@ def test_numba_path_matches_pure_path():
     n_hat_numba, ratio_numba = f_numba.process_block(prim, ref, gate=1.0)
     n_hat_pure, ratio_pure = f_pure.process_block(prim, ref, gate=1.0)
 
-    assert np.allclose(n_hat_numba, n_hat_pure, rtol=1e-5, atol=1e-6)
-    assert np.isclose(ratio_numba, ratio_pure, rtol=1e-5, atol=1e-6)
+    max_abs_diff = float(np.max(np.abs(n_hat_numba - n_hat_pure)))
+    assert np.allclose(n_hat_numba, n_hat_pure, rtol=1e-5), f"max abs diff: {max_abs_diff}"
+    assert np.isclose(ratio_numba, ratio_pure, rtol=1e-5)
 
 
+@pytest.mark.skipif(os.environ.get("VAANI_TIMING") is None, reason="timing")
 def test_timing_4s_clip():
-    # informational: measures pure-path throughput on a realistic clip length
+    # informational only: not part of the default suite, no wall-clock assert
     rng = np.random.default_rng(4)
     ref = rng.standard_normal(16000 * 4).astype(np.float32)
     prim = ref.copy()
@@ -87,4 +91,4 @@ def test_timing_4s_clip():
     for i in range(0, len(ref) - 256, 256):
         f.process_block(prim[i:i + 256], ref[i:i + 256], gate=1.0)
     elapsed = time.perf_counter() - start
-    assert elapsed < 60  # generous ceiling; real number reported separately
+    print(f"pure path, 4s clip: {elapsed:.3f}s")

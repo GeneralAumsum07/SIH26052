@@ -21,37 +21,55 @@ except ImportError:
 
 
 def _process_pure(w, buf, primary, reference, mu, eps):
-    """Reference loop: this exact structure is what gets ported to C."""
+    """Reference loop: this exact structure is what gets ported to C.
+
+    Sums accumulate sequentially k=0..taps-1, and never through Python
+    float() -- w/buf are float32, so an unwrapped dot product stays
+    np.float32; float() would silently promote e and the weight update
+    to float64 and the numba kernel would no longer be the same algorithm.
+    Uses explicit loops (not `w @ buf`) so accumulation order matches the
+    numba kernel exactly -- BLAS dot products are free to sum out of order.
+    """
     n = len(primary)
+    taps = len(w)
     n_hat = np.empty(n, np.float32)
     for i in range(n):
         buf[1:] = buf[:-1]; buf[0] = reference[i]
-        y = float(w @ buf)
+        y = np.float32(0.0)
+        for k in range(taps):
+            y += w[k] * buf[k]
         n_hat[i] = y
         if mu > 0.0:
             e = primary[i] - y
-            w += (mu * e / (float(buf @ buf) + eps)) * buf
+            energy = np.float32(0.0)
+            for k in range(taps):
+                energy += buf[k] * buf[k]
+            step = mu * e / (energy + eps)
+            for k in range(taps):
+                w[k] += step * buf[k]
     return n_hat
 
 
 if _HAVE_NUMBA:
     @njit(cache=True)
     def _process_numba(w, buf, primary, reference, mu, eps):
+        """Literal transcription of _process_pure -- same accumulation order."""
         n = len(primary)
+        taps = len(w)
         n_hat = np.empty(n, np.float32)
         for i in range(n):
             buf[1:] = buf[:-1]; buf[0] = reference[i]
             y = np.float32(0.0)
-            for k in range(len(w)):
+            for k in range(taps):
                 y += w[k] * buf[k]
             n_hat[i] = y
             if mu > 0.0:
                 e = primary[i] - y
                 energy = np.float32(0.0)
-                for k in range(len(buf)):
+                for k in range(taps):
                     energy += buf[k] * buf[k]
                 step = mu * e / (energy + eps)
-                for k in range(len(w)):
+                for k in range(taps):
                     w[k] += step * buf[k]
         return n_hat
 
