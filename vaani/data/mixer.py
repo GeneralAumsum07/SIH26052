@@ -107,13 +107,16 @@ def mix(rng, speech, noises, impulse, impulse_onsets_s, bank, cfg: MixConfig):
     out = s2 + noise2
 
     # --- impulse event: level set independently of SNR, recorded as peak ---
+    # always draw one int to advance rng, so the main stream is identical whether or
+    # not an impulse is present (needed for the twin-clip recovery-time comparison)
+    imp_rng = np.random.default_rng(int(rng.integers(2**31)))
     if impulse is not None:
-        pk_db = float(rng.uniform(*cfg.impulse_peak_db))
-        start = int(rng.integers(0, max(1, n - len(impulse))))
+        pk_db = float(imp_rng.uniform(*cfg.impulse_peak_db))
+        start = int(imp_rng.integers(0, max(1, n - len(impulse))))
         seg = impulse[: n - start]
         ref_rms = np.sqrt(ps)
         # impulses are far-field: similar level at both mics, small decorrelation
-        imp2 = np.stack([seg, lfilter([1.0, rng.uniform(-0.2, 0.2)], [1.0], seg)]).astype(np.float32)
+        imp2 = np.stack([seg, lfilter([1.0, imp_rng.uniform(-0.2, 0.2)], [1.0], seg)]).astype(np.float32)
         imp2 *= ref_rms * 10 ** (pk_db / 20)
         out[:, start:start + len(seg)] += imp2
         meta["impulse_peak_db"] = pk_db

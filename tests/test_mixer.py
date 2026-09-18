@@ -108,6 +108,33 @@ def test_impulse_injection_recorded_and_audible():
     assert burst_peak > 3 * (noise_floor + 1e-9)
 
 
+def test_twin_without_impulse_matches_outside_impulse_window():
+    # same seed, with vs. without impulse: everything outside the impulse window must be
+    # bit-identical so the recovery-time metric compares apples to apples. A rectangular,
+    # constant-amplitude impulse (rather than impulses.generate's decay taper) gives sharp,
+    # unambiguous edges -- a tapered edge can differ by less than float32 precision can show.
+    imp = np.ones(1600, np.float32)  # 0.1 s pulse, onset offset 0.0
+    cfg = mixer.MixConfig(p_room=0.0, p_clean=0.0, p_clip=0.0, p_wind=0.0, p_ref_dropout=0.0,
+                           impulse_peak_db=(-3.0, -3.0))
+    s = _speech(np.random.default_rng(2))
+    n = [np.random.default_rng(2).standard_normal(len(s)).astype(np.float32)]
+    rng_a = np.random.default_rng(0)
+    mix_a, clean_a, meta_a = mixer.mix(rng_a, s, list(n), imp, [0.0], None, cfg)
+    rng_b = np.random.default_rng(0)
+    mix_b, clean_b, meta_b = mixer.mix(rng_b, s, list(n), None, [], None, cfg)
+
+    start = int(round(meta_a["impulse_onsets_s"][0] * mixer.SR))  # onset == insertion point (offset 0.0)
+    # mix() guarantees start + len(impulse) <= n, so seg is never truncated; the +1 guard covers
+    # the 1-sample causal bleed from the post-impulse tilt IIR filter (memory of the last sample)
+    end = start + len(imp) + 1
+    assert np.array_equal(mix_a[:, :start], mix_b[:, :start])
+    assert np.array_equal(mix_a[:, end:], mix_b[:, end:])
+    assert np.array_equal(clean_a, clean_b)
+    meta_keys = set(meta_a) - {"impulse_peak_db", "impulse_onsets_s"}
+    for k in meta_keys:
+        assert meta_a[k] == meta_b[k], k
+
+
 def test_clip_bucket_forces_clip_and_stays_bounded():
     rng = np.random.default_rng(0)
     cfg = mixer.MixConfig(p_room=0.0, p_clean=0.0, p_clip=1.0, p_wind=0.0, p_ref_dropout=0.0)
