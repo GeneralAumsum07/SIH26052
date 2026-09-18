@@ -36,8 +36,7 @@ def estimate_snr_db(x: np.ndarray, sr: int, frame_ms: float = 20.0) -> float:
     return float(10 * np.log10(speech / noise))
 
 
-# thresholds picked on synthetic probes (white/pink/AM-hum vs gated bursts/chirp): see
-# .superpowers/sdd/2026-09-18-vaani-training-stack/task-16-prep-report.md
+# thresholds set on synthetic probes: white/pink/AM-hum sit <1.8 dB / <0.07, gated bursts and chirps >4x past
 STATIONARY_ENERGY_STD_DB = 5.0
 STATIONARY_FLUX_MAX = 0.15
 
