@@ -1,6 +1,7 @@
 """Resumable fetch + manifest build. Run repeatedly; it skips what exists."""
 import argparse
 import tarfile
+import zipfile
 from pathlib import Path
 
 import requests
@@ -33,8 +34,12 @@ def extract(tar: Path, to: Path) -> None:
     if (to / ".done").exists():
         return
     to.mkdir(parents=True, exist_ok=True)
-    with tarfile.open(tar) as t:
-        t.extractall(to, filter="data")
+    if tar.suffix == ".zip":
+        with zipfile.ZipFile(tar) as z:
+            z.extractall(to)
+    else:
+        with tarfile.open(tar) as t:
+            t.extractall(to, filter="data")
     (to / ".done").touch()
 
 
@@ -51,6 +56,13 @@ def main():
     download(ls["url"], tar)
     extract(tar, Path(ls["extract_to"]))
     manifests.write(sources.scan_librispeech(Path(ls["extract_to"]), raw, ls["max_hours"]), mdir / "librispeech.parquet")
+
+    esc = cfg["sources"].get("esc50")
+    if esc:
+        zp = Path("data/download/esc50/master.zip")
+        download(esc["url"], zp)
+        extract(zp, Path("data/download/esc50"))
+        manifests.write(sources.scan_esc50(Path(esc["extract_to"]), raw), mdir / "esc50.parquet")
 
     cv = cfg["sources"]["cv_hi"]
     if Path(cv["extract_to"], "validated.tsv").exists():

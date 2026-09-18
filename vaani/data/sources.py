@@ -134,6 +134,34 @@ def scan_dns_noise(root: Path, out: Path) -> list[dict]:
     return rows
 
 
+# ESC-50 categories that are human vocalisations (too speech-like for a noise corpus) or clearly impulsive.
+ESC50_EXCLUDE = {"crying_baby", "sneezing", "coughing", "laughing", "breathing", "snoring"}
+ESC50_IMPULSIVE = {"door_wood_knock", "glass_breaking", "fireworks", "clapping", "mouse_click", "can_opening",
+                   "church_bells", "footsteps", "keyboard_typing", "clock_tick"}
+
+
+def scan_esc50(root: Path, out: Path) -> list[dict]:
+    """Layout <root>/meta/esc50.csv + <root>/audio/<clip>.wav; src_file groups takes of one recording."""
+    import csv
+    rows = []
+    with open(root / "meta" / "esc50.csv", newline="") as fh:
+        for m in sorted(csv.DictReader(fh), key=lambda m: m["filename"]):
+            cat = m["category"]
+            if cat in ESC50_EXCLUDE:
+                continue
+            f = root / "audio" / m["filename"]
+            dst = out / "esc50" / cat / (f.stem + ".flac")
+            dur = to_flac16k(f, dst) if not dst.exists() else sf.info(dst).duration
+            if cat in ESC50_IMPULSIVE:
+                noise_class = "impulsive"
+            else:
+                x, sr = sf.read(dst, dtype="float32")
+                noise_class = stationarity_class(x, sr)
+            rows.append(_row(f"esc50:{cat}/{f.stem}", "esc50", "noise", f"esc50-{m['src_file']}", "", dst, dur,
+                              "ESC-50 (CC BY-NC per clip, see meta)", noise_class))
+    return rows
+
+
 def scan_dns_speech(root: Path, out: Path) -> list[dict]:
     """Filenames carry a reader/book id before the first '_'."""
     rows = []

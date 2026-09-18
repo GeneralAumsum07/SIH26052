@@ -6,6 +6,10 @@ sources:
     url: https://www.openslr.org/resources/12/train-clean-100.tar.gz
     extract_to: data/download/librispeech
     max_hours: 20
+  esc50:
+    # Real environmental noise for round 1 (labelled, 2000 x 5 s). Human-vocal classes are excluded.
+    url: https://github.com/karolpiczak/ESC-50/archive/master.zip
+    extract_to: data/download/esc50/ESC-50-master
   cv_hi:
     # Common Voice requires a logged-in download; place the extracted
     # hi/ folder at data/download/cv_hi manually. fetch_data.py skips it if absent.
