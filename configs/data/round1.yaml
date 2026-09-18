@@ -11,12 +11,12 @@ sources:
     url: https://github.com/karolpiczak/ESC-50/archive/master.zip
     extract_to: data/download/esc50/ESC-50-master
   cv_hi:
-    # Common Voice requires a logged-in download; place the extracted
-    # hi/ folder at data/download/cv_hi manually. fetch_data.py skips it if absent.
-    extract_to: data/download/cv_hi
+    # Common Voice needs a logged-in download: drop the hi tar.gz at `archive`; fetch_data extracts it.
+    archive: data/download/cv_hi.tar.gz
+    extract_to: data/download/cv_hi/cv-corpus-27.0-2026-09-11/hi
     min_snr_db: 30
   mad:
-    # https://github.com/kaen2891/military_audio_dataset -> packaged download.
-    # Place extracted class folders at data/download/mad. Record the version here:
-    version: "TBD-record-after-download"
-    extract_to: data/download/mad
+    # https://github.com/kaen2891/military_audio_dataset -> MAD_dataset.zip (7468 wav, 2024-10-31 build).
+    archive: data/download/mad.zip
+    version: "MAD_dataset.zip, files dated 2024-10-31, downloaded 2026-09-18"
+    extract_to: data/download/mad/MAD_dataset

@@ -100,24 +100,27 @@ def scan_commonvoice_hi(root: Path, out: Path, min_snr_db: float = 30.0) -> list
     return rows
 
 
-# MAD class names -> our noise taxonomy; anything unlisted is "changing".
-MAD_CLASS_MAP = {
-    "gunshot": "impulsive", "explosion": "impulsive", "artillery": "impulsive",
-    "helicopter": "stationary", "jet": "stationary", "engine": "stationary",
-    "vehicle": "stationary", "tank": "stationary",
-}
+# MAD label indices (cls_list in the repo's main.py). "communication" is radio speech: not noise.
+MAD_CLASSES = ["communication", "shooting", "footsteps", "shelling", "vehicle", "helicopter", "fighter"]
+MAD_CLASS_MAP = {"shooting": "impulsive", "shelling": "impulsive", "footsteps": "impulsive",
+                 "vehicle": "stationary", "helicopter": "stationary", "fighter": "stationary"}
 
 
 def scan_mad(root: Path, out: Path) -> list[dict]:
-    """Layout <root>/<class>/<clip>.wav; stem prefix before last '_' groups excerpts."""
+    """MAD_dataset/{training,test}.csv rows: path, label idx, youtube title/url; one group per source video."""
+    import csv
     rows = []
-    for f in sorted(root.rglob("*.wav")):
-        cls = f.parent.name.lower()
-        noise_class = next((v for k, v in MAD_CLASS_MAP.items() if k in cls), "changing")
-        group = f"mad-{cls}-{f.stem.rsplit('_', 1)[0]}"
-        dst = out / "mad" / cls / (f.stem + ".flac")
-        dur = to_flac16k(f, dst) if not dst.exists() else sf.info(dst).duration
-        rows.append(_row(f"mad:{cls}/{f.stem}", "mad", "noise", group, "", dst, dur, "MAD (see repo)", noise_class))
+    for csv_name in ("training.csv", "test.csv"):
+        with open(root / csv_name, encoding="utf-8") as fh:
+            for r in csv.DictReader(fh):
+                cls = MAD_CLASSES[int(r["label"])]
+                if cls not in MAD_CLASS_MAP:
+                    continue
+                f = root / r["path"]; vid = f.parent.name
+                dst = out / "mad" / cls / f"{vid}_{f.stem}.flac"
+                dur = to_flac16k(f, dst) if not dst.exists() else sf.info(dst).duration
+                rows.append(_row(f"mad:{cls}/{vid}_{f.stem}", "mad", "noise", f"mad-{vid}", "", dst, dur,
+                                 "MAD (YouTube-sourced; see repo)", MAD_CLASS_MAP[cls]))
     return rows
 
 

@@ -71,13 +71,17 @@ def main():
         manifests.write(sources.scan_esc50(Path(esc["extract_to"]), raw), mdir / "esc50.parquet")
 
     cv = cfg["sources"]["cv_hi"]
+    if Path(cv["archive"]).exists():
+        extract(Path(cv["archive"]), Path("data/download/cv_hi"))
     if Path(cv["extract_to"], "validated.tsv").exists():
         manifests.write(sources.scan_commonvoice_hi(Path(cv["extract_to"]), raw, cv["min_snr_db"]), mdir / "cv_hi.parquet")
     else:
         print("[cv_hi] not found - skipped (manual download required)")
 
     mad = cfg["sources"]["mad"]
-    if Path(mad["extract_to"]).exists():
+    if Path(mad["archive"]).exists():
+        extract(Path(mad["archive"]), Path("data/download/mad"))
+    if Path(mad["extract_to"], "training.csv").exists():
         manifests.write(sources.scan_mad(Path(mad["extract_to"]), raw), mdir / "mad.parquet")
     else:
         print("[mad] not found - skipped (manual download required)")

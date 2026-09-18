@@ -77,3 +77,20 @@ def test_scan_esc50_excludes_vocal_and_labels_impulsive(tmp_path):
     assert by_cat["rain"]["noise_class"] == "stationary"
     assert by_cat["door_wood_knock"]["noise_class"] == "impulsive"
     assert by_cat["rain"]["group_id"] == "esc50-100"
+
+
+def test_scan_mad_reads_csv_labels_and_drops_communication(tmp_path):
+    root = tmp_path / "MAD_dataset"; (root / "test" / "7").mkdir(parents=True)
+    for i in range(3):
+        sf.write(root / "test" / "7" / f"{i}.wav", _white_noise(), SR)
+    with open(root / "test.csv", "w") as fh:
+        fh.write(",path,label,youtube title,youtube url\n")
+        for i, lab in enumerate([0, 1, 5]):
+            fh.write(f"{i},test/7/{i}.wav,{lab},t,u\n")
+    open(root / "training.csv", "w").write(",path,label,youtube title,youtube url\n")
+    rows = sources.scan_mad(root, tmp_path / "out")
+    by_id = {r["source_id"]: r for r in rows}
+    assert set(by_id) == {"mad:shooting/7_1", "mad:helicopter/7_2"}
+    assert by_id["mad:shooting/7_1"]["noise_class"] == "impulsive"
+    assert by_id["mad:helicopter/7_2"]["noise_class"] == "stationary"
+    assert all(r["group_id"] == "mad-7" for r in rows)
