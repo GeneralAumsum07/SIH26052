@@ -13,8 +13,13 @@ regeneration is deterministic.
 
 Use these to check a C/embedded port against the Python reference
 (`vaani/dsp/features.py`, `controller.py`, `nlms.py`, `pipeline.py`).
+`pipeline.run` is a single causal pass: NLMS block k is gated by `gate[k-1]`
+(1.0 for k=0), its health feeds features for frame k, and the controller's
+`gate[k]` from frame k gates block k+1 -- exactly the streaming order the
+embedded port runs, so `n_hat` here needs no non-causal replay to match.
 
 Tolerance: match `n_hat` and `features` to within `1e-4` absolute (float32
 reference, accumulation-order differences in the C port are expected to stay
 well under this); `gate`/`burst`/`reliability` must match exactly since they
-come from discrete threshold logic.
+come from discrete threshold logic and both sides consume the same causal
+per-frame ordering.

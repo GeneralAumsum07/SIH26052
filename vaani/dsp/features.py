@@ -38,11 +38,8 @@ class FrameFeatures:
         f[3] = float((np.abs(p) > CLIP).mean()); f[4] = float((np.abs(r) > CLIP).mean())
         er = float((r ** 2).mean() + 1e-10)
         # near-mouth speech: primary >> reference. far-field noise: ~equal.
-        # Threshold sits above typical near-field level gaps (~14 dB from mic
-        # placement alone) so ordinary two-mic geometry does not permanently
-        # freeze adaptation; only a pronounced, sustained gap counts as "speech".
         ratio_db = 10 * np.log10(e / er)
-        sp = float(np.clip((ratio_db - 12.0) / 18.0, 0, 1))     # 12 dB -> 0, 30 dB -> 1
+        sp = float(np.clip((ratio_db - 3.0) / 9.0, 0, 1))      # 3 dB -> 0, 12 dB -> 1
         self.sp_smooth = self.alpha * self.sp_smooth + (1 - self.alpha) * sp
         f[5] = self.sp_smooth
         a = self.alpha
