@@ -1,0 +1,47 @@
+# Round 3 (plan 2026-09-20 Tier 2): same architecture as r2, retrained on the corrected physics.
+# Warm-start from r2 best; the loss and mixer changes are config-only.
+name: vaani_full_r3
+model: vaani
+controller_on: true
+loss: hybrid
+init_from: runs/vaani_full_r2/best.pt
+data:
+  manifests:
+  - data/manifests/librispeech_100h.parquet     # full train-clean-100 (r1/r2 used 20 h)
+  - data/manifests/ears.parquet                 # D5: vocal-effort axis (whisper/loud/fast), CC BY-NC
+  - data/manifests/cv_hi.parquet
+  - data/manifests/esc50.parquet
+  - data/manifests/dns_datasets_fullband.noise_fullband.freesound_000.tar.parquet
+  - data/manifests/mad.parquet
+  - data/manifests/gunshots.parquet             # D2: real transients (crest-audited) / overload material
+  - data/manifests/drone.parquet                # D1: multirotor tonal noise
+  bank: data/rirs/bank.npz
+  crop_s: 4.0
+  epoch_len: 20000
+  mix:
+    # 2.2 data physics. Eval sets keep MixConfig defaults; these apply to training draws only.
+    impulse_peak_db: [15, 45]                   # p50 crest > 25 dB over background (tests/test_mixer.py)
+    impulse_kinds: [burst, click_train]         # gated_noise is a level step (crest 15 dB), not an impulse
+    impulse_room: true                          # impulse through the noise RIR on the room path
+    overload_softclip: true                     # ADC saturates; speech keeps its level under a burst
+    speech_rms_db: [-32, -18]                   # recorder gain: sets how much headroom a burst has before overload
+    # mic_mismatch_db stays 3.0: the 2.1 floor tracker's speech-presence margin (ref_speech_gain <= -8 dB) breaks at +-10
+loss_cfg:
+  w_complex: 50
+  w_mag: 50
+  p: 0.5
+  w_snr: 0.2                                    # absolute-SNR term; report SNR and PESQ together, it trades against PESQ
+  snr_max_db: 30
+val:
+  dynamic_items: 200
+optim:
+  lr: 0.00025
+  lr_new: 0.0005
+  warmup: 200
+  clip: 5.0
+batch_size: 32
+epochs: 8
+amp: true
+device: cuda
+num_workers: 8
+seed: 0

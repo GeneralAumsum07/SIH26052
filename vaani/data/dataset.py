@@ -75,7 +75,9 @@ class DynamicMixDataset(Dataset):
                 # does so impulse_peak_db means the same thing, and find the real onsets in the waveform
                 imp = imp / (np.abs(imp).max() + 1e-9); onsets = impulses.detect_onsets(imp, SR)
             else:
-                imp, m = impulses.generate(rng); onsets = m["onsets_s"]
+                # a configured kind list draws here (one rng call either way, so the stream is unchanged when None)
+                kind = str(rng.choice(self.cfg.impulse_kinds)) if self.cfg.impulse_kinds else None
+                imp, m = impulses.generate(rng, kind=kind); onsets = m["onsets_s"]
             noise_class = "impulsive+stationary" if noise_class == "stationary" else "impulsive"
         mixed, clean, meta = mix(rng, s, noises, imp, onsets, self.bank, self.cfg)
         meta["noise_class"] = "clean" if meta["clean_bucket"] else noise_class

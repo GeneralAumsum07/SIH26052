@@ -27,6 +27,20 @@ class MixConfig:
     ref_delay_ms: tuple[float, float] = (0.1, 0.5)
     mic_mismatch_db: float = 3.0
     impulse_peak_db: tuple[float, float] = (-6.0, 12.0)   # relative to speech-active RMS on primary
+    # r3 physics knobs; defaults keep the r1/r2 eval-set contract (same rng stream, same hashes)
+    impulse_kinds: tuple[str, ...] | None = None   # synthetic kinds to draw from; None = impulses.KINDS
+    impulse_room: bool = False                     # room path: impulse arrives through a noise RIR, not a 2-tap decorrelator
+    overload_softclip: bool = False                # a burst past full scale saturates the ADC instead of scaling the speech down
+    speech_rms_db: tuple[float, float] | None = None  # recorder gain: speech-active RMS in dBFS; None = corpus level as stored
+
+
+def softclip(x: np.ndarray, knee: float = 0.7) -> np.ndarray:
+    """Linear below `knee`, tanh-compressed above, asymptote at 1.0: an ADC front-end that saturates, not a peak normaliser."""
+    a = np.abs(x)
+    over = a > knee
+    y = x.copy()
+    y[over] = np.sign(x[over]) * (knee + (1 - knee) * np.tanh((a[over] - knee) / (1 - knee)))
+    return y.astype(np.float32)
 
 
 def speech_active_power(x: np.ndarray, frame: int = 320, thresh_db: float = -30.0) -> float:
@@ -66,10 +80,17 @@ def mix(rng, speech, noises, impulse, impulse_onsets_s, bank, cfg: MixConfig, no
     meta = {"clean_bucket": False, "clipped": False, "ref_dropout": False, "impulse_peak_db": None,
             "impulse_onsets_s": [], "ref_speech_gain_db": None, "norm_gain": 1.0, "snr_achieved_db": None}
     speech = speech.astype(np.float32)
+    if cfg.speech_rms_db is not None:
+        # the overload headroom is whatever sits between the speech and full scale, so the recorder gain must vary too
+        tgt = 10 ** (float(rng.uniform(*cfg.speech_rms_db)) / 20)
+        speech = speech * (tgt / (np.sqrt(speech_active_power(speech)) + 1e-9))
 
     use_room = bank is not None and rng.random() < cfg.p_room
     meta["path"] = "room" if use_room else "param"
+    if cfg.overload_softclip:
+        meta["overloaded"] = False  # only under the r3 model: r1/r2 eval-set hashes cover the meta JSON byte-for-byte
 
+    r = None
     if use_room:
         r = bank.sample(rng)
         # normalise so the primary direct path has unit gain: SNR is defined at the primary
@@ -119,11 +140,21 @@ def mix(rng, speech, noises, impulse, impulse_onsets_s, bank, cfg: MixConfig, no
         seg = impulse[: n - start]
         ref_rms = np.sqrt(ps)
         # impulses are far-field: similar level at both mics, small decorrelation
-        imp2 = np.stack([seg, lfilter([1.0, imp_rng.uniform(-0.2, 0.2)], [1.0], seg)]).astype(np.float32)
+        decor = imp_rng.uniform(-0.2, 0.2)  # drawn unconditionally so the stream matches whichever branch runs
+        if cfg.impulse_room and r is not None:
+            # the same room the noise came through: real reverberant tail on both mics, ref no longer a 2-tap copy
+            h_i = r["noise"][-1]; h_i = h_i / (np.abs(h_i[0]).max() + 1e-9)
+            imp2 = _conv2(seg, h_i, len(seg))
+        else:
+            imp2 = np.stack([seg, lfilter([1.0, decor], [1.0], seg)]).astype(np.float32)
         imp2 *= ref_rms * 10 ** (pk_db / 20)
         out[:, start:start + len(seg)] += imp2
         meta["impulse_peak_db"] = pk_db
         meta["impulse_onsets_s"] = [start / SR + o for o in impulse_onsets_s]
+        if cfg.overload_softclip and np.abs(out).max() > 1.0:
+            # both mics saturate; the clean target is untouched (nothing recovers a slammed ADC) and the final
+            # normaliser then leaves speech at its recorded level instead of burying it under a 45 dB burst
+            out = softclip(out); meta["overloaded"] = True
 
     # --- common augmentations ---
     g = rng.uniform(-cfg.mic_mismatch_db, cfg.mic_mismatch_db)
