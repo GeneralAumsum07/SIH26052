@@ -94,3 +94,19 @@ def test_scan_mad_reads_csv_labels_and_drops_communication(tmp_path):
     assert by_id["mad:shooting/7_1"]["noise_class"] == "impulsive"
     assert by_id["mad:helicopter/7_2"]["noise_class"] == "stationary"
     assert all(r["group_id"] == "mad-7" for r in rows)
+
+
+def test_scan_gunshots_groups_channels_and_clips_by_recording(tmp_path):
+    # Zenodo 7004819 layout: <firearm>/<uuid>[_chanN]_vK.wav; every clip of one recording must share a split
+    root = tmp_path / "edge-collected-gunshot-audio"
+    (root / "glock_17").mkdir(parents=True); (root / "ar_556").mkdir()
+    u1, u2 = "0a07b229-7d2b-4d2b-8f32-c94cbc7b1487", "ffffffff-0000-0000-0000-000000000001"
+    for name in (f"{u1}_chan5_v1", f"{u1}_v0", f"{u1}_chan0_v0"):
+        sf.write(root / "glock_17" / f"{name}.wav", _white_noise(), 44100)
+    sf.write(root / "ar_556" / f"{u2}_v0.wav", _white_noise(), 44100)
+    rows = sources.scan_gunshots(root, tmp_path / "out")
+    assert len(rows) == 4
+    assert {r["group_id"] for r in rows if u1 in r["source_id"]} == {f"gun-{u1}"}
+    assert all(r["noise_class"] == "impulsive" and r["corpus"] == "gunshots" and r["kind"] == "noise" for r in rows)
+    assert {r["source_id"] for r in rows} >= {f"gun:glock_17/{u1}_v0", f"gun:ar_556/{u2}_v0"}
+    assert all(r["licence"] == "CC BY 4.0" for r in rows)

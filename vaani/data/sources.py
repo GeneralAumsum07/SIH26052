@@ -174,3 +174,15 @@ def scan_dns_speech(root: Path, out: Path) -> list[dict]:
         dur = to_flac16k(f, dst) if not dst.exists() else sf.info(dst).duration
         rows.append(_row(f"dnss:{f.stem}", "dns_speech", "speech", f"dns-spk-{spk}", spk, dst, dur, "DNS-5 (per-shard)"))
     return rows
+
+
+def scan_gunshots(root: Path, out: Path) -> list[dict]:
+    """Zenodo 7004819 (Kabealo et al., Data in Brief 2023): <firearm>/<uuid>[_chanN]_vK.wav at 44.1k.
+    Channel splits, the channel mean and every clip of one recording share the uuid, so they share a split."""
+    rows = []
+    for f in sorted(root.rglob("*.wav")):
+        uuid = f.stem.split("_")[0]; arm = f.parent.name
+        dst = out / "gunshots" / arm / (f.stem + ".flac")
+        dur = to_flac16k(f, dst) if not dst.exists() else sf.info(dst).duration
+        rows.append(_row(f"gun:{arm}/{f.stem}", "gunshots", "noise", f"gun-{uuid}", "", dst, dur, "CC BY 4.0", "impulsive"))
+    return rows

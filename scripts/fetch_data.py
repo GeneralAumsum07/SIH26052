@@ -86,6 +86,13 @@ def main():
     else:
         print("[mad] not found - skipped (manual download required)")
 
+    gun = cfg["sources"].get("gunshots")
+    if gun:
+        zp = Path(gun["archive"])
+        download(gun["url"], zp)
+        extract(zp, zp.parent)
+        manifests.write(sources.scan_gunshots(Path(gun["extract_to"]), raw), mdir / "gunshots.parquet")
+
     for url in a.dns_shards:
         tar = Path("data/download/dns") / Path(url).name
         download(url, tar)

@@ -20,3 +20,10 @@ sources:
     archive: data/download/mad.zip
     version: "MAD_dataset.zip, files dated 2024-10-31, downloaded 2026-09-18"
     extract_to: data/download/mad/MAD_dataset
+  gunshots:
+    # Zenodo 7004819, Kabealo et al. 2023 (Data in Brief), CC BY 4.0: 2,148 mono 44.1k WAV, four firearms,
+    # recorded on Pi 3B+/Zero W + USB mics and phones. Run scripts/crest_audit.py before trusting it as a
+    # clean transient; the plan expects it to serve the overload buckets first.
+    url: https://zenodo.org/api/records/7004819/files/edge-collected-gunshot-audio.zip/content
+    archive: data/download/gunshots/edge-collected-gunshot-audio.zip
+    extract_to: data/download/gunshots/edge-collected-gunshot-audio
