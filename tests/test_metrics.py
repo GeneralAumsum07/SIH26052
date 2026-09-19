@@ -43,7 +43,7 @@ def _mini_eval_set(tmp_path):
     bank = RirBank(bank_path)
 
     root = tmp_path / "eval" / "test" / "stationary_0"; root.mkdir(parents=True)
-    m, c, meta, twin = render_bucket_item([0, 1, 100, 0], speech_df, pool_df, sr, 0.0, False, bank)
+    m, c, meta, twin = render_bucket_item([0, 1, 100, 0], speech_df, pool_df, sr, 0.0, None, bank)
     meta["noise_class"] = "stationary"
     sf.write(root / "0000.mix.wav", m.T, sr); sf.write(root / "0000.clean.wav", c, sr)
     json.dump(meta, open(root / "0000.json", "w"))

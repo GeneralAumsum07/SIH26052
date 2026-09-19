@@ -71,7 +71,7 @@ def test_render_bucket_item_twin_matches_outside_impulse_window(tmp_path):
         noise_rows.append(dict(path=str(p)))
     speech_df, pool_df = pd.DataFrame(speech_rows), pd.DataFrame(noise_rows)
 
-    m, c, meta, twin = render_bucket_item([1234, 7, 105, 0], speech_df, pool_df, n=32000, snr=5, burst=True, bank=None)
+    m, c, meta, twin = render_bucket_item([1234, 7, 105, 0], speech_df, pool_df, n=32000, snr=5, impulse="synthetic", bank=None)
     assert twin is not None
     start = int(round(meta["impulse_onsets_s"][0] * dataset.SR))
     end = start + 1  # exact impulse length isn't exposed here; check the region strictly before onset

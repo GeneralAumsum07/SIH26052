@@ -44,7 +44,7 @@ def add_wer(df, ref_csv):
     return df
 
 
-def fmt(t): return f"{t[0]:.2f} [{t[1]:.2f},{t[2]:.2f}]"
+def fmt(t): return f"{t[0]:.3f} [{t[1]:.3f},{t[2]:.3f}]"
 
 
 def _mark(metric, mean):
@@ -57,7 +57,7 @@ def _cell(g, metrics=METRICS):
     if len(g) == 0: return "-"
     parts = []
     for m in metrics:
-        t = ci(g[m]); parts.append(f"{m}={t[0]:.2f}{_mark(m, t[0])}")
+        t = ci(g[m]); parts.append(f"{m}={t[0]:.3f}{_mark(m, t[0])}")
     if "recovery_s" in g and g.recovery_s.notna().any():
         r = pd.to_numeric(g.recovery_s, errors="coerce")
         parts.append(f"rec={r.median():.2f}s")
@@ -72,19 +72,31 @@ def main():
     metrics = list(METRICS)
     if a.asr_ref:
         df = add_wer(df, a.asr_ref); metrics.append("wer")
-    df["nominal"] = (~df.clipped) & (~df.ref_dropout) & df.snr_in.isin([0, 5, 10])
+    # older CSVs predate the fault column; treat them as fault-free
+    if "fault" not in df: df["fault"] = np.nan
+    df["fault"] = df.fault.where(df.fault.notna(), None)
+    df["snr_gain"] = df.snr_out - df.snr_in  # improvement reading; the target is judged on absolute snr_out
+    df["nominal"] = (~df.clipped) & (~df.ref_dropout) & df.fault.isna() & df.snr_in.isin([0, 5, 10])
     lines = ["# Ablation matrix", "",
              "PESQ: wideband P.862.2 @16 kHz (`pesq` package). P.862 is withdrawn by ITU in favour of P.863; reported because the brief requests it.",
              "SNR_out = 10log10(||s||^2/||s_hat-s||^2) vs clean primary (distortion counts as error). SI-SDR reported separately.",
              "Targets (problem statement): SNR_out>15 dB, STOI>0.85, PESQ>2.5 - marked per bucket row and per overall nominal row.",
              *(["WER: faster-whisper small on the enhanced output vs the SAME model's transcript of the clean reference (no human transcripts in the eval set) - supporting evidence only."] if a.asr_ref else []), "",
-             "## Nominal envelope (unclipped, no reference fault, input SNR 0/5/10 dB)", "",
-             "| system | n | " + " | ".join(metrics) + " |", "|---|---|" + "---|" * len(metrics)]
+             "## Nominal envelope (unclipped, no reference fault, no fault bucket, input SNR 0/5/10 dB)", "",
+             "snr_gain = snr_out - snr_in, the improvement reading; targets are marked on absolute snr_out only.", "",
+             "| system | n | " + " | ".join(metrics + ["snr_gain"]) + " |", "|---|---|" + "---|" * (len(metrics) + 1)]
     for sysname, g in df[df.nominal].groupby("system"):
         cells = []
-        for m in metrics:
+        for m in metrics + ["snr_gain"]:
             t = ci(g[m]); cells.append(fmt(t) + _mark(m, t[0]))
         lines.append(f"| {sysname} | {len(g)} | " + " | ".join(cells) + " |")
+    if df.fault.notna().any():
+        # fault buckets share seeds with fault_none, so each row reads as a delta against that reference clip set
+        lines += ["", "## Reliability faults (outside the nominal envelope; same speech/noise/room per seed, fault is the only variable)", "",
+                  "| fault | " + " | ".join(systems := sorted(df.system.unique())) + " |", "|---|" + "---|" * len(systems)]
+        fd = df[df.fault.notna()]
+        for fault, gf in fd.groupby("fault"):
+            lines.append(f"| {fault} | " + " | ".join(_cell(gf[gf.system == s], metrics) for s in systems) + " |")
     systems = sorted(df.system.unique())
     lines += ["", "## Per bucket (all systems)", ""]
     lines += ["| bucket | " + " | ".join(systems) + " |", "|---|" + "---|" * len(systems)]

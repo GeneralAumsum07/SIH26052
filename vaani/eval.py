@@ -51,7 +51,7 @@ def _init(system, root, split):
 def _nan_row(meta):
     return dict(system=_sys, id=meta.get("id"), bucket=meta.get("bucket"), noise_class=meta.get("noise_class"),
                 snr_in=meta.get("snr_db"), clipped=meta.get("clipped"), ref_dropout=meta.get("ref_dropout"),
-                impulse_peak_db=meta.get("impulse_peak_db"), snr_out=float("nan"), si_sdr=float("nan"),
+                impulse_peak_db=meta.get("impulse_peak_db"), fault=meta.get("fault"), snr_out=float("nan"), si_sdr=float("nan"),
                 stoi=float("nan"), pesq_wb=float("nan"), recovery_s=float("nan"), asr_text="")
 
 
@@ -90,7 +90,7 @@ def main():
         except ImportError:
             print("faster-whisper not installed; --asr rows will be NaN")  # never a hard dependency
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
-    cols = ["system", "id", "bucket", "noise_class", "snr_in", "clipped", "ref_dropout", "impulse_peak_db",
+    cols = ["system", "id", "bucket", "noise_class", "snr_in", "clipped", "ref_dropout", "impulse_peak_db", "fault",
             "snr_out", "si_sdr", "stoi", "pesq_wb", "recovery_s", "asr_text"]
     with open(a.out, "w", encoding="utf-8", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=cols); w.writeheader()
