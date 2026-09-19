@@ -1,5 +1,7 @@
 """Upstream GTCRN HybridLoss (kept exact so fine-tuned baselines are
-apples-to-apples) plus the speech-preservation variant for `vaani_full_sp`."""
+apples-to-apples) plus the speech-preservation variant for `vaani_full_sp`.
+The spectral balance, compression exponent and an optional absolute-SNR term
+are config fields (`loss_cfg`) for the r3 round; defaults reproduce upstream."""
 import torch, torch.nn as nn
 from vaani.dsp import stft
 
@@ -11,25 +13,39 @@ def _compress(spec, p=0.3):
 
 
 class HybridLoss(nn.Module):
-    """30*(re+im compressed MSE) + 70*mag^0.3 MSE + SI-SNR. Verbatim upstream."""
+    """w_complex*(re+im compressed MSE) + w_mag*mag^p MSE + SI-SNR (+ w_snr * absolute-SNR term).
+    Defaults (30/70, p=0.3, w_snr=0) are the upstream loss verbatim."""
+    def __init__(self, w_complex: float = 30.0, w_mag: float = 70.0, p: float = 0.3, w_snr: float = 0.0, snr_max_db: float = 30.0):
+        super().__init__()
+        self.w_complex, self.w_mag, self.p, self.w_snr, self.snr_max_db = w_complex, w_mag, p, w_snr, snr_max_db
+
+    def snr_term(self, y_p, y_t):
+        """-mean(min(SNR_dB, snr_max)): the target is absolute SNR and SI-SNR is scale-blind. The clamp keeps
+        clean-bucket items (already near-perfect) from dominating the gradient."""
+        snr = 10 * torch.log10((y_t ** 2).sum(-1) / (((y_p - y_t) ** 2).sum(-1) + 1e-8) + 1e-8)
+        return -snr.clamp(max=self.snr_max_db).mean()
+
     def forward(self, pred, true, frame_weight=None, is_clean=None):
-        pr, pi, pm = _compress(pred); tr, ti, tm = _compress(true)
+        pr, pi, pm = _compress(pred, self.p); tr, ti, tm = _compress(true, self.p)
         w = torch.ones_like(pm[:, 0]) if frame_weight is None else frame_weight  # (B,T)
         w = w[:, None, :]                                                        # (B,1,T)
         def wmse(a, b):
             return ((a - b) ** 2 * w).mean()
-        spec_loss = 30 * (wmse(pr, tr) + wmse(pi, ti)) + 70 * wmse(pm, tm)
+        spec_loss = self.w_complex * (wmse(pr, tr) + wmse(pi, ti)) + self.w_mag * wmse(pm, tm)
         y_p = stft.istft(pred); y_t = stft.istft(true)
         proj = (y_t * y_p).sum(-1, keepdim=True) * y_t / ((y_t ** 2).sum(-1, keepdim=True) + 1e-8)
         sisnr = -torch.log10(proj.norm(dim=-1) ** 2 / ((y_p - proj).norm(dim=-1) ** 2 + 1e-8) + 1e-8).mean()
-        return spec_loss + sisnr
+        total = spec_loss + sisnr
+        if self.w_snr:
+            total = total + self.w_snr * self.snr_term(y_p, y_t)
+        return total
 
 
 class SpeechPreservationLoss(HybridLoss):
     """HybridLoss + L1 to the clean target on clean-bucket items (== input for the
     clean bucket up to room path); burst_weight is read by the trainer for frame_weight."""
-    def __init__(self, burst_weight: float = 3.0, clean_l1: float = 1.0):
-        super().__init__(); self.burst_weight, self.clean_l1 = burst_weight, clean_l1
+    def __init__(self, burst_weight: float = 3.0, clean_l1: float = 1.0, **kw):
+        super().__init__(**kw); self.burst_weight, self.clean_l1 = burst_weight, clean_l1
 
     def forward(self, pred, true, frame_weight=None, is_clean=None):
         base = super().forward(pred, true, frame_weight, is_clean)

@@ -137,7 +137,8 @@ def main(config_path):
     sched = torch.optim.lr_scheduler.LambdaLR(
         opt, lambda s: float(min(1.0, (s + 1) / warm) * 0.5 * (1 + np.cos(np.pi * min(s, total) / total))))
     sp = cfg["loss"] == "speech_preservation"
-    loss_fn = losses.SpeechPreservationLoss() if sp else losses.HybridLoss()
+    lk = cfg.get("loss_cfg", {})  # w_complex / w_mag / p / w_snr; absent = upstream loss verbatim
+    loss_fn = losses.SpeechPreservationLoss(**lk) if sp else losses.HybridLoss(**lk)
     burst_w = loss_fn.burst_weight if sp else 1.0
     use_amp = bool(cfg.get("amp", True)) and device.type == "cuda"
 
