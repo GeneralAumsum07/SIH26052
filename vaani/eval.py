@@ -21,7 +21,7 @@ def enhance_fn(spec: str, device=None):
         return baselines.get(spec).enhance
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     ck = torch.load(spec[5:], map_location="cpu", weights_only=True); cfg = ck["config"]
-    m = build_model(cfg["model"]).to(device); m.load_state_dict(ck["model"]); m.eval()
+    m = build_model(cfg["model"], model_cfg=cfg.get("model_cfg")).to(device); m.load_state_dict(ck["model"]); m.eval()
 
     @torch.no_grad()
     def f(mix):

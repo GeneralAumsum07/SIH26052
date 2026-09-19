@@ -83,3 +83,60 @@ def test_legacy_checkpoint_with_persisted_feat_scale_loads():
     from vaani.models.vaani_net import VaaniNet
     v = VaaniNet(); sd = v.state_dict(); sd["encoder.feat_scale"] = v.encoder.feat_scale.clone()
     VaaniNet().load_state_dict(sd)
+
+
+# --- r3 architecture flags (plan 2.4 / 2.5): deep-filter head, coherence channel, FiLM off ---
+R3 = dict(df_order=3, film=False, coh=True)
+
+
+def test_r3_flags_shapes_and_budget():
+    m = VaaniNet(**R3)
+    assert sum(p.numel() for p in m.parameters()) <= vaani_net.MAX_PARAMS
+    assert m.encoder.film is None and m.encoder.en_convs[0].conv.weight.shape[1] == 30
+    spec = torch.randn(2, 257, 20, 6); f = torch.randn(2, 20, 18)
+    assert m(spec, f).shape == (2, 257, 20, 2)
+
+
+def test_r3_warm_start_from_r2_checkpoint_is_exact_at_step_0():
+    """Zero taps + zero coherence slice + no FiLM: an r2 checkpoint loaded into the r3 shape must produce
+    the r2 output (FiLM was inert in r2 by measurement; here it is exactly inert because the r2 FiLM
+    weights are dropped and compared against an r2 model whose FiLM is zero)."""
+    torch.manual_seed(1)
+    r2 = VaaniNet.from_pretrained_gtcrn(CKPT).eval()
+    with torch.no_grad():
+        torch.nn.init.normal_(r2.encoder.en_convs[0].conv.weight[:, 9:], std=0.1)  # ref/n_hat slices live
+    r3 = VaaniNet(**R3).warm_start(r2.state_dict()).eval()
+    spec = torch.randn(1, 257, 30, 6); f = torch.randn(1, 30, 18)
+    with torch.no_grad():
+        assert torch.allclose(r2(spec, f), r3(spec, f), atol=1e-5)
+    assert torch.all(r3.df.conv.weight == 0) and torch.all(r3.encoder.en_convs[0].conv.weight[:, 27:] == 0)
+
+
+def test_r3_stream_parity_with_live_taps_and_coherence():
+    torch.manual_seed(0)
+    v = VaaniNet.from_pretrained_gtcrn(CKPT, **R3).eval(); s = StreamVaaniNet(**R3).eval()
+    with torch.no_grad():  # zero-init slices would make parity vacuous
+        for t in (v.encoder.en_convs[0].conv.weight[:, 9:], v.df.conv.weight, v.df.conv.bias):
+            torch.nn.init.normal_(t, std=0.1)
+    convert_to_stream(s, v)
+    spec = torch.randn(1, 257, 25, 6); f = torch.randn(1, 25, 18)
+    with torch.no_grad():
+        y = v(spec, f); caches = init_caches("cpu"); outs = []
+        for t in range(25):
+            o, *caches = s(spec[:, :, t:t + 1], f[:, t:t + 1], *caches); outs.append(o)
+    assert torch.allclose(y, torch.cat(outs, 2), atol=1e-3)
+    # the taps did something: the output is not the plain-CRM output of the same weights
+    with torch.no_grad():
+        v.df.conv.weight.zero_(); v.df.conv.bias.zero_()
+        assert not torch.allclose(y, v(spec, f), atol=1e-3)
+
+
+def test_coherence_map_is_one_for_identical_channels_and_causal():
+    from vaani.models.vaani_net import coherence_map
+    x = torch.randn(1, 257, 40, 2)
+    spec = torch.cat([x, x, torch.zeros(1, 257, 40, 2)], dim=-1)
+    m, _ = coherence_map(spec)
+    assert torch.allclose(m[:, :, 5:], torch.ones_like(m[:, :, 5:]), atol=1e-4)
+    spec2 = spec.clone(); spec2[:, :, 20:] = torch.randn_like(spec2[:, :, 20:])
+    m2, _ = coherence_map(spec2)
+    assert torch.allclose(m[:, :, :20], m2[:, :, :20])  # frames before the change are untouched

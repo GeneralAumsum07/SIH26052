@@ -12,8 +12,8 @@ Total: 16 ms + 16 ms = 32 ms.
 ## Per frame, in order
 1. NLMS block on the 256 new samples with gate = previous frame's `adapt_gate` (64 taps, mu 0.05, eps 1e-6) -> `n_hat` block. See `dsp_reference/` and `vaani/dsp/nlms.py`.
 2. Features (18, order below) from the current 512-sample primary/reference frames and their spectra. `vaani/dsp/features.py`.
-3. Controller -> `adapt_gate`, `burst_flag`, `reliability`. `vaani/dsp/controller.py`. Thresholds: jump 12 dB, level-diff <= 3 dB, hold 4 frames, ramp 12 frames, speech-freeze 0.6.
-4. ONNX `model.onnx`: inputs `spec6 (1,257,1,6)` = [prim_re, prim_im, ref_re, ref_im, nhat_re, nhat_im], `feats (1,1,18)`, `conv_cache (2,1,16,16,33)`, `tra_cache (2,3,1,1,16)`, `inter_cache (2,1,33,16)`, all float32, all zero-initialised at stream start; outputs `spec_out (1,257,1,2)` (enhanced primary re/im) + the three caches, same shapes, updated. Feed caches back unchanged into the next frame's call.
+3. Controller -> `adapt_gate`, `burst_flag`, `reliability`. `vaani/dsp/controller.py`. Thresholds: jump 12 dB, level-diff <= 3 dB, hold 4 frames, ramp 12 frames, speech-freeze 0.5 (0.6 before 2026-09-20; see `dsp_reference/README.md`).
+4. ONNX `model.onnx`: inputs `spec6 (1,257,1,6)` = [prim_re, prim_im, ref_re, ref_im, nhat_re, nhat_im], `feats (1,1,18)`, `conv_cache (2,1,16,16,33)`, `tra_cache (2,3,1,1,16)`, `inter_cache (2,1,33,16)`, `df_cache (1,257,3,2)`, `coh_cache (1,4,257)`, all float32, all zero-initialised at stream start; outputs `spec_out (1,257,1,2)` (enhanced primary re/im) + the five caches, same shapes, updated. Feed caches back unchanged into the next frame's call. (v1 had three caches; `df_cache`/`coh_cache` were added 2026-09-20 for the round-3 architecture and are present, and passed through, for every exported checkpoint.)
 5. iSTFT overlap-add with the same sqrt-Hann window, on `spec_out`.
 
 For the *no-controller* configuration: gate = 1, feats = zeros.
@@ -24,14 +24,24 @@ log_energy_delta, spectral_flux, peak_to_rms, clip_frac_primary, clip_frac_refer
 (18 total; exact order and definitions in `vaani/dsp/features.py::FEATURE_NAMES`.)
 
 ## Cache shapes and zero-init
-All three caches are per-stream (batch=1) state carried frame-to-frame; zero-initialise once
-at stream start (`vaani/models/gtcrn_stream.py::init_caches`), never between frames of the
+All five caches are per-stream (batch=1) state carried frame-to-frame; zero-initialise once
+at stream start (`vaani/models/vaani_net.py::init_caches`), never between frames of the
 same stream:
 - `conv_cache (2,1,16,16,33)` -- dim0 indexes {encoder, decoder}; per-block receptive-field
   history for the three dilated GTConvBlocks.
 - `tra_cache (2,3,1,1,16)` -- dim0 {encoder, decoder}, dim1 indexes the 3 GTConvBlocks; hidden
   state for their internal temporal recurrence.
 - `inter_cache (2,1,33,16)` -- dim0 indexes {dpgrnn1, dpgrnn2}; inter-frame GRU hidden state.
+- `df_cache (1,257,3,2)` -- the previous three primary spectra (re/im), newest at index 0. The model
+  shifts the current primary frame in on every call; a round-3 checkpoint (`model_cfg.df_order` = 3)
+  reads the first `df_order-1` slots for its deep-filter taps, earlier checkpoints only pass it through.
+- `coh_cache (1,4,257)` -- EMA cross-spectra of primary vs reference (Pxx, Pyy, Re Pxy, Im Pxy), alpha
+  0.9 per frame, used when `model_cfg.coh` is on; otherwise passed through unchanged.
+
+## Architecture flags (`model_cfg` in the training config, stored in the checkpoint)
+`df_order` (1 = complex ratio mask, 3 = per-bin complex FIR over the current and two past frames),
+`film` (18-feature FiLM shift on the first encoder layer; off in round 3), `coh` (coherence map as a
+10th input channel). `vaani/export.py` reads them from the checkpoint; the ONNX signature does not change.
 
 ## Export and parity
 `vaani/export.py::export(ckpt_path, out_path)` builds the streaming twin (`StreamVaaniNet`),

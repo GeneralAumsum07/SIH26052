@@ -26,6 +26,10 @@ data:
     overload_softclip: true                     # ADC saturates; speech keeps its level under a burst
     speech_rms_db: [-32, -18]                   # recorder gain: sets how much headroom a burst has before overload
     # mic_mismatch_db stays 3.0: the 2.1 floor tracker's speech-presence margin (ref_speech_gain <= -8 dB) breaks at +-10
+model_cfg:
+  df_order: 3                                   # 2.5 deep-filter head: complex FIR over t, t-1, t-2 (zero latency)
+  film: false                                   # 2.4: FiLM path measured inert (-0.003 STOI), dropped
+  coh: true                                     # 2.4: causal primary/reference coherence map as a 10th input channel
 loss_cfg:
   w_complex: 50
   w_mag: 50

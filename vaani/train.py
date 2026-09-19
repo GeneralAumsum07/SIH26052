@@ -32,8 +32,8 @@ def _abs(p):
     return None if p is None else (Path(p) if Path(p).is_absolute() else ROOT / p)
 
 
-def build_model(name, init_from=None):
-    init_from = _abs(init_from)
+def build_model(name, init_from=None, model_cfg=None):
+    init_from = _abs(init_from); model_cfg = model_cfg or {}
     if name == "gtcrn":
         m = GTCRN()
         if init_from:
@@ -43,8 +43,9 @@ def build_model(name, init_from=None):
         if init_from and init_from.suffix == ".pt":
             ck = torch.load(init_from, map_location="cpu", weights_only=True)
             if ck.get("config", {}).get("model") == "vaani":
-                m = VaaniNet(); m.load_state_dict(ck["model"]); return m  # already-trained vaani run, not a gtcrn seed
-        return VaaniNet.from_pretrained_gtcrn(init_from) if init_from else VaaniNet()
+                # already-trained vaani run, not a gtcrn seed; warm_start tolerates a narrower source architecture
+                return VaaniNet(**model_cfg).warm_start(ck["model"])
+        return VaaniNet.from_pretrained_gtcrn(init_from, **model_cfg) if init_from else VaaniNet(**model_cfg)
     raise ValueError(name)
 
 
@@ -121,7 +122,7 @@ def main(config_path):
     dl = DataLoader(ds, cfg["batch_size"], sampler=sampler, collate_fn=collate, num_workers=nw, persistent_workers=nw > 0)
     vdl = DataLoader(vds, cfg["batch_size"], collate_fn=collate, num_workers=nw, persistent_workers=nw > 0)
 
-    model = build_model(cfg["model"], cfg.get("init_from")).to(device)
+    model = build_model(cfg["model"], cfg.get("init_from"), cfg.get("model_cfg")).to(device)
     n_params = sum(p.numel() for p in model.parameters())
     # only the FiLM projection gets lr_new; the zero-init conv slices share tensors with
     # pretrained weights so they train at the base lr

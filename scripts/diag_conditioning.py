@@ -39,7 +39,7 @@ def main():
     ck = torch.load(a.ckpt, map_location="cpu", weights_only=True)
     cfg = ck["config"]
     assert cfg["model"] == "vaani", "this diagnostic only applies to VaaniNet checkpoints"
-    m = build_model("vaani")
+    m = build_model("vaani", model_cfg=cfg.get("model_cfg"))
     m.load_state_dict(ck["model"])
     m.eval()
 
