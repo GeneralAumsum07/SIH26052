@@ -14,6 +14,10 @@ assert len(FEATURE_NAMES) == N_FEATURES == 18
 CLIP = 0.99
 # 8 ERB-ish band edges in STFT bins (16 kHz, 257 bins): coarse enough to be robust
 BAND_EDGES = [1, 4, 8, 14, 22, 34, 52, 80, 257]
+HOP, SUB = 256, 64                 # 16 ms hop split into 4 ms sub-blocks for the onset detector
+SUB_HIST = 25                      # 100 ms of sub-block history behind the onset test
+FLOOR_UP, FLOOR_DOWN, FLOOR_MAX = 0.002, 0.3, 3.0   # ratio-floor tracker: ~8 s up, ~50 ms down, capped at the mic-mismatch bound
+SP_RELEASE = 0.85                  # speech-presence release per frame (~100 ms)
 
 
 class FrameFeatures:
@@ -22,15 +26,22 @@ class FrameFeatures:
         self.reset()
 
     def reset(self):
-        self.prev_log_e = -12.0
+        self.sub_hist = None                        # last 100 ms of 4 ms sub-block energies; seeded by frame 0
         self.prev_mag = None
         self.Spp = np.zeros(257); self.Srr = np.zeros(257); self.Spr = np.zeros(257, complex)
         self.sp_smooth = 0.0
+        self.ratio_floor = 0.0                      # tracked inter-mic level ratio of the noise (dB)
 
     def compute(self, p, r, P, R, nlms_health, prev_gate):
         f = np.zeros(N_FEATURES, np.float32)
-        e = float((p ** 2).mean() + 1e-10); log_e = 10 * np.log10(e)
-        f[0] = log_e - self.prev_log_e; self.prev_log_e = log_e
+        e = float((p ** 2).mean() + 1e-10)
+        # sub-frame onset: the newest hop split into 4 ms blocks against the median of the preceding 100 ms.
+        # A frame-to-frame delta dilutes a 5 ms gunshot onset 6x inside a 32 ms window; this does not.
+        sub = (p[-HOP:].reshape(-1, SUB) ** 2).mean(axis=1) + 1e-10
+        if self.sub_hist is None:
+            self.sub_hist = np.full(SUB_HIST, sub.mean())   # no history yet: the first frame is its own floor
+        f[0] = float(10 * np.log10(sub.max() / np.median(self.sub_hist)))
+        self.sub_hist = np.concatenate([self.sub_hist[len(sub):], sub])
         mag = np.abs(P)
         f[1] = 0.0 if self.prev_mag is None else float(np.sum(np.maximum(mag - self.prev_mag, 0)) / (np.sum(self.prev_mag) + 1e-8))
         self.prev_mag = mag
@@ -39,8 +50,16 @@ class FrameFeatures:
         er = float((r ** 2).mean() + 1e-10)
         # near-mouth speech: primary >> reference. far-field noise: ~equal.
         ratio_db = 10 * np.log10(e / er)
-        sp = float(np.clip((ratio_db - 3.0) / 9.0, 0, 1))      # 3 dB -> 0, 12 dB -> 1
-        self.sp_smooth = self.alpha * self.sp_smooth + (1 - self.alpha) * sp
+        # floor = slow tracker of the ratio's minimum (far-field noise, ~0 dB +/- mic mismatch); speech is
+        # what sits well above it, whatever the reference gain of this headset happens to be. Capped: a
+        # ratio above FLOOR_MAX is never noise, so constant speech cannot drag the floor up to itself.
+        rate = FLOOR_UP if ratio_db > self.ratio_floor else FLOOR_DOWN
+        self.ratio_floor = min(self.ratio_floor + rate * (ratio_db - self.ratio_floor), FLOOR_MAX)
+        # mixer physics: speech is >= 8 dB above the noise ratio (ref_speech_gain <= -8 dB); noise scatters +/-3
+        sp = float(np.clip((ratio_db - self.ratio_floor - 2.0) / 4.0, 0, 1))   # +2 dB -> 0, +6 dB -> 1
+        # fast attack, slow release: an NLMS with an 80 ms time constant learns the speech path in the
+        # lag of a symmetric smoother, so the first speech frame must already read as speech
+        self.sp_smooth = max(sp, SP_RELEASE * self.sp_smooth)
         f[5] = self.sp_smooth
         a = self.alpha
         self.Spp = a * self.Spp + (1 - a) * np.abs(P) ** 2

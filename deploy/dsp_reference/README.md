@@ -23,3 +23,14 @@ reference, accumulation-order differences in the C port are expected to stay
 well under this); `gate`/`burst`/`reliability` must match exactly since they
 come from discrete threshold logic and both sides consume the same causal
 per-frame ordering.
+
+## 2026-09-20 change (vectors regenerated)
+
+- `features[0]` (`log_energy_delta`) is now the **sub-frame onset jump**: the newest 256-sample hop split
+  into 64-sample (4 ms) blocks, `10*log10(max block energy / median of the previous 25 block energies)`.
+  The history is seeded with frame 0's mean block energy.
+- `features[5]` (`speech_presence`) is now measured **relative to a tracked inter-mic ratio floor**
+  (`ratio_floor`: +0.002/frame up, 0.3/frame down, capped at 3 dB) with fast attack / 0.85 release:
+  `sp = clip((ratio_db - floor - 2)/4, 0, 1); sp_smooth = max(sp, 0.85*sp_smooth)`.
+- Controller `speech_freeze` is 0.5.
+Port these three exactly; the vectors will not match otherwise.

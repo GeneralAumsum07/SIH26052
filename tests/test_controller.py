@@ -38,3 +38,46 @@ def test_consonant_does_not_trip_burst():
     prim[sr:sr + 320] += rng.standard_normal(320).astype(np.float32) * 0.3 * 10 ** (-10 / 20)
     out = pipeline.run(np.stack([prim, ref]))
     assert not out["burst"].any()
+
+
+def test_speech_onset_freezes_within_one_frame():
+    """Fast attack: the first voiced frame after a pause must already be frozen, otherwise a 0.05-step
+    64-tap NLMS (80 ms time constant) learns the speech path before the smoothed detector reacts."""
+    sr = 16000; n = 3 * sr
+    rng = np.random.default_rng(0)
+    noise = rng.standard_normal(n).astype(np.float32) * 0.02
+    prim = noise.copy(); ref = np.roll(noise, 3).copy()          # far-field noise, ~0 dB inter-mic
+    v = _voiced(n) * 0.2; v[: sr] = 0; v[2 * sr:] = 0              # speech only in the middle second
+    prim += v; ref += np.roll(v, 5) * 0.25                          # near-mouth: ref ~12 dB down
+    out = pipeline.run(np.stack([prim, ref]))
+    hop = 256; f_on = sr // hop
+    assert out["gate"][: f_on - 2].mean() > 0.9                     # adapting on pure noise
+    assert out["gate"][f_on + 1] < 0.1                               # frozen by the frame after onset
+    assert out["gate"][f_on + 2: 2 * f_on - 6].mean() < 0.02              # and stays frozen through the speech (brief AM-dip openings tolerated)
+    assert out["gate"][-1] > 0.9                                     # released after speech ends
+
+
+def test_speech_presence_survives_weak_reference_gain():
+    """A reference only 8 dB below the primary (the mixer's weakest headset) is still speech, after a
+    short noise-only lead-in has shown the detector where the far-field ratio sits."""
+    sr = 16000; n = 3 * sr
+    rng = np.random.default_rng(0); noise = rng.standard_normal(n).astype(np.float32) * 0.01
+    v = _voiced(n) * 0.2; v[: sr // 2] = 0
+    prim = noise + v; ref = np.roll(noise, 3) + np.roll(v, 5) * 10 ** (-8 / 20)
+    out = pipeline.run(np.stack([prim, ref]))
+    f0 = sr // 2 // 256 + 2
+    assert (out["gate"][f0:] < 0.1).mean() > 0.95
+
+
+def test_subframe_jump_sees_a_4ms_click():
+    """A 4 ms click inside a 32 ms frame barely moves the frame energy; the sub-frame jump must still fire."""
+    from vaani.dsp.features import FrameFeatures, N_FEATURES
+    ff = FrameFeatures(); rng = np.random.default_rng(0)
+    base = rng.standard_normal(512).astype(np.float32) * 0.01
+    P = np.fft.rfft(base); R = P.copy()
+    for _ in range(10):
+        ff.compute(base, base, P, R, 0.0, 1.0)
+    frame = base.copy(); frame[300:364] += 0.5 * rng.standard_normal(64).astype(np.float32)
+    f = ff.compute(frame, frame, P, R, 0.0, 1.0)
+    assert f.shape == (N_FEATURES,)
+    assert f[0] >= 12.0

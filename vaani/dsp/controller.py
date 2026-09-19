@@ -14,7 +14,7 @@ _I = {n: i for i, n in enumerate(FEATURE_NAMES)}
 
 class Controller:
     def __init__(self, jump_db=12.0, level_diff_max_db=3.0, hold_frames=4, ramp_frames=12,
-                 speech_freeze=0.6):
+                 speech_freeze=0.5):
         self.jump_db, self.ld_max, self.hold, self.ramp, self.sp_freeze = jump_db, level_diff_max_db, hold_frames, ramp_frames, speech_freeze
         self.reset()
 
