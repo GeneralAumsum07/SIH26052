@@ -59,8 +59,9 @@ everything in Tier 2/3 is evaluated against this.
 | 1.6 | Commit the diagnostics as first-class tools: `scripts/diag_controller.py`, `diag_conditioning.py`, `ceiling_analysis.py`, `mask_phase_probe.py`. `mask_phase_probe` becomes the post-training gate ("did phase move?"). | `scripts/` | smoke test on 2 clips each | Reproducibility of every number in this document. |
 | 1.7 | ASR WER: keep English-only but say so in the matrix header; Hindi rows show `n/a`, not NaN. | `vaani/report.py`, `vaani/asr.py` normaliser | — | Astra finding; a NaN in a table reads as a bug. |
 
-Exit criterion: a matrix whose every row is rendered from the current code, with impulsive
-rows that contain MAD gunshots, a severe envelope, and an honest envelope table.
+Exit criterion: a matrix whose every row is rendered from the current code, with a
+`defence_impulsive` bucket drawn from real recordings (MAD now, labelled with its measured
+13 dB crest; D1/D2 once they land), a severe envelope, and an honest envelope table.
 
 ---
 
