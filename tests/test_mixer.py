@@ -130,7 +130,7 @@ def test_twin_without_impulse_matches_outside_impulse_window():
     assert np.array_equal(mix_a[:, :start], mix_b[:, :start])
     assert np.array_equal(mix_a[:, end:], mix_b[:, end:])
     assert np.array_equal(clean_a, clean_b)
-    meta_keys = set(meta_a) - {"impulse_peak_db", "impulse_onsets_s"}
+    meta_keys = set(meta_a) - {"impulse_peak_db", "impulse_onsets_s", "snr_achieved_db"}  # the impulse changes what was achieved
     for k in meta_keys:
         assert meta_a[k] == meta_b[k], k
 
@@ -153,3 +153,35 @@ def test_ref_dropout_bucket_creates_low_energy_span():
     w = 320
     frames = mix[1][: len(mix[1]) // w * w].reshape(-1, w)
     assert (np.abs(frames).max(axis=1) < 0.05 * np.abs(mix[1]).max()).any()
+
+
+def test_meta_records_achieved_snr_after_augmentations():
+    rng = np.random.default_rng(0)
+    cfg = mixer.MixConfig(p_room=0.0, p_clip=0.0, p_ref_dropout=0.0, p_wind=0.0, p_clean=0.0, snr_range=(5.0, 5.0))
+    s = _speech(rng); n = [rng.standard_normal(len(s)).astype(np.float32)]
+    _, _, meta = mixer.mix(rng, s, n, None, [], None, cfg)
+    assert abs(meta["snr_achieved_db"] - 5.0) < 0.5  # nothing perturbed it: matches the target
+    # a loud impulse must show up as a lower achieved SNR while the target stays 5
+    imp = np.ones(8000, np.float32)
+    cfg2 = mixer.MixConfig(p_room=0.0, p_clip=0.0, p_ref_dropout=0.0, p_wind=0.0, p_clean=0.0,
+                           snr_range=(5.0, 5.0), impulse_peak_db=(12.0, 12.0))
+    _, _, meta2 = mixer.mix(np.random.default_rng(0), s, [n[0].copy()], imp, [0.0], None, cfg2)
+    assert meta2["snr_db"] == 5.0 and meta2["snr_achieved_db"] < 2.0
+
+
+def test_twin_shares_the_burst_clips_peak_normalisation():
+    # a +12 dB burst pushes the clip past full scale, so the burst clip gets scaled and the
+    # twin would not: the recovery metric would then see a level step, not a recovery
+    imp = np.ones(1600, np.float32)
+    cfg = mixer.MixConfig(p_room=0.0, p_clean=0.0, p_clip=0.0, p_wind=0.0, p_ref_dropout=0.0,
+                           impulse_peak_db=(12.0, 12.0), snr_range=(15.0, 15.0))
+    s = _speech(np.random.default_rng(2)) * 3  # peaks near 0.9 so the burst overshoots
+    n = [np.random.default_rng(2).standard_normal(len(s)).astype(np.float32)]
+    mix_a, clean_a, meta_a = mixer.mix(np.random.default_rng(0), s, list(n), imp, [0.0], None, cfg)
+    assert meta_a["norm_gain"] < 1.0
+    mix_b, clean_b, meta_b = mixer.mix(np.random.default_rng(0), s, list(n), None, [], None, cfg,
+                                       norm_gain=meta_a["norm_gain"])
+    start = int(round(meta_a["impulse_onsets_s"][0] * mixer.SR))
+    assert np.array_equal(mix_a[:, :start], mix_b[:, :start])
+    assert np.array_equal(clean_a, clean_b)
+    assert meta_b["norm_gain"] == meta_a["norm_gain"]

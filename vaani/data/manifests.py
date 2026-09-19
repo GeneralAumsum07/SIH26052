@@ -22,7 +22,8 @@ def stable_hash(s: str) -> int:
 def write(rows: list[dict], path: str | Path) -> None:
     df = pd.DataFrame(rows, columns=COLUMNS)
     # byte-identical files under different ids (56 in the DNS shard) hash to different splits: keep one
-    dup = df.sha1.duplicated()
+    # an empty sha1 (unhashed test rows) is unknown, not identical: never dedupe on it
+    dup = df.sha1.duplicated() & df.sha1.astype(str).str.len().gt(0)
     if dup.any(): print(f"[manifest] dropping {int(dup.sum())} byte-identical duplicates"); df = df[~dup]
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(path, index=False)

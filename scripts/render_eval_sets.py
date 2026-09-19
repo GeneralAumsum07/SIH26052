@@ -30,8 +30,8 @@ def render_bucket_item(seed: list[int], speech_df, pool_df, n: int, snr: float, 
         imp, on = imp, on["onsets_s"]
     m, c, meta = mix(np.random.default_rng(seed), s, nz, imp, on, bank, cfg)
     twin = None
-    if burst:  # identical draw with no impulse
-        twin, _, _ = mix(np.random.default_rng(seed), s, nz, None, [], bank, cfg)
+    if burst:  # identical draw with no impulse, scaled like the burst clip so only the impulse differs
+        twin, _, _ = mix(np.random.default_rng(seed), s, nz, None, [], bank, cfg, norm_gain=meta["norm_gain"])
     return m, c, meta, twin
 
 

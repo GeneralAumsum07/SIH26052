@@ -59,10 +59,12 @@ def _conv2(x: np.ndarray, h2: np.ndarray, n: int) -> np.ndarray:
     return np.stack([fftconvolve(x, h2[m])[:n] for m in range(2)]).astype(np.float32)
 
 
-def mix(rng, speech, noises, impulse, impulse_onsets_s, bank, cfg: MixConfig):
+def mix(rng, speech, noises, impulse, impulse_onsets_s, bank, cfg: MixConfig, norm_gain: float | None = None):
+    """norm_gain: reuse another clip's final peak scaling (the burst clip's, when rendering its twin)
+    so the pair differs only by the impulse and not by a level step."""
     n = len(speech)
     meta = {"clean_bucket": False, "clipped": False, "ref_dropout": False, "impulse_peak_db": None,
-            "impulse_onsets_s": [], "ref_speech_gain_db": None}
+            "impulse_onsets_s": [], "ref_speech_gain_db": None, "norm_gain": 1.0, "snr_achieved_db": None}
     speech = speech.astype(np.float32)
 
     use_room = bank is not None and rng.random() < cfg.p_room
@@ -95,7 +97,7 @@ def mix(rng, speech, noises, impulse, impulse_onsets_s, bank, cfg: MixConfig):
                 noise2[m] += lfilter(taps, [1.0], nz).astype(np.float32)
 
     if rng.random() < cfg.p_clean:
-        meta["clean_bucket"] = True; meta["snr_db"] = np.inf; meta["noise_class"] = "clean"
+        meta["clean_bucket"] = True; meta["snr_db"] = meta["snr_achieved_db"] = np.inf; meta["noise_class"] = "clean"
         return s2.astype(np.float32), clean, meta
 
     # --- scale noise to target SNR on the primary, speech-active region ---
@@ -105,6 +107,7 @@ def mix(rng, speech, noises, impulse, impulse_onsets_s, bank, cfg: MixConfig):
     meta["snr_db"] = snr  # target SNR the noise was scaled to hit; later augmentations deliberately perturb it, not recomputed
 
     out = s2 + noise2
+    sp = s2[0].copy()  # speech-only primary, carried through the linear augmentations to measure achieved SNR
 
     # --- impulse event: level set independently of SNR, recorded as peak ---
     # always draw one int to advance rng, so the main stream is identical whether or
@@ -125,7 +128,7 @@ def mix(rng, speech, noises, impulse, impulse_onsets_s, bank, cfg: MixConfig):
     # --- common augmentations ---
     g = rng.uniform(-cfg.mic_mismatch_db, cfg.mic_mismatch_db)
     out[1] *= 10 ** (g / 20)
-    out[0] = _tilt(out[0], rng.uniform(-3, 3)); out[1] = _tilt(out[1], rng.uniform(-3, 3))
+    t0 = rng.uniform(-3, 3); out[0] = _tilt(out[0], t0); sp = _tilt(sp, t0); out[1] = _tilt(out[1], rng.uniform(-3, 3))
 
     if rng.random() < cfg.p_wind:
         w = lfilter([1.0], [1.0, -0.995], rng.standard_normal(n)).astype(np.float32)
@@ -142,6 +145,9 @@ def mix(rng, speech, noises, impulse, impulse_onsets_s, bank, cfg: MixConfig):
 
     # keep everything inside [-1, 1] without changing SNR: scale mix and clean together
     peak = np.abs(out).max()
-    if peak > 0.99:
-        out /= peak / 0.99; clean /= peak / 0.99
+    gain = norm_gain if norm_gain is not None else (0.99 / peak if peak > 0.99 else 1.0)
+    out *= gain; clean *= gain; meta["norm_gain"] = float(gain)
+    # what the primary actually carries after impulse/wind/clip/tilt: snr_db is only the pre-augmentation target
+    resid = out[0] - sp * gain
+    meta["snr_achieved_db"] = float(10 * np.log10(speech_active_power(sp * gain) / ((resid ** 2).mean() + 1e-12)))
     return out.astype(np.float32), clean.astype(np.float32), meta

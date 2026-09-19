@@ -35,13 +35,16 @@ class DynamicMixDataset(Dataset):
         df = df[df.split == split]
         self.speech = df[df.kind == "speech"].reset_index(drop=True)
         self.noise = df[df.kind == "noise"].reset_index(drop=True)
+        # split once here, not per item: the boolean filter over 8k rows was paid on every __getitem__
+        self.cont = self.noise[self.noise.noise_class != "impulsive"].reset_index(drop=True)
+        self.impd = self.noise[self.noise.noise_class == "impulsive"].reset_index(drop=True)
         # store the path, not an open RirBank in __init__, so workers open their own handle
         self.bank_path = bank_path
         self._bank = None
         self.cfg, self.n, self.epoch_len, self.seed = cfg, int(crop_s * SR), epoch_len, seed
         # with_dsp: run NLMS+features here so the ~150 ms/clip DSP lands in DataLoader workers, not the trainer
         self.with_dsp, self.controller_on = with_dsp, controller_on
-        assert len(self.speech) and len(self.noise), "empty manifest split"
+        assert len(self.speech) and len(self.cont), "empty manifest split"
 
     @property
     def bank(self):
@@ -61,15 +64,16 @@ class DynamicMixDataset(Dataset):
         s = np.pad(s, (0, self.n - len(s)))
         # noise draw: continuous class(es) plus optionally an impulsive one
         k = int(rng.integers(1, 3))
-        cont = self.noise[self.noise.noise_class != "impulsive"]
-        rows = [cont.iloc[int(rng.integers(len(cont)))] for _ in range(k)]
+        rows = [self.cont.iloc[int(rng.integers(len(self.cont)))] for _ in range(k)]
         noises = [_load(r.path, self.n, rng) for r in rows]
         noise_class = "stationary" if all(r.noise_class == "stationary" for r in rows) else "changing"
         imp, onsets = None, []
         if rng.random() < 0.5:
-            impd = self.noise[self.noise.noise_class == "impulsive"]
-            if len(impd) and rng.random() < 0.5:
-                imp = _load(impd.path.iloc[int(rng.integers(len(impd)))], 2 * SR, rng); onsets = [0.0]
+            if len(self.impd) and rng.random() < 0.5:
+                imp = _load(self.impd.path.iloc[int(rng.integers(len(self.impd)))], 2 * SR, rng)
+                # corpus crops start wherever the random offset landed: peak-normalise like generate()
+                # does so impulse_peak_db means the same thing, and find the real onsets in the waveform
+                imp = imp / (np.abs(imp).max() + 1e-9); onsets = impulses.detect_onsets(imp, SR)
             else:
                 imp, m = impulses.generate(rng); onsets = m["onsets_s"]
             noise_class = "impulsive+stationary" if noise_class == "stationary" else "impulsive"

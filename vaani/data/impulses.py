@@ -42,3 +42,24 @@ def generate(rng: np.random.Generator, sr: int = 16000, kind: str | None = None)
     x = np.pad(x, (0, max(0, n - len(x))))[:n]
     x = x / (np.abs(x).max() + 1e-9)
     return x.astype(np.float32), {"kind": str(kind), "onsets_s": [float(o) for o in onsets]}
+
+
+def detect_onsets(x: np.ndarray, sr: int = 16000, frame_ms: float = 5.0, rise_db: float = 12.0,
+                  floor_ms: float = 100.0, min_gap_ms: float = 30.0) -> list[float]:
+    """Onset times for a recorded impulse clip, which carries no generator metadata.
+    An onset is a frame that jumps rise_db above the median energy of the preceding floor_ms;
+    the loudest sample is returned when nothing stands out so callers never get an empty list."""
+    fl = max(1, int(sr * frame_ms / 1000)); nf = len(x) // fl
+    if nf == 0:
+        return [0.0]
+    e = 10 * np.log10((x[: nf * fl].reshape(nf, fl) ** 2).mean(axis=1) + 1e-12)
+    look = max(1, int(floor_ms / frame_ms)); gap = max(1, int(min_gap_ms / frame_ms))
+    # assume silence before the clip so a click on the very first frame still counts as an onset
+    e = np.concatenate([np.full(look, e.min()), e])
+    onsets, last = [], -gap
+    for k in range(look, len(e)):
+        floor = np.median(e[k - look:k])
+        # crossing, not level: a decaying tail that stays above the floor is one event, not many
+        if e[k] - floor >= rise_db and e[k - 1] - floor < rise_db and k - last >= gap:
+            onsets.append((k - look) * fl / sr); last = k
+    return onsets or [float(int(np.argmax(np.abs(x))) / sr)]
