@@ -203,3 +203,22 @@ def scan_drone(root: Path, out: Path) -> list[dict]:
         rows.append(_row(f"drone:{cls}/{f.stem}", "drone", "noise", f"drone-{cls}", "", dst, dur,
                          "DroneAudioDataset (cite Al-Emadi et al., IWCMC 2019)", stationarity_class(x, sr)))
     return rows
+
+
+# EARS task prefixes that are not speech: coughs/breaths/yawns, laughs/cries, singing
+EARS_EXCLUDE = ("vegetative", "nonverbal", "melodic")
+
+
+def scan_ears(root: Path, out: Path) -> list[dict]:
+    """EARS (Richter et al., Interspeech 2024, CC BY-NC 4.0): <root>/pNNN/<task>_<...>_<style>.wav, 48 kHz anechoic.
+    Read, emotional and freeform speech kept; the style suffix (whisper/loud/fast/...) rides in the source_id so the
+    vocal-effort axis stays traceable. One group per speaker."""
+    rows = []
+    for f in sorted(root.rglob("p[0-9][0-9][0-9]/*.wav")):
+        if f.stem.startswith(EARS_EXCLUDE):
+            continue
+        spk = f.parent.name
+        dst = out / "ears" / spk / (f.stem + ".flac")
+        dur = to_flac16k(f, dst) if not dst.exists() else sf.info(dst).duration
+        rows.append(_row(f"ears:{spk}/{f.stem}", "ears", "speech", f"ears-spk-{spk}", spk, dst, dur, "CC BY-NC 4.0"))
+    return rows

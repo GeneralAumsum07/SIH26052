@@ -100,6 +100,16 @@ def main():
         extract(zp, zp.parent)
         manifests.write(sources.scan_drone(Path(dr["extract_to"]), raw), mdir / "drone.parquet")
 
+    ears = cfg["sources"].get("ears")
+    if ears:
+        # per-speaker zips from GitHub Releases; scan whatever has finished downloading (the queue adds more)
+        root = Path(ears["extract_to"]); root.mkdir(parents=True, exist_ok=True)
+        for zp in sorted(Path(ears["download_dir"]).glob("p*.zip")):
+            if zp.with_name(zp.name + ".ok").exists():
+                extract(zp, root / zp.stem)
+        if any(root.rglob("*.wav")):
+            manifests.write(sources.scan_ears(root, raw), mdir / "ears.parquet")
+
     for url in a.dns_shards:
         tar = Path("data/download/dns") / Path(url).name
         download(url, tar)

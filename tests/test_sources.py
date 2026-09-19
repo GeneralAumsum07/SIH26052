@@ -122,3 +122,19 @@ def test_scan_drone_takes_only_drone_folders(tmp_path):
     assert {r["source_id"] for r in rows} == {"drone:bebop_1/clip", "drone:membo_1/clip", "drone:yes_drone/clip"}
     assert all(r["corpus"] == "drone" and r["kind"] == "noise" and r["noise_class"] in ("stationary", "changing") for r in rows)
     assert {r["group_id"] for r in rows} == {"drone-bebop_1", "drone-membo_1", "drone-yes_drone"}
+
+
+def test_scan_ears_keeps_speech_styles_and_drops_nonverbal(tmp_path):
+    # EARS: <root>/p001/<task>_<...>_<style>.wav at 48 kHz; vegetative/nonverbal/melodic are not speech
+    root = tmp_path / "ears"; (root / "p001").mkdir(parents=True); (root / "p002").mkdir()
+    for name in ("rainbow_01_loud", "sentences_02_whisper", "emo_anger_freeform", "emo_adoration_sentences",
+                 "freeform_speech_01", "interjection_greetings", "vegetative_cough", "nonverbal_laugh", "melodic_01"):
+        sf.write(root / "p001" / f"{name}.wav", _white_noise(), 48000)
+    sf.write(root / "p002" / "rainbow_01_regular.wav", _white_noise(), 48000)
+    rows = sources.scan_ears(root, tmp_path / "out")
+    ids = {r["source_id"] for r in rows}
+    assert "ears:p001/vegetative_cough" not in ids and "ears:p001/nonverbal_laugh" not in ids and "ears:p001/melodic_01" not in ids
+    assert {"ears:p001/rainbow_01_loud", "ears:p001/emo_anger_freeform", "ears:p002/rainbow_01_regular"} <= ids
+    assert all(r["kind"] == "speech" and r["corpus"] == "ears" and r["licence"] == "CC BY-NC 4.0" for r in rows)
+    assert {r["group_id"] for r in rows} == {"ears-spk-p001", "ears-spk-p002"}
+    assert sf.info(next(r["path"] for r in rows)).samplerate == 16000

@@ -35,3 +35,9 @@ sources:
     url: https://github.com/saraalemadi/DroneAudioDataset/archive/master.zip
     archive: data/download/drone/master.zip
     extract_to: data/download/drone/DroneAudioDataset-master
+  ears:
+    # EARS (Richter et al., Interspeech 2024), CC BY-NC 4.0, 48 kHz anechoic, 107 speakers x ~590 MB zips on GitHub
+    # Releases: https://github.com/facebookresearch/ears_dataset/releases/download/dataset/pNNN.zip.
+    # scripts/run_fetch_queue.sh pulls p001-p020; fetch_data scans whatever has landed.
+    download_dir: data/download/ears
+    extract_to: data/download/ears/extracted
