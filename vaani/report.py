@@ -9,6 +9,7 @@ import numpy as np, pandas as pd
 METRICS = ["snr_out", "si_sdr", "stoi", "pesq_wb"]
 # problem-statement targets (SIH26052): SNR>15 dB, STOI>0.85, PESQ>2.5
 TARGETS = {"snr_out": 15.0, "stoi": 0.85, "pesq_wb": 2.5}
+ENGLISH_PREFIXES = ("ls:", "ears:")  # source_id prefixes whose speech is English; everything else reports WER as n/a
 
 
 def ci(x, n=1000, seed=0):
@@ -41,10 +42,13 @@ def add_wer(df, ref_csv):
     df = df.astype({"id": str}).merge(ref, on=["bucket", "id"], how="left")
     # an absent hypothesis means the eval ran without ASR, not that the system erased the speech
     df["wer"] = [wer(h, r) if isinstance(h, str) and h else np.nan for h, r in zip(df.asr_text, df.ref_text.fillna(""))]
+    # the WER normaliser is Latin-only and Whisper-small's Hindi is unreliable: non-English speech gets no WER at all
+    if "speech_source" in df:
+        df.loc[~df.speech_source.fillna("").str.startswith(ENGLISH_PREFIXES), "wer"] = np.nan
     return df
 
 
-def fmt(t): return f"{t[0]:.3f} [{t[1]:.3f},{t[2]:.3f}]"
+def fmt(t): return "n/a" if not np.isfinite(t[0]) else f"{t[0]:.3f} [{t[1]:.3f},{t[2]:.3f}]"
 
 
 def _mark(metric, mean):
@@ -57,7 +61,7 @@ def _cell(g, metrics=METRICS):
     if len(g) == 0: return "-"
     parts = []
     for m in metrics:
-        t = ci(g[m]); parts.append(f"{m}={t[0]:.3f}{_mark(m, t[0])}")
+        t = ci(g[m]); parts.append(f"{m}=n/a" if not np.isfinite(t[0]) else f"{m}={t[0]:.3f}{_mark(m, t[0])}")
     if "recovery_s" in g and g.recovery_s.notna().any():
         r = pd.to_numeric(g.recovery_s, errors="coerce")
         parts.append(f"rec={r.median():.2f}s")
@@ -81,7 +85,7 @@ def main():
              "PESQ: wideband P.862.2 @16 kHz (`pesq` package). P.862 is withdrawn by ITU in favour of P.863; reported because the brief requests it.",
              "SNR_out = 10log10(||s||^2/||s_hat-s||^2) vs clean primary (distortion counts as error). SI-SDR reported separately.",
              "Targets (problem statement): SNR_out>15 dB, STOI>0.85, PESQ>2.5 - marked per bucket row and per overall nominal row.",
-             *(["WER: faster-whisper small on the enhanced output vs the SAME model's transcript of the clean reference (no human transcripts in the eval set) - supporting evidence only."] if a.asr_ref else []), "",
+             *(["WER: faster-whisper small on the enhanced output vs the SAME model's transcript of the clean reference (no human transcripts in the eval set) - supporting evidence only. English speech only (LibriSpeech); Hindi rows report n/a."] if a.asr_ref else []), "",
              "## Nominal envelope (unclipped, no reference fault, no fault bucket, input SNR 0/5/10 dB)", "",
              "snr_gain = snr_out - snr_in, the improvement reading; targets are marked on absolute snr_out only.", "",
              "| system | n | " + " | ".join(metrics + ["snr_gain"]) + " |", "|---|---|" + "---|" * (len(metrics) + 1)]

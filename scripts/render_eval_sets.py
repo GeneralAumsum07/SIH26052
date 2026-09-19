@@ -43,13 +43,15 @@ def _impulse(seed, source, imp_df):
 def render_bucket_item(seed: list[int], speech_df, pool_df, n: int, snr: float, impulse, bank, imp_df=None, cfg=None):
     """One eval clip. impulse is None | "synthetic" | "corpus". Returns (mix, clean, meta, twin_or_None)."""
     rng = np.random.default_rng(seed)
-    x = _load(speech_df.path.iloc[int(rng.integers(len(speech_df)))], n, rng)
+    sp = speech_df.iloc[int(rng.integers(len(speech_df)))]
+    x = _load(sp.path, n, rng)
     s = np.pad(x, (0, n - len(x)))
     nz = [_load(pool_df.path.iloc[int(rng.integers(len(pool_df)))], n, rng)]
     cfg = cfg or MixConfig(snr_range=(snr, snr), p_clean=0.0)
     imp, on, src = _impulse(seed, impulse, imp_df) if impulse else (None, [], None)
     m, c, meta = mix(np.random.default_rng(seed), s, nz, imp, on, bank, cfg)
     meta["impulse_source"] = src
+    meta["speech_source"] = str(sp.get("source_id", sp.path))  # report needs the corpus to know whether English WER applies
     twin = None
     if impulse:  # identical draw with no impulse, scaled like the burst clip so only the impulse differs
         twin, _, _ = mix(np.random.default_rng(seed), s, nz, None, [], bank, cfg, norm_gain=meta["norm_gain"])
@@ -162,9 +164,10 @@ def main(a):
     d = root / "clean_inf"; d.mkdir(exist_ok=True)
     for i in range(a.per_bucket):
         rng = np.random.default_rng([a.seed, 999, i])
-        s = np.pad((x := _load(speech.path.iloc[int(rng.integers(len(speech)))], n, rng)), (0, n - len(x)))
+        sp = speech.iloc[int(rng.integers(len(speech)))]
+        s = np.pad((x := _load(sp.path, n, rng)), (0, n - len(x)))
         m, c, meta = mix(rng, s, [np.zeros(n, np.float32)], None, [], bank, MixConfig(p_clean=1.0))
-        meta["noise_class"] = "clean"
+        meta["noise_class"] = "clean"; meta["speech_source"] = str(sp.get("source_id", sp.path))
         _write(d, i, m, c, meta, None)
 
     h = hashlib.sha1()
