@@ -1,5 +1,6 @@
 """Per-clip metrics over a rendered split. One CSV row per clip."""
 import argparse, csv
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from multiprocessing import Pool
@@ -85,7 +86,7 @@ def main():
     asr = None
     if a.asr:
         try:
-            from vaani.asr import load_whisper; asr = load_whisper(a.asr_device, threads=a.asr_threads)
+            from vaani.asr import load_whisper, transcribe as whisper_text; asr = load_whisper(a.asr_device, threads=a.asr_threads)
         except ImportError:
             print("faster-whisper not installed; --asr rows will be NaN")  # never a hard dependency
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
@@ -102,13 +103,19 @@ def main():
                 row, est = item
                 if asr is not None and est is not None:
                     try:
-                        segs, _ = asr.transcribe(est, language=None, beam_size=1)
-                        row["asr_text"] = " ".join(s.text for s in segs).strip()  # generator: decode happens here, in the thread
+                        row["asr_text"] = whisper_text(asr, est)
                     except Exception as e:
                         print(f"asr {row['id']} failed: {e!r}")
                 return row
-            for row in tqdm(tp.map(transcribe, stream), total=n, desc=a.system):
-                w.writerow(row)
+            # executor.map would drain the whole stream before yielding; a bounded deque keeps ~2x threads in flight
+            pending, bar = deque(), tqdm(total=n, desc=a.system)
+            for item in stream:
+                pending.append(tp.submit(transcribe, item))
+                if len(pending) >= 2 * a.asr_threads:
+                    w.writerow(pending.popleft().result()); bar.update()
+            while pending:
+                w.writerow(pending.popleft().result()); bar.update()
+            bar.close()
 
 if __name__ == "__main__":
     main()

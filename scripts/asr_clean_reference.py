@@ -15,15 +15,14 @@ def main():
     ap.add_argument("--eval-root", default="data/eval"); ap.add_argument("--split", default="test")
     ap.add_argument("--out", default="results/asr/clean.csv"); ap.add_argument("--asr-device", default="cpu")
     a = ap.parse_args()
-    from vaani.asr import load_whisper
+    from vaani.asr import load_whisper, transcribe
     asr = load_whisper(a.asr_device)
     ds = RenderedDataset(Path(a.eval_root) / a.split)
     with open(a.out, "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, ["id", "bucket", "asr_text"]); w.writeheader()
         for p in tqdm(ds.items, desc="clean asr"):
             clean, _ = sf.read(str(p).replace(".mix.wav", ".clean.wav"), dtype="float32")
-            segs, _ = asr.transcribe(clean, language=None, beam_size=1)
-            w.writerow(dict(id=p.name[: -len(".mix.wav")], bucket=p.parent.name, asr_text=" ".join(s.text for s in segs).strip()))
+            w.writerow(dict(id=p.name[: -len(".mix.wav")], bucket=p.parent.name, asr_text=transcribe(asr, clean)))
 
 
 if __name__ == "__main__":
