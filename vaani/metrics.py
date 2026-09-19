@@ -36,11 +36,11 @@ def _envelope_db(x, frame=320):
 
 def recovery_time_s(est_burst, est_twin, burst_onset_s, thresh_db=3.0, hold_s=0.2, frame=320):
     """Time after the burst until the speech envelope of the burst run stays
-    within thresh_db of the no-burst twin for hold_s. NaN if never."""
+    within thresh_db of the no-burst twin for hold_s. inf if never (NaN is reserved for "no burst")."""
     d = np.abs(_envelope_db(est_burst, frame) - _envelope_db(est_twin, frame))
     k0 = int(burst_onset_s * SR / frame); hold = int(hold_s * SR / frame)
     ok = d < thresh_db
     for k in range(k0, len(ok) - hold):
         if ok[k:k + hold].all():
             return (k - k0) * frame / SR
-    return float("nan")
+    return float("inf")

@@ -35,7 +35,7 @@ drop[1, n // 2:] *= 0.01
 cases["ref_dropout"] = drop
 
 for name, x in cases.items():
-    sf.write(out / f"{name}.wav", x.T, SR, subtype="PCM_16")  # PCM16 keeps the fixture small
+    sf.write(out / f"{name}.wav", x.T, SR, subtype="FLOAT")  # PCM16 quantised (and clipped the burst) so the npz never matched the wav
     r = pipeline.run(x)
     np.savez_compressed(out / f"{name}.npz", **r)
     print(name, "burst frames:", int(r["burst"].sum()))

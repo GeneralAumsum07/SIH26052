@@ -54,10 +54,10 @@ def main(a):
                 seed = [a.seed, manifests.stable_hash(cls) % 1000, snr + 100, i]
                 m, c, meta, twin = render_bucket_item(seed, speech, pool, n, snr, burst, bank)
                 meta["noise_class"] = cls
-                sf.write(d / f"{i:04d}.mix.wav", m.T, SR); sf.write(d / f"{i:04d}.clean.wav", c, SR)
+                sf.write(d / f"{i:04d}.mix.wav", m.T, SR, subtype="FLOAT"); sf.write(d / f"{i:04d}.clean.wav", c, SR, subtype="FLOAT")
                 json.dump(meta, open(d / f"{i:04d}.json", "w"))
                 if twin is not None:
-                    sf.write(d / f"{i:04d}.twin.mix.wav", twin.T, SR)
+                    sf.write(d / f"{i:04d}.twin.mix.wav", twin.T, SR, subtype="FLOAT")
 
     # clean bucket: no noise at all
     d = root / "clean_inf"; d.mkdir(exist_ok=True)
@@ -66,7 +66,7 @@ def main(a):
         s = np.pad((x := _load(speech.path.iloc[int(rng.integers(len(speech)))], n, rng)), (0, n - len(x)))
         m, c, meta = mix(rng, s, [np.zeros(n, np.float32)], None, [], bank, MixConfig(p_clean=1.0))
         meta["noise_class"] = "clean"
-        sf.write(d / f"{i:04d}.mix.wav", m.T, SR); sf.write(d / f"{i:04d}.clean.wav", c, SR)
+        sf.write(d / f"{i:04d}.mix.wav", m.T, SR, subtype="FLOAT"); sf.write(d / f"{i:04d}.clean.wav", c, SR, subtype="FLOAT")
         json.dump(meta, open(d / f"{i:04d}.json", "w"))
 
     h = hashlib.sha1()

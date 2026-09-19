@@ -95,8 +95,8 @@ def main():
     if "recovery_s" in df and df.recovery_s.notna().any():
         lines += ["", "## Recovery time after burst (s)", ""]
         for sysname, g in df[df.recovery_s.notna()].groupby("system"):
-            r = pd.to_numeric(g.recovery_s, errors="coerce")
-            lines.append(f"- {sysname}: median={r.median():.3f} p90={r.quantile(0.9):.3f} failures={int(r.isna().sum())}/{len(r)}")
+            r = pd.to_numeric(g.recovery_s, errors="coerce")  # inf = never recovered; quantiles keep it so p90 is honest
+            lines.append(f"- {sysname}: median={r.median():.3f} p90={r.quantile(0.9):.3f} failures={int(np.isinf(r).sum())}/{len(r)}")
     open(a.out, "w", encoding="utf-8").write("\n".join(lines))
     print("\n".join(lines).encode("ascii", "replace").decode())  # cp1252 consoles choke on the check marks
 
