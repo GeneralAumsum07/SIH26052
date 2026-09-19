@@ -8,4 +8,5 @@ done
 for r in gtcrn_finetuned vaani_no_controller vaani_full vaani_full_sp; do
   uv run python -m vaani.eval --system ckpt:runs/$r/best.pt --split test --out results/$r.csv --asr --asr-device cuda > results/eval_$r.log 2>&1
 done
+[ -f results/asr/clean.csv ] || uv run python scripts/asr_clean_reference.py --asr-device cuda --out results/asr/clean.csv > results/asr/clean.log 2>&1
 uv run python -m vaani.report results/*.csv --asr-ref results/asr/clean.csv --out results/matrix.md > results/report.log 2>&1
