@@ -16,3 +16,6 @@ from pathlib import Path; from scripts.fetch_data import download
 download('https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p0$i.zip', Path('data/download/ears/p0$i.zip'))"
 done > data/download/ears/queue.log 2>&1
 echo "fetch queue done $(date)" > data/download/QUEUE_DONE
+# drone corpus (attribution accepted 2026-09-20): fetch_data handles download + scan; the round1 sources are idempotent
+uv run python scripts/fetch_data.py > data/download/fetch_drone.log 2>&1
+echo "fetch queue done $(date)" > data/download/QUEUE_DONE

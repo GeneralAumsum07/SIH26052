@@ -201,5 +201,5 @@ def scan_drone(root: Path, out: Path) -> list[dict]:
         dur = to_flac16k(f, dst) if not dst.exists() else sf.info(dst).duration
         x, sr = sf.read(dst, dtype="float32")
         rows.append(_row(f"drone:{cls}/{f.stem}", "drone", "noise", f"drone-{cls}", "", dst, dur,
-                         "DroneAudioDataset (no licence file; research use)", stationarity_class(x, sr)))
+                         "DroneAudioDataset (cite Al-Emadi et al., IWCMC 2019)", stationarity_class(x, sr)))
     return rows
