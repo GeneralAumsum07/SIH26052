@@ -744,7 +744,20 @@ wheels = [
 [[package]]
 name = "pesq"
 version = "0.0.4"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "sys_platform == 'emscripten'",
+    "sys_platform != 'emscripten' and sys_platform != 'win32'",
+]
+sdist = { url = "https://files.pythonhosted.org/packages/22/e6/f8bdcef3238ac10fb3ce37d150e9b03a152d971febd681f088c6e5e17d8e/pesq-0.0.4.tar.gz", hash = "sha256:b724b28f73fb638522982bd68e8c3c0957e2f45210639a460233b17aa7fc890b", size = 38702, upload-time = "2022-05-17T14:15:26.301Z" }
+
+[[package]]
+name = "pesq"
+version = "0.0.4"
 source = { path = "wheels/pesq-0.0.4-cp312-cp312-win_amd64.whl" }
+resolution-markers = [
+    "sys_platform == 'win32'",
+]
 wheels = [
     { filename = "pesq-0.0.4-cp312-cp312-win_amd64.whl", hash = "sha256:31fbddd9a7025d1e6bd61be9d587b77a330e396f032e4383c04c7e5dbd950c14" },
 ]
@@ -1149,7 +1162,8 @@ dependencies = [
     { name = "onnx" },
     { name = "onnxruntime" },
     { name = "pandas" },
-    { name = "pesq" },
+    { name = "pesq", version = "0.0.4", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'win32'" },
+    { name = "pesq", version = "0.0.4", source = { path = "wheels/pesq-0.0.4-cp312-cp312-win_amd64.whl" }, marker = "sys_platform == 'win32'" },
     { name = "pyarrow" },
     { name = "pyroomacoustics" },
     { name = "pystoi" },
@@ -1184,7 +1198,8 @@ requires-dist = [
     { name = "onnx", specifier = ">=1.16" },
     { name = "onnxruntime", specifier = ">=1.19" },
     { name = "pandas", specifier = ">=2.2" },
-    { name = "pesq", path = "wheels/pesq-0.0.4-cp312-cp312-win_amd64.whl" },
+    { name = "pesq", marker = "sys_platform != 'win32'", specifier = ">=0.0.4" },
+    { name = "pesq", marker = "sys_platform == 'win32'", path = "wheels/pesq-0.0.4-cp312-cp312-win_amd64.whl" },
     { name = "pyarrow", specifier = ">=17" },
     { name = "pyroomacoustics", specifier = ">=0.8" },
     { name = "pystoi", specifier = ">=0.4" },

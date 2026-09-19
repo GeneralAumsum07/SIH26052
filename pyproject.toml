@@ -31,7 +31,8 @@ fast = ["numba>=0.60"]  # optional JIT path for vaani/dsp/nlms.py, falls back to
 [tool.uv.sources]
 torch = { index = "pytorch-cu128" }
 torchaudio = { index = "pytorch-cu128" }
-pesq = { path = "wheels/pesq-0.0.4-cp312-cp312-win_amd64.whl" }
+# the vendored wheel is Windows-only; Linux/macOS build pesq from PyPI (needs a C compiler)
+pesq = { path = "wheels/pesq-0.0.4-cp312-cp312-win_amd64.whl", marker = "sys_platform == 'win32'" }
 
 [[tool.uv.index]]
 name = "pytorch-cu128"
