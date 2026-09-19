@@ -13,7 +13,7 @@ from vaani.data.dataset import RenderedDataset
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--eval-root", default="data/eval"); ap.add_argument("--split", default="test")
-    ap.add_argument("--out", default="results/asr_clean.csv")
+    ap.add_argument("--out", default="results/asr/clean.csv")
     a = ap.parse_args()
     from faster_whisper import WhisperModel
     asr = WhisperModel("small", device="cpu", compute_type="int8")

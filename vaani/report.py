@@ -39,7 +39,8 @@ def add_wer(df, ref_csv):
     """Attach per-item WER of asr_text against the clean-reference transcript (matched on bucket+id)."""
     ref = pd.read_csv(ref_csv, dtype={"id": str}).rename(columns={"asr_text": "ref_text"})
     df = df.astype({"id": str}).merge(ref, on=["bucket", "id"], how="left")
-    df["wer"] = [wer(h, r) for h, r in zip(df.asr_text.fillna(""), df.ref_text.fillna(""))]
+    # an absent hypothesis means the eval ran without ASR, not that the system erased the speech
+    df["wer"] = [wer(h, r) if isinstance(h, str) and h else np.nan for h, r in zip(df.asr_text, df.ref_text.fillna(""))]
     return df
 
 
@@ -65,7 +66,7 @@ def _cell(g, metrics=METRICS):
 
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("csvs", nargs="+"); ap.add_argument("--out", required=True)
-    ap.add_argument("--asr-ref", help="results/asr_clean.csv from scripts/asr_clean_reference.py; adds a WER column")
+    ap.add_argument("--asr-ref", help="results/asr/clean.csv from scripts/asr_clean_reference.py; adds a WER column")
     a = ap.parse_args()
     df = pd.concat([pd.read_csv(p, dtype={"id": str}) for p in a.csvs])
     metrics = list(METRICS)

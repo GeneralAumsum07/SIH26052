@@ -17,3 +17,10 @@ def test_add_wer_joins_on_bucket_and_id(tmp_path):
     df = pd.DataFrame([dict(id="0000", bucket="b", asr_text="hello there"), dict(id="0001", bucket="b", asr_text="x")])
     out = report.add_wer(df, ref)
     assert out.wer.tolist()[0] == 0.5 and pd.isna(out.wer.tolist()[1])
+
+
+def test_add_wer_leaves_missing_hypothesis_nan(tmp_path):
+    ref = tmp_path / "ref.csv"
+    pd.DataFrame([dict(id="0000", bucket="b", asr_text="hello world")]).to_csv(ref, index=False)
+    df = pd.DataFrame([dict(id="0000", bucket="b", asr_text=float("nan"))])
+    assert pd.isna(report.add_wer(df, ref).wer.iloc[0])
