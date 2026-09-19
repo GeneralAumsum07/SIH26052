@@ -93,6 +93,13 @@ def main():
         extract(zp, zp.parent)
         manifests.write(sources.scan_gunshots(Path(gun["extract_to"]), raw), mdir / "gunshots.parquet")
 
+    dr = cfg["sources"].get("drone")
+    if dr:
+        zp = Path(dr["archive"])
+        download(dr["url"], zp)
+        extract(zp, zp.parent)
+        manifests.write(sources.scan_drone(Path(dr["extract_to"]), raw), mdir / "drone.parquet")
+
     for url in a.dns_shards:
         tar = Path("data/download/dns") / Path(url).name
         download(url, tar)

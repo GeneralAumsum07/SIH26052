@@ -186,3 +186,20 @@ def scan_gunshots(root: Path, out: Path) -> list[dict]:
         dur = to_flac16k(f, dst) if not dst.exists() else sf.info(dst).duration
         rows.append(_row(f"gun:{arm}/{f.stem}", "gunshots", "noise", f"gun-{uuid}", "", dst, dur, "CC BY 4.0", "impulsive"))
     return rows
+
+
+def scan_drone(root: Path, out: Path) -> list[dict]:
+    """DroneAudioDataset (Al-Emadi et al. 2019): <set>/<class>/<clip>.wav. Only the drone folders are taken;
+    the 'unknown' folders are ESC-50 and Speech Commands noise already in the pool. Recorded indoors; no licence
+    file in the repo. Grouped per folder (one recording session each) so takes cannot straddle splits."""
+    rows = []
+    for f in sorted(root.rglob("*.wav")):
+        cls = f.parent.name
+        if cls == "unknown":
+            continue
+        dst = out / "drone" / cls / (f.stem + ".flac")
+        dur = to_flac16k(f, dst) if not dst.exists() else sf.info(dst).duration
+        x, sr = sf.read(dst, dtype="float32")
+        rows.append(_row(f"drone:{cls}/{f.stem}", "drone", "noise", f"drone-{cls}", "", dst, dur,
+                         "DroneAudioDataset (no licence file; research use)", stationarity_class(x, sr)))
+    return rows

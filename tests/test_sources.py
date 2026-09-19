@@ -110,3 +110,15 @@ def test_scan_gunshots_groups_channels_and_clips_by_recording(tmp_path):
     assert all(r["noise_class"] == "impulsive" and r["corpus"] == "gunshots" and r["kind"] == "noise" for r in rows)
     assert {r["source_id"] for r in rows} >= {f"gun:glock_17/{u1}_v0", f"gun:ar_556/{u2}_v0"}
     assert all(r["licence"] == "CC BY 4.0" for r in rows)
+
+
+def test_scan_drone_takes_only_drone_folders(tmp_path):
+    # DroneAudioDataset: the "unknown" folders are ESC-50 + white noise we already have
+    root = tmp_path / "DroneAudioDataset-master"
+    for d in ("Multiclass_Drone_Audio/bebop_1", "Multiclass_Drone_Audio/membo_1", "Multiclass_Drone_Audio/unknown",
+              "Binary_Drone_Audio/yes_drone", "Binary_Drone_Audio/unknown"):
+        (root / d).mkdir(parents=True); sf.write(root / d / "clip.wav", _white_noise(), SR)
+    rows = sources.scan_drone(root, tmp_path / "out")
+    assert {r["source_id"] for r in rows} == {"drone:bebop_1/clip", "drone:membo_1/clip", "drone:yes_drone/clip"}
+    assert all(r["corpus"] == "drone" and r["kind"] == "noise" and r["noise_class"] in ("stationary", "changing") for r in rows)
+    assert {r["group_id"] for r in rows} == {"drone-bebop_1", "drone-membo_1", "drone-yes_drone"}

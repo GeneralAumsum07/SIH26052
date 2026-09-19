@@ -27,3 +27,10 @@ sources:
     url: https://zenodo.org/api/records/7004819/files/edge-collected-gunshot-audio.zip/content
     archive: data/download/gunshots/edge-collected-gunshot-audio.zip
     extract_to: data/download/gunshots/edge-collected-gunshot-audio
+  # DroneAudioDataset (Al-Emadi et al., IWCMC 2019): 1,332 ~1 s indoor multirotor clips (bebop, membo) + an
+  # "unknown" class that is ESC-50/Speech Commands and is skipped. The repo has NO licence file - uncomment
+  # only once that is accepted for competition use.
+  # drone:
+  #   url: https://github.com/saraalemadi/DroneAudioDataset/archive/master.zip
+  #   archive: data/download/drone/master.zip
+  #   extract_to: data/download/drone/DroneAudioDataset-master
