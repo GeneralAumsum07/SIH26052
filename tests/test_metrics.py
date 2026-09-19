@@ -151,10 +151,10 @@ def test_eval_main_skips_bad_clip(tmp_path, monkeypatch):
 
     eval_root = _mini_eval_set(tmp_path)
     out = tmp_path / "raw.csv"
-    argv = ["eval.py", "--system", "raw", "--split", "test", "--eval-root", str(eval_root), "--out", str(out)]
+    argv = ["eval.py", "--system", "raw", "--split", "test", "--eval-root", str(eval_root), "--out", str(out), "--workers", "0"]  # in-process so the monkeypatch reaches enhance_fn
     monkeypatch.setattr(sys, "argv", argv)
     def _boom(mix): raise RuntimeError("boom")
-    monkeypatch.setattr(vaani_eval, "enhance_fn", lambda spec: _boom)
+    monkeypatch.setattr(vaani_eval, "enhance_fn", lambda spec, device=None: _boom)
     vaani_eval.main()
 
     import pandas as pd

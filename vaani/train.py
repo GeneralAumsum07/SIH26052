@@ -114,7 +114,7 @@ def main(config_path):
                            d.get("epoch_len", 20000), cfg["seed"], **dsk)
     vds = DynamicMixDataset(d["manifests"], "val", d.get("bank"), mixcfg, d.get("crop_s", 4.0),
                             cfg.get("val", {}).get("dynamic_items", 200), cfg["seed"] + 1, **dsk)
-    nw = cfg.get("num_workers", 4)
+    nw = cfg.get("num_workers", 8)
     # Windows spawns workers: persistent_workers avoids re-importing numba/JIT every epoch;
     # the epoch therefore travels in the sampler's indices, not in dataset attributes
     sampler = EpochSampler(len(ds))
