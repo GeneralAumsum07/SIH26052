@@ -8,8 +8,8 @@ for r in gtcrn_finetuned vaani_no_controller vaani_full vaani_full_sp; do r=$r$s
   [ -f runs/$r/DONE ] || { uv run python -u -m vaani.train configs/exp/$r.yaml >> runs/$r.log 2>&1 && touch runs/$r/DONE; }
 done
 for r in gtcrn_finetuned vaani_no_controller vaani_full vaani_full_sp; do r=$r$sfx
-  [ -f results/$r.csv ] || uv run python -m vaani.eval --system ckpt:runs/$r/best.pt --split test --out results/$r.csv --asr > results/eval_$r.log 2>&1
+  [ -f results/$r.csv ] || uv run python -m vaani.eval --system ckpt:runs/$r/best.pt --split test --out results/$r.csv --asr --asr-device cuda > results/eval_$r.log 2>&1
 done
-[ -f results/asr/clean.csv ] || uv run python scripts/asr_clean_reference.py > results/asr/clean.log 2>&1
+[ -f results/asr/clean.csv ] || uv run python scripts/asr_clean_reference.py --asr-device cuda > results/asr/clean.log 2>&1
 uv run python -m vaani.report results/*.csv --asr-ref results/asr/clean.csv --out results/matrix.md > results/report.log 2>&1
 echo "round$round done $(date)" > results/ROUND${round}_DONE

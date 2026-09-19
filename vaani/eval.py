@@ -39,12 +39,13 @@ def main():
     ap.add_argument("--system", required=True); ap.add_argument("--split", default="test")
     ap.add_argument("--eval-root", default="data/eval"); ap.add_argument("--out", required=True)
     ap.add_argument("--asr", action="store_true", help="also compute WER with faster-whisper (supporting evidence only)")
+    ap.add_argument("--asr-device", default="cpu", help="cpu|cuda; ASR is not in the deployed path, so cuda only speeds up eval")
     a = ap.parse_args()
     ds = RenderedDataset(Path(a.eval_root) / a.split); fn = enhance_fn(a.system)
     asr = None
     if a.asr:
         try:
-            from faster_whisper import WhisperModel; asr = WhisperModel("small", device="cpu", compute_type="int8")
+            from vaani.asr import load_whisper; asr = load_whisper(a.asr_device)
         except ImportError:
             print("faster-whisper not installed; --asr rows will be NaN")  # never a hard dependency
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)

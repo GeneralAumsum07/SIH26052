@@ -13,10 +13,10 @@ from vaani.data.dataset import RenderedDataset
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--eval-root", default="data/eval"); ap.add_argument("--split", default="test")
-    ap.add_argument("--out", default="results/asr/clean.csv")
+    ap.add_argument("--out", default="results/asr/clean.csv"); ap.add_argument("--asr-device", default="cpu")
     a = ap.parse_args()
-    from faster_whisper import WhisperModel
-    asr = WhisperModel("small", device="cpu", compute_type="int8")
+    from vaani.asr import load_whisper
+    asr = load_whisper(a.asr_device)
     ds = RenderedDataset(Path(a.eval_root) / a.split)
     with open(a.out, "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, ["id", "bucket", "asr_text"]); w.writeheader()
