@@ -2,7 +2,7 @@
 Nominal envelope = unclipped, no ref dropout, SNR in {0,5,10}.
 Severe envelope = everything else (reported, never claimed as target-met).
 """
-import argparse
+import argparse, re
 
 import numpy as np, pandas as pd
 
@@ -19,6 +19,30 @@ def ci(x, n=1000, seed=0):
     return (x.mean(), np.percentile(means, 2.5), np.percentile(means, 97.5))
 
 
+def _words(t):
+    return re.sub(r"[^a-z0-9' ]+", " ", str(t).lower()).split()
+
+
+def wer(hyp, ref):
+    """Word error rate via Levenshtein on normalised tokens; NaN when the reference is empty."""
+    h, r = _words(hyp), _words(ref)
+    if not r: return np.nan
+    d = list(range(len(h) + 1))
+    for i, rw in enumerate(r, 1):
+        prev, d[0] = d[0], i
+        for j, hw in enumerate(h, 1):
+            prev, d[j] = d[j], min(d[j] + 1, d[j - 1] + 1, prev + (rw != hw))
+    return d[len(h)] / len(r)
+
+
+def add_wer(df, ref_csv):
+    """Attach per-item WER of asr_text against the clean-reference transcript (matched on bucket+id)."""
+    ref = pd.read_csv(ref_csv, dtype={"id": str}).rename(columns={"asr_text": "ref_text"})
+    df = df.astype({"id": str}).merge(ref, on=["bucket", "id"], how="left")
+    df["wer"] = [wer(h, r) for h, r in zip(df.asr_text.fillna(""), df.ref_text.fillna(""))]
+    return df
+
+
 def fmt(t): return f"{t[0]:.2f} [{t[1]:.2f},{t[2]:.2f}]"
 
 
@@ -27,11 +51,11 @@ def _mark(metric, mean):
     return " ✓" if mean > TARGETS[metric] else " ✗"
 
 
-def _cell(g):
+def _cell(g, metrics=METRICS):
     """One system's row in the per-bucket table: SNR/SI-SDR/STOI/PESQ (✓/✗ against target) + recovery median."""
     if len(g) == 0: return "-"
     parts = []
-    for m in METRICS:
+    for m in metrics:
         t = ci(g[m]); parts.append(f"{m}={t[0]:.2f}{_mark(m, t[0])}")
     if "recovery_s" in g and g.recovery_s.notna().any():
         r = pd.to_numeric(g.recovery_s, errors="coerce")
@@ -41,33 +65,39 @@ def _cell(g):
 
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("csvs", nargs="+"); ap.add_argument("--out", required=True)
+    ap.add_argument("--asr-ref", help="results/asr_clean.csv from scripts/asr_clean_reference.py; adds a WER column")
     a = ap.parse_args()
-    df = pd.concat([pd.read_csv(p) for p in a.csvs])
+    df = pd.concat([pd.read_csv(p, dtype={"id": str}) for p in a.csvs])
+    metrics = list(METRICS)
+    if a.asr_ref:
+        df = add_wer(df, a.asr_ref); metrics.append("wer")
     df["nominal"] = (~df.clipped) & (~df.ref_dropout) & df.snr_in.isin([0, 5, 10])
     lines = ["# Ablation matrix", "",
              "PESQ: wideband P.862.2 @16 kHz (`pesq` package). P.862 is withdrawn by ITU in favour of P.863; reported because the brief requests it.",
              "SNR_out = 10log10(||s||^2/||s_hat-s||^2) vs clean primary (distortion counts as error). SI-SDR reported separately.",
-             "Targets (problem statement): SNR_out>15 dB, STOI>0.85, PESQ>2.5 - marked per bucket row and per overall nominal row.", "",
+             "Targets (problem statement): SNR_out>15 dB, STOI>0.85, PESQ>2.5 - marked per bucket row and per overall nominal row.",
+             *(["WER: faster-whisper small on the enhanced output vs the SAME model's transcript of the clean reference (no human transcripts in the eval set) - supporting evidence only."] if a.asr_ref else []), "",
              "## Nominal envelope (unclipped, no reference fault, input SNR 0/5/10 dB)", "",
-             "| system | n | " + " | ".join(METRICS) + " |", "|---|---|" + "---|" * len(METRICS)]
+             "| system | n | " + " | ".join(metrics) + " |", "|---|---|" + "---|" * len(metrics)]
     for sysname, g in df[df.nominal].groupby("system"):
         cells = []
-        for m in METRICS:
+        for m in metrics:
             t = ci(g[m]); cells.append(fmt(t) + _mark(m, t[0]))
         lines.append(f"| {sysname} | {len(g)} | " + " | ".join(cells) + " |")
     systems = sorted(df.system.unique())
     lines += ["", "## Per bucket (all systems)", ""]
     lines += ["| bucket | " + " | ".join(systems) + " |", "|---|" + "---|" * len(systems)]
     for bucket, gb in df.groupby("bucket"):
-        cells = [_cell(gb[gb.system == s]) for s in systems]
+        cells = [_cell(gb[gb.system == s], metrics) for s in systems]
         lines.append(f"| {bucket} | " + " | ".join(cells) + " |")
-    lines.append("| **Overall** | " + " | ".join(_cell(df[df.system == s]) for s in systems) + " |")
+    lines.append("| **Overall** | " + " | ".join(_cell(df[df.system == s], metrics) for s in systems) + " |")
     if "recovery_s" in df and df.recovery_s.notna().any():
         lines += ["", "## Recovery time after burst (s)", ""]
         for sysname, g in df[df.recovery_s.notna()].groupby("system"):
             r = pd.to_numeric(g.recovery_s, errors="coerce")
             lines.append(f"- {sysname}: median={r.median():.3f} p90={r.quantile(0.9):.3f} failures={int(r.isna().sum())}/{len(r)}")
-    open(a.out, "w", encoding="utf-8").write("\n".join(lines)); print("\n".join(lines))
+    open(a.out, "w", encoding="utf-8").write("\n".join(lines))
+    print("\n".join(lines).encode("ascii", "replace").decode())  # cp1252 consoles choke on the check marks
 
 
 if __name__ == "__main__":
