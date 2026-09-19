@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# Round-2 test split (rendered from all five manifests) evaluated for every system.
+# Round-2 test split (all five manifests; recorded-impulse + fault buckets) evaluated for every system.
 # Kept apart from data/eval and results/ so the frozen round-1 numbers stay the reference.
 set -u
 cd "$(dirname "$0")/.."
-M="data/manifests/librispeech.parquet data/manifests/esc50.parquet data/manifests/cv_hi.parquet data/manifests/mad.parquet data/manifests/dns_datasets_fullband.noise_fullband.freesound_000.tar.parquet"
-[ -f data/eval_r2/test/EVALSET_HASH ] || uv run python scripts/render_eval_sets.py --manifests $M --split test --out data/eval_r2 > data/eval_r2_render.log 2>&1 || exit 1
+[ -f data/eval_r2/test/EVALSET_HASH ] || { echo "render data/eval_r2 first: scripts/render_all_eval_sets.sh"; exit 1; }
 mkdir -p results_r2/asr
 for s in raw nlms_only gtcrn_pretrained; do
   [ -f results_r2/$s.csv ] || uv run python -m vaani.eval --system $s --split test --eval-root data/eval_r2 --out results_r2/$s.csv --asr --asr-device cuda > results_r2/eval_$s.log 2>&1
