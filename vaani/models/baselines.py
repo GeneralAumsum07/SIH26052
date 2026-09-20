@@ -48,7 +48,8 @@ class RNNoise:
             (np.clip(x48, -1, 1) * 32767).astype(np.int16).tofile(i)
             subprocess.run([exe, str(i), str(o)], check=True, capture_output=True)
             y48 = np.fromfile(o, np.int16).astype(np.float32) / 32767
-        return resample_poly(y48, 1, 3)[: mix.shape[1]].astype(np.float32)
+        y = resample_poly(y48, 1, 3)[: mix.shape[1]].astype(np.float32)
+        return np.pad(y, (0, mix.shape[1] - len(y)))   # rnnoise_demo drops the trailing partial 480-sample frame
 
 
 class DeepFilterNet3:
