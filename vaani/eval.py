@@ -17,26 +17,49 @@ from vaani.train import build_model
 
 
 def enhance_fn(spec: str, device=None):
+    """`ckpt:<path>` runs a checkpoint; `post:<yaml>` runs its `base_checkpoint` then `vaani.dsp.postfilter` on the output
+    spectrum before the one iSTFT (Tier 4.6); anything else is a baseline name."""
+    if spec.startswith("post:"):
+        import yaml
+        from vaani.dsp.postfilter import ResidualPostFilter
+        pcfg = yaml.safe_load(open(spec[5:], encoding="utf-8"))
+        spec_fn, _ = _ckpt_spectrum_fn(pcfg["base_checkpoint"], device)
+        pf_kwargs = pcfg.get("postfilter") or {}
+
+        def f(mix):
+            out = spec_fn(mix)                                    # (1,F,T,2) torch on device
+            y = torch.view_as_complex(out[0].contiguous()).cpu().numpy().astype(np.complex64)   # (F,T)
+            z = ResidualPostFilter(**pf_kwargs).process(y)        # fresh state per clip (twins included)
+            zt = torch.view_as_real(torch.from_numpy(z))[None].to(out.device)
+            return stft.istft(zt, length=mix.shape[1])[0].cpu().numpy()
+        return f
     if not spec.startswith("ckpt:"):
         return baselines.get(spec).enhance
+    spec_fn, _ = _ckpt_spectrum_fn(spec[5:], device)
+
+    def f(mix):
+        return stft.istft(spec_fn(mix), length=mix.shape[1])[0].cpu().numpy()
+    return f
+
+
+def _ckpt_spectrum_fn(path, device=None):
+    """The checkpoint's full output spectrum (mask + deep-filter taps), still on `device`; iSTFT is the caller's."""
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-    ck = torch.load(spec[5:], map_location="cpu", weights_only=True); cfg = ck["config"]
+    ck = torch.load(path, map_location="cpu", weights_only=True); cfg = ck["config"]
     m = build_model(cfg["model"], model_cfg=cfg.get("model_cfg")).to(device); m.load_state_dict(ck["model"]); m.eval()
 
     @torch.no_grad()
-    def f(mix):
+    def spec_of(mix):
         x = torch.from_numpy(mix)[None].to(device)
         if cfg["model"] == "gtcrn":
-            out = m(stft.stft(x[:, 0]))
-        else:
-            # DSP pipeline must run exactly as training did, hence the checkpoint's own controller_on
-            r = pipeline.run(mix, controller_on=cfg["controller_on"], dsp_cfg=cfg.get("dsp"))
-            x = torch.from_numpy(r["mix"])[None].to(device)   # limited when the checkpoint trained with the limiter
-            spec6 = torch.cat([stft.stft(x[:, 0]), stft.stft(x[:, 1]),
-                                stft.stft(torch.from_numpy(r["n_hat"])[None].to(device))], -1)
-            out = m(spec6, torch.from_numpy(r["features"])[None].to(device))
-        return stft.istft(out, length=mix.shape[1])[0].cpu().numpy()
-    return f
+            return m(stft.stft(x[:, 0]))
+        # DSP pipeline must run exactly as training did, hence the checkpoint's own controller_on
+        r = pipeline.run(mix, controller_on=cfg["controller_on"], dsp_cfg=cfg.get("dsp"))
+        x = torch.from_numpy(r["mix"])[None].to(device)   # limited when the checkpoint trained with the limiter
+        spec6 = torch.cat([stft.stft(x[:, 0]), stft.stft(x[:, 1]),
+                            stft.stft(torch.from_numpy(r["n_hat"])[None].to(device))], -1)
+        return m(spec6, torch.from_numpy(r["features"])[None].to(device))
+    return spec_of, cfg
 
 
 _ds = _fn = _sys = None

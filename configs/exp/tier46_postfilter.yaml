@@ -1,0 +1,5 @@
+base_checkpoint: runs/tier46_anchor/best.pt
+# Tier 4.6 post-filter defaults (plan section 4); the val screen picks gain_floor/noise_bias and writes results_r2/tier46/postfilter.selected.yaml
+postfilter:
+  gain_floor: 0.8
+  noise_bias: 1.5
