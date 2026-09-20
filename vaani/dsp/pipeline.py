@@ -11,6 +11,7 @@ is no non-causal "replay with final gates" step here.
 import numpy as np
 
 from vaani.dsp import stft
+from vaani.dsp.blocking import BlockingMatrix
 from vaani.dsp.controller import Controller
 from vaani.dsp.features import FrameFeatures, N_FEATURES
 from vaani.dsp.limiter import Limiter
@@ -18,13 +19,15 @@ from vaani.dsp.nlms import NLMS
 
 
 def run(mix: np.ndarray, controller_on: bool = True, dsp_cfg: dict | None = None) -> dict:
-    """dsp_cfg (plan 2.7, ablatable): {"limiter": bool, "controller": {Controller kwargs}}. None = r1/r2 behaviour.
+    """dsp_cfg (plans 2.7/2.8, ablatable): {"limiter": bool | Limiter kwargs, "controller": {Controller kwargs},
+    "blocking": bool | BlockingMatrix kwargs}. None = r1/r2 behaviour.
     Returns "mix" too: the limited signal when the limiter is on (what the model must see), else the input."""
     dsp_cfg = dsp_cfg or {}
     prim, ref = mix[0].astype(np.float32), mix[1].astype(np.float32)
     T = len(prim)
     # local instances only (no module-level mutable state) -> safe in DataLoader workers
     nlms, ff, ctl = NLMS(), FrameFeatures(), Controller(**dsp_cfg.get("controller", {}))
+    bk = dsp_cfg.get("blocking"); blk_m = BlockingMatrix(**(bk if isinstance(bk, dict) else {})) if bk else None
     n_blocks = (T + stft.HOP - 1) // stft.HOP  # tail: last block may be shorter than HOP
     lim_hit = np.zeros(n_blocks + 1, bool)     # per hop block: did the limiter engage (feeds the burst flag)
     if dsp_cfg.get("limiter"):
@@ -53,7 +56,12 @@ def run(mix: np.ndarray, controller_on: bool = True, dsp_cfg: dict | None = None
         # NLMS block k, gated by the decision made for the *previous* frame
         if k < n_blocks:
             i = k * stft.HOP
-            blk, health = nlms.process_block(prim[i:i + stft.HOP], ref[i:i + stft.HOP],
+            r_in = ref[i:i + stft.HOP]
+            if blk_m is not None:
+                # 2.8: speech-path estimate adapts on the previous frame's speech verdict, same causality as the gate.
+                # Without a controller there is no speech verdict, so the block matrix stays at its initial zero.
+                r_in = blk_m.process_block(prim[i:i + stft.HOP], r_in, ctl.speech_adapt if controller_on else 0.0)
+            blk, health = nlms.process_block(prim[i:i + stft.HOP], r_in,
                                               gate if controller_on else 1.0)
             n_hat[i:i + len(blk)] = blk
         # if there are more feature frames than NLMS blocks (frame count can
@@ -63,7 +71,8 @@ def run(mix: np.ndarray, controller_on: bool = True, dsp_cfg: dict | None = None
         feats[k] = f
         if controller_on:
             # frame k spans hop blocks k-1 and k (reflect-padded framing), so either block's hit counts
-            gate, b, r = ctl.step(f, ff.diff_jump, bool(lim_hit[max(k - 1, 0)] or lim_hit[min(k, n_blocks)]))
+            gate, b, r = ctl.step(f, ff.diff_jump, bool(lim_hit[max(k - 1, 0)] or lim_hit[min(k, n_blocks)]),
+                                  ff.prim_margin)
             gates[k], bursts[k], rel[k] = gate, b, r
     if not controller_on:
         feats[:] = 0.0

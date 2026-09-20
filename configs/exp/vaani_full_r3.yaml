@@ -27,12 +27,16 @@ data:
     speech_rms_db: [-32, -18]                   # recorder gain: sets how much headroom a burst has before overload
     # mic_mismatch_db stays 3.0: the 2.1 floor tracker's speech-presence margin (ref_speech_gain <= -8 dB) breaks at +-10
 dsp:
-  # 2.7 (DSP ahead of the model; diag_controller on eval_r2 test, 10 clips/bucket):
+  # 2.7 / 2.8 (DSP ahead of the model; diag_controller on eval_r2 test, 10 clips/bucket):
   #   legacy rule            TPR 0.905 FPR 0.023 | diff-jump 3 dB          TPR 0.917 FPR 0.015
   #   + limiter 26 dB        TPR 0.917 FPR 0.025 (limiter engagement feeds the burst flag; 18 dB headroom failed FPR at 0.052)
-  limiter: true                                 # ablation: vaani_full_r3_nolim
+  #   + blocking, margin 10  nhat~speech -> ~0 everywhere; ERLE stationary_15 -6.1 -> -2.4, _10 -1.7 -> +0.4, impulsive_15 -6.2 -> -0.6;
+  #                          refgain_-12dB loss 0.15/0.29 dB; low-SNR ERLE unchanged. (+15 dB stationary stays < 0: NLMS-side, not blocking.)
+  limiter: true                              # ablation: vaani_full_r3_nodsp (limiter + blocking off)
+  blocking: true
   controller:
     diff_jump_max_db: 3.0                       # burst = onset >= 12 dB AND (primary onset - reference onset) <= 3 dB
+    block_margin_db: 10.0                       # blocking matrix adapts only with the primary >= 10 dB over its own noise floor
 model_cfg:
   df_order: 3                                   # 2.5 deep-filter head: complex FIR over t, t-1, t-2 (zero latency)
   film: false                                   # 2.4: FiLM path measured inert (-0.003 STOI), dropped

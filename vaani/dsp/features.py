@@ -18,6 +18,7 @@ HOP, SUB = 256, 64                 # 16 ms hop split into 4 ms sub-blocks for th
 SUB_HIST = 25                      # 100 ms of sub-block history behind the onset test
 FLOOR_UP, FLOOR_DOWN, FLOOR_MAX = 0.002, 0.3, 3.0   # ratio-floor tracker: ~8 s up, ~50 ms down, capped at the mic-mismatch bound
 SP_RELEASE = 0.85                  # speech-presence release per frame (~100 ms)
+E_FLOOR_UP, E_FLOOR_DOWN = 0.02, 0.3   # primary energy floor: ~0.8 s up, ~50 ms down (a minimum-statistics stand-in)
 
 
 class FrameFeatures:
@@ -33,6 +34,8 @@ class FrameFeatures:
         self.Spp = np.zeros(257); self.Srr = np.zeros(257); self.Spr = np.zeros(257, complex)
         self.sp_smooth = 0.0
         self.ratio_floor = 0.0                      # tracked inter-mic level ratio of the noise (dB)
+        self.e_floor = None                         # slow minimum tracker of primary frame energy (2.8 local-SNR proxy)
+        self.prim_margin = 0.0                      # current primary energy over that floor (dB); not a feature slot
 
     def compute(self, p, r, P, R, nlms_health, prev_gate):
         f = np.zeros(N_FEATURES, np.float32)
@@ -55,6 +58,11 @@ class FrameFeatures:
         mag = np.abs(P)
         f[1] = 0.0 if self.prev_mag is None else float(np.sum(np.maximum(mag - self.prev_mag, 0)) / (np.sum(self.prev_mag) + 1e-8))
         self.prev_mag = mag
+        # primary-only local SNR: independent of the reference gain, unlike the ratio margin (refgain_-12dB
+        # pins the ratio floor at its cap and every frame would look like clean speech)
+        if self.e_floor is None: self.e_floor = e
+        self.e_floor += (E_FLOOR_UP if e > self.e_floor else E_FLOOR_DOWN) * (e - self.e_floor)
+        self.prim_margin = float(10 * np.log10(e / self.e_floor))
         f[2] = float(np.abs(p).max() / (np.sqrt(e) + 1e-8))
         f[3] = float((np.abs(p) > CLIP).mean()); f[4] = float((np.abs(r) > CLIP).mean())
         er = float((r ** 2).mean() + 1e-10)

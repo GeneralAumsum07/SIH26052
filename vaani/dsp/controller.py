@@ -14,19 +14,23 @@ _I = {n: i for i, n in enumerate(FEATURE_NAMES)}
 
 class Controller:
     def __init__(self, jump_db=12.0, level_diff_max_db=3.0, hold_frames=4, ramp_frames=12,
-                 speech_freeze=0.5, diff_jump_max_db=None):
+                 speech_freeze=0.5, diff_jump_max_db=None, block_margin_db=0.0):
         self.jump_db, self.ld_max, self.hold, self.ramp, self.sp_freeze = jump_db, level_diff_max_db, hold_frames, ramp_frames, speech_freeze
         # plan 2.7a: when set, the burst test is "onset >= jump_db AND differential jump <= diff_jump_max_db" and
         # the frame-level level_diff test is dropped (it reads ~0 dB for consonants too once the noise is loud).
         self.dj_max = diff_jump_max_db
+        # plan 2.8: the blocking matrix adapts only while the primary sits this far above its own tracked noise
+        # floor (local SNR); trained on noisy speech it learns the noise path too and strips the reference
+        self.block_margin = block_margin_db
         self.reset()
 
     def reset(self):
         self.hold_left = 0
         self.gate = 1.0
         self.ramp_pos = self.ramp   # fully ramped
+        self.speech_adapt = 0.0     # 2.8: the blocking matrix adapts when this is 1 (talker active, nothing else wrong)
 
-    def step(self, f: np.ndarray, diff_jump: float = 0.0, limiter_hit: bool = False):
+    def step(self, f: np.ndarray, diff_jump: float = 0.0, limiter_hit: bool = False, prim_margin: float = 0.0):
         jump = f[_I["log_energy_delta"]]
         ld = f[_I["level_diff_db"]]
         far = (diff_jump <= self.dj_max) if self.dj_max is not None else (ld <= self.ld_max)
@@ -43,6 +47,7 @@ class Controller:
         dropout = f[_I["ref_dropout"]] > 0.5
         speech = f[_I["speech_presence"]] > self.sp_freeze
         freeze = burst or overload or dropout or speech
+        self.speech_adapt = float(speech and prim_margin >= self.block_margin and not (burst or overload or dropout))
         if freeze:
             self.ramp_pos = 0; self.gate = 0.0
         else:

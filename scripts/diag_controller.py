@@ -38,11 +38,15 @@ def main():
     ap.add_argument("--split", default="test")
     ap.add_argument("--per-bucket", type=int, default=10)
     ap.add_argument("--limiter", action="store_true", help="2.7b sub-block limiter ahead of the STFT")
+    ap.add_argument("--blocking", action="store_true", help="2.8 blocking matrix on the reference path")
+    ap.add_argument("--block-margin", type=float, default=0.0, help="2.8: adapt only when prim/ref ratio exceeds the noise ratio by this (dB)")
     ap.add_argument("--headroom", type=float, default=None, help="limiter headroom over the running level (dB)")
     ap.add_argument("--diff-jump-max", type=float, default=None, help="2.7a burst rule threshold (dB); None = legacy level_diff rule")
     a = ap.parse_args()
     lim = a.limiter if a.headroom is None else {"headroom_db": a.headroom}
-    dsp_cfg = {"limiter": lim, "controller": {} if a.diff_jump_max is None else {"diff_jump_max_db": a.diff_jump_max}}
+    ctl = {} if a.diff_jump_max is None else {"diff_jump_max_db": a.diff_jump_max}
+    if a.block_margin: ctl["block_margin_db"] = a.block_margin
+    dsp_cfg = {"limiter": lim, "blocking": a.blocking, "controller": ctl}
     print(f"dsp_cfg = {dsp_cfg}")
 
     ds = RenderedDataset(Path(a.eval_root) / a.split)
