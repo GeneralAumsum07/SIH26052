@@ -42,7 +42,7 @@ until [ -f $D/GATED_OK ]; do echo "$(date +%H:%M) waiting for the laptop upload 
       echo $B/datasets_fullband.noise_fullband.$s.tar.bz2; done) && touch data/manifests/MANIFESTS_OK; }
 # relabel pass (MAD shooting/shelling/footsteps -> changing, ESC-50 impulsive shortlist) is inside the scanners now;
 # run it anyway so a manifest restored from the laptop matches
-uv run python scripts/relabel_noise_class.py
+uv run python scripts/relabel_noise_class.py data/manifests/*.parquet   # positional manifests are required; bare call aborted the bootstrap
 
 # --- RIR banks: r1/r2 bank (eval render + r1/r2 configs) and the r3 armoured bank -----------------------------
 [ -f data/rirs/bank.npz ]    || uv run python scripts/make_rir_bank.py --out data/rirs/bank.npz
