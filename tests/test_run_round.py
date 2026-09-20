@@ -5,10 +5,12 @@ import shutil
 import subprocess
 
 import pytest
+import yaml
 
 
-@pytest.mark.parametrize("failure", ["train", "hash", "eval", "report", "none"])
-def test_round3_completion_requires_success(tmp_path, failure):
+@pytest.mark.parametrize("round", ["3", "3b"])
+@pytest.mark.parametrize("failure", ["rir", "train", "hash", "lock", "eval", "report", "none"])
+def test_round3_completion_requires_success(tmp_path, failure, round):
     bash = shutil.which("bash")
     if not bash:
         pytest.skip("bash unavailable")
@@ -22,20 +24,56 @@ def test_round3_completion_requires_success(tmp_path, failure):
     # The stub exposes each failure boundary; training still creates the directory as the real CLI does.
     stub = tmp_path / "uv"
     stub.write_text('''#!/usr/bin/env bash
+[[ "$*" == "run --all-extras "* ]] || exit 2
 case "$*" in
+  *RirBank*)
+    [ "$ROUND_TEST_FAILURE" != rir ] || exit 1
+    touch rir_ready ;;
   *vaani.train*)
+    [ -f rir_ready ] || exit 2
+    [ "$OMP_NUM_THREADS:$MKL_NUM_THREADS" = 1:1 ] || exit 2
     name=${@: -1}; name=${name##*/}; name=${name%.yaml}
     mkdir -p "runs/$name"
     [ "$ROUND_TEST_FAILURE" != train ] || exit 1 ;;
-  *vaani.eval*) [ "$ROUND_TEST_FAILURE" != eval ] || exit 1 ;;
+  *vaani.eval*)
+    [ -f eval_lock ] || exit 2
+    [[ "$*" == *"--asr --asr-device cuda --dnsmos"* ]] || exit 2
+    [ "$ROUND_TEST_FAILURE" != eval ] || exit 1 ;;
   *vaani.report*) [ "$ROUND_TEST_FAILURE" != report ] || exit 1 ;;
 esac
 exit 0
 ''', encoding="utf-8", newline="\n")
     stub.chmod(0o755)
+    # Git Bash lacks flock; verify acquisition/failure ordering here. Production
+    # uses the host's kernel lock, which remains held until the runner exits.
+    lock = tmp_path / "flock"
+    lock.write_text('''#!/usr/bin/env bash
+[ "$ROUND_TEST_FAILURE" != lock ] || exit 1
+touch eval_lock
+''', encoding="utf-8", newline="\n")
+    lock.chmod(0o755)
     env = dict(os.environ, ROUND_TEST_FAILURE=failure)
     # Let bash construct PATH: Windows separators are not POSIX separators.
-    result = subprocess.run([bash, "-c", 'export PATH="$PWD:$PATH"; bash scripts/run_round.sh 3'],
+    result = subprocess.run([bash, "-c", f'export PATH="$PWD:$PATH"; bash scripts/run_round.sh {round}'],
                             cwd=tmp_path, env=env, capture_output=True, text=True)
     assert (result.returncode == 0) == (failure == "none"), result.stderr
-    assert (tmp_path / "results_r2/ROUND3_DONE").exists() == (failure == "none")
+    assert (tmp_path / f"results_r2/ROUND{round.upper()}_DONE").exists() == (failure == "none")
+    if failure == "none":
+        expected = ({"vaani_full_r3", "vaani_no_controller_r3", "vaani_full_r3_nodsp"}
+                    if round == "3" else {"vaani_full_r3_s1", "vaani_full_r3_s2",
+                    "vaani_no_controller_r3_s1", "vaani_no_controller_r3_s2", "vaani_full_r3_df1"})
+        assert {p.parent.name for p in (tmp_path / "runs").glob("*/DONE")} == expected
+
+
+@pytest.mark.parametrize("base,suffix,seed,order", [
+    ("vaani_full_r3", "s1", 1, 3), ("vaani_full_r3", "s2", 2, 3),
+    ("vaani_no_controller_r3", "s1", 1, 3), ("vaani_no_controller_r3", "s2", 2, 3),
+    ("vaani_full_r3", "df1", 0, 1),
+])
+def test_round3b_configs_change_only_intended_axes(base, suffix, seed, order):
+    root = Path(__file__).parents[1] / "configs/exp"
+    expected = yaml.safe_load((root / f"{base}.yaml").read_text())
+    name = f"{base}_{suffix}"
+    expected.update(name=name, seed=seed, num_workers=6)
+    expected["model_cfg"]["df_order"] = order
+    assert yaml.safe_load((root / f"{name}.yaml").read_text()) == expected
