@@ -30,9 +30,10 @@ if [ "$round" = 3 ] || [ "$round" = 3b ]; then
   failed=0
   for pid in "${pids[@]}"; do wait "$pid" || failed=1; done
   [ "$failed" = 0 ] || { echo "round$round training failed; inspect runs/*_r3*.log" >&2; exit 1; }
-  # Training can proceed during a frozen-set transfer, but mixed-hash matrix rows cannot.
-  [ "$(cat data/eval_r2/test/EVALSET_HASH)" = eda217ab2a38 ] || {
-    echo "eval_r2 hash differs from eda217ab2a38; restore the laptop set before evaluation" >&2; exit 1;
+  # Training can proceed during a frozen-set transfer, but mixed-hash matrix rows cannot. The hash is
+  # recomputed from the files present: a partial copy carries a valid EVALSET_HASH file and must still fail.
+  uv run --all-extras python scripts/verify_eval_set.py data/eval_r2/test eda217ab2a38 || {
+    echo "eval_r2 test split incomplete or not the frozen set; restore it before evaluation" >&2; exit 1;
   }
   # Both waves share the matrix glob. Hold one Linux advisory lock across all
   # eval writes and report generation so neither reads the other's partial CSV.
