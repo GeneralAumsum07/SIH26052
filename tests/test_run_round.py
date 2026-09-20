@@ -104,16 +104,15 @@ def test_round3d_configs_only_add_the_df_group(suffix, seed):
     assert yaml.safe_load((root / f"vaani_full_r3_{suffix}.yaml").read_text()) == expected
 
 
-R4_NEW_MANIFESTS = ["data/manifests/dns_datasets_fullband.noise_fullband.audioset_000.tar.parquet",
-                    "data/manifests/dns_datasets_fullband.noise_fullband.audioset_001.tar.parquet",
-                    "data/manifests/dns_datasets_fullband.noise_fullband.freesound_001.tar.parquet",
+R4_NEW_MANIFESTS = [f"data/manifests/dns_datasets_fullband.noise_fullband.{s}.tar.parquet" for s in
+                    ("audioset_000", "audioset_001", "audioset_002", "audioset_003", "audioset_004", "audioset_005", "audioset_006", "freesound_001")] + [
                     "data/manifests/cadre.parquet", "data/manifests/demand.parquet"]
 
 
 @pytest.mark.parametrize("suffix,seed,new_data", [("", 0, True), ("_s1", 1, True), ("_ctl", 0, False)])
 def test_round4_configs_are_e32_plus_df_group_warm_started_with_the_new_data(suffix, seed, new_data):
     # r4 = the one recipe change that moved (32 epochs) continued from e32 best, with the dflr optimizer groups and the
-    # wave-4 corpora (three more DNS shards, Cadre, DEMAND). _ctl keeps the r3 manifests so epochs and data separate.
+    # wave-4 corpora (the eight other DNS shards on the box, Cadre, DEMAND). _ctl keeps the r3 manifests so epochs and data separate.
     root = Path(__file__).parents[1] / "configs/exp"
     expected = yaml.safe_load((root / "vaani_full_r3_e32.yaml").read_text())
     expected.update(name=f"vaani_full_r4{suffix}", seed=seed, num_workers=6, init_from="runs/vaani_full_r3_e32/best.pt")
