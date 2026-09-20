@@ -14,6 +14,7 @@ data:
   - data/manifests/mad.parquet
   - data/manifests/gunshots.parquet             # D2: real transients (crest-audited) / overload material
   - data/manifests/drone.parquet                # D1: multirotor tonal noise
+  - data/manifests/noisex92.parquet             # D7: leopard/m109/f16/buccaneer/hfchannel; machinegun is "changing" (crest 18.7/16.9)
   bank: data/rirs/bank_r3.npz  # 2.9: 20 % armoured-compartment RIRs, 1.0 s tails (make_rir_bank.py --armoured-frac 0.2 --max-len-s 1.0)
   crop_s: 4.0
   epoch_len: 20000

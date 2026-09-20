@@ -41,3 +41,8 @@ sources:
     # scripts/run_fetch_queue.sh pulls p001-p020; fetch_data scans whatever has landed.
     download_dir: data/download/ears
     extract_to: data/download/ears/extracted
+  noisex92:
+    # NOISEX-92 (D7, plan addendum 2026-09-20). Provenance: DRA Malvern 1992, mirrored by SPIB (spib.linse.ufsc.br,
+    # .mat) and speechdnn/Noises (GitHub, .wav). The GitHub copies of leopard/m109/machinegun are 8 kHz/8-bit - those
+    # three come from the SPIB .mat files instead. Redistribution terms unclear: cite Varga & Steeneken 1993, do not ship.
+    dir: data/download/noisex92

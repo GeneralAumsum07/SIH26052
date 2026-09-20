@@ -229,3 +229,29 @@ def scan_ears(root: Path, out: Path) -> list[dict]:
         dur = to_flac16k(f, dst) if not dst.exists() else sf.info(dst).duration
         rows.append(_row(f"ears:{spk}/{f.stem}", "ears", "speech", f"ears-spk-{spk}", spk, dst, dur, "CC BY-NC 4.0"))
     return rows
+
+
+# NOISEX-92 (D7). crest_audit 2026-09-20 on the 19.98 kHz/16-bit originals: machinegun 18.7/16.9 dB full/event,
+# i.e. speech-level - the 1992 DAT chain flattened the bursts, so it is "changing", never "impulsive".
+# leopard/m109/machinegun in the common GitHub mirror are 8 kHz/8-bit re-encodes; the .mat files on SPIB are the originals.
+NOISEX_CLASS = {"white": "stationary", "pink": "stationary", "volvo": "stationary", "leopard": "stationary",
+                "m109": "stationary", "destroyerengine": "stationary", "f16": "stationary", "buccaneer1": "stationary",
+                "buccaneer2": "stationary", "hfchannel": "stationary", "babble": "changing", "factory1": "changing",
+                "factory2": "changing", "destroyerops": "changing", "machinegun": "changing"}
+NOISEX_LICENCE = "NOISEX-92 (DRA Malvern 1992, via SPIB; redistribution terms unclear - cite Varga & Steeneken 1993)"
+
+
+def scan_noisex92(root: Path, out: Path) -> list[dict]:
+    """<root>/<name>.wav, 19.98 kHz 16-bit, one 235 s take per class. One row and one group per file: a take must
+    not straddle splits, so each class lands whole in whichever split its hash says."""
+    rows = []
+    for f in sorted(root.glob("*.wav")):
+        if f.stem not in NOISEX_CLASS:
+            continue
+        info = sf.info(f)
+        assert info.samplerate >= 16000 and info.subtype == "PCM_16", f"{f.name}: {info.samplerate} Hz {info.subtype} is a lossy mirror copy"
+        dst = out / "noisex92" / (f.stem + ".flac")
+        dur = to_flac16k(f, dst) if not dst.exists() else sf.info(dst).duration
+        rows.append(_row(f"noisex92:{f.stem}", "noisex92", "noise", f"noisex92-{f.stem}", "", dst, dur,
+                         NOISEX_LICENCE, NOISEX_CLASS[f.stem]))
+    return rows

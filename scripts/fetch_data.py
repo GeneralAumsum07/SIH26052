@@ -116,6 +116,12 @@ def main():
         if any(root.rglob("*.wav")):
             manifests.write(sources.scan_ears(root, raw), mdir / "ears.parquet")
 
+    nx = cfg["sources"].get("noisex92")
+    if nx and Path(nx["dir"]).exists():
+        # D7: 15 files fetched by hand (12 wavs from the speechdnn mirror, leopard/m109/machinegun from SPIB .mat);
+        # no downloader - the mirror's copies of those three are 8 kHz/8-bit and the scan refuses them
+        manifests.write(sources.scan_noisex92(Path(nx["dir"]), raw), mdir / "noisex92.parquet")
+
     for url in a.dns_shards:
         tar = Path("data/download/dns") / Path(url).name
         download(url, tar)

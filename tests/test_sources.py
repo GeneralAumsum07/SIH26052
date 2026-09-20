@@ -138,3 +138,19 @@ def test_scan_ears_keeps_speech_styles_and_drops_nonverbal(tmp_path):
     assert all(r["kind"] == "speech" and r["corpus"] == "ears" and r["licence"] == "CC BY-NC 4.0" for r in rows)
     assert {r["group_id"] for r in rows} == {"ears-spk-p001", "ears-spk-p002"}
     assert sf.info(next(r["path"] for r in rows)).samplerate == 16000
+
+
+def test_scan_noisex92_refuses_lossy_mirror_copies_and_never_labels_impulsive(tmp_path):
+    import pytest
+    root = tmp_path / "nx"; root.mkdir()
+    sf.write(root / "machinegun.wav", _white_noise(), 19980, subtype="PCM_16")
+    sf.write(root / "volvo.wav", _white_noise(), 19980, subtype="PCM_16")
+    sf.write(root / "notes.wav", _white_noise(), 19980, subtype="PCM_16")     # not a NOISEX name: ignored
+    rows = sources.scan_noisex92(root, tmp_path / "out")
+    by = {r["source_id"]: r for r in rows}
+    assert set(by) == {"noisex92:machinegun", "noisex92:volvo"}
+    assert by["noisex92:machinegun"]["noise_class"] == "changing" and by["noisex92:volvo"]["noise_class"] == "stationary"
+    assert all(r["group_id"] == "noisex92-" + r["source_id"].split(":")[1] for r in rows)
+    sf.write(root / "leopard.wav", _white_noise(), 8000, subtype="PCM_U8")    # the GitHub mirror's leopard/m109/machinegun
+    with pytest.raises(AssertionError):
+        sources.scan_noisex92(root, tmp_path / "out")
