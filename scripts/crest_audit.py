@@ -6,10 +6,12 @@ is the gate to run on any candidate impulse corpus BEFORE writing an adapter for
 
 Crest factor = 20*log10(peak / RMS).
 
-    speech                    12-18 dB   (measured here: 18.0 dB whole-file, 11.7 dB event)
-    a real, uncontaminated
-    gunshot / balloon burst   > 35 dB
-    anything in between       has been limited somewhere in the chain
+    speech                    ~18 dB full / ~13 dB event   (measured)
+    ESC-50 "impulsive" classes 18-32 dB full / 13-20 dB event (measured - too flat)
+    Friedlander blast model   ~32 dB full / ~27 dB event    (measured, synthesised)
+    a real uncontaminated
+    gunshot recording         > 30 dB full                  (published figures are
+                              whole-file; do not apply them to the event window)
 
 Two numbers are reported because they answer different questions:
   crest_full   over the whole file. A long silent tail inflates this -- a clip that is
@@ -31,9 +33,13 @@ import soundfile as sf
 from scipy.signal import resample_poly
 
 SR = 16000
-SPEECH_FULL_REF = 18.0   # whole-file crest of ordinary speech (measured)
-SPEECH_EVENT_REF = 13.0  # event-window crest of ordinary speech (measured)
-IMPULSE_TARGET = 35.0  # below this, the transient has been limited somewhere
+SPEECH_FULL_REF = 18.0    # whole-file crest of ordinary speech (measured)
+SPEECH_EVENT_REF = 13.0   # event-window crest of ordinary speech (measured)
+# Thresholds are on the WHOLE-FILE measure, because that is what published crest figures
+# report. The event window is the anti-padding sanity check, and it necessarily reads
+# lower -- a bare Friedlander blast measures ~32 dB full but only ~27 dB event.
+IMPULSE_FULL = 30.0
+IMPULSE_EVENT = 22.0
 
 
 def crest_db(x):
@@ -87,8 +93,8 @@ def main():
         if len(groups[key]) < a.limit:
             groups[key].append(f)
 
-    print(f"speech reference: {SPEECH_FULL_REF:.0f} dB full / {SPEECH_EVENT_REF:.0f} dB event | "
-          f"impulse target: >{IMPULSE_TARGET:.0f} dB event | window +/-100 ms\n")
+    print(f"speech: {SPEECH_FULL_REF:.0f} dB full / {SPEECH_EVENT_REF:.0f} dB event | "
+          f"impulse target: >{IMPULSE_FULL:.0f} full AND >{IMPULSE_EVENT:.0f} event | window +/-100 ms\n")
     print(f"{'group':<34s}{'n':>4s}{'sr':>12s}{'crest_full':>12s}{'crest_event':>13s}"
           f"{'clip%':>8s}  verdict")
     for key, fs in sorted(groups.items()):
@@ -106,9 +112,9 @@ def main():
         if not full:
             continue
         cf, ce, cl = np.nanmean(full), np.nanmean(ev), np.mean(clip)
-        if ce >= IMPULSE_TARGET:
+        if cf >= IMPULSE_FULL and ce >= IMPULSE_EVENT:
             verdict = "IMPULSIVE - usable as a transient"
-        elif ce >= 25:
+        elif cf >= IMPULSE_FULL or ce >= IMPULSE_EVENT:
             verdict = "partly limited - usable if the limitation is stated"
         elif ce >= SPEECH_EVENT_REF + 5:
             verdict = "LIMITED - only just above speech"

@@ -1,7 +1,8 @@
 """Synthetic impulsive noise for training: fast onsets, varied decay, no corpus dependence."""
 import numpy as np
 
-KINDS = ("burst", "click_train", "gated_noise")
+KINDS = ("burst", "click_train", "gated_noise")  # the eval-set draw; frozen (hashes). r3 adds "blast" via MixConfig.impulse_kinds
+EXTRA_KINDS = ("blast",)  # Friedlander blast wave (vaani/data/blast.py): the only kind with a gunshot-like crest
 
 
 def _decay(rng, sr, tau_s):
@@ -17,7 +18,12 @@ def _decay(rng, sr, tau_s):
 
 def generate(rng: np.random.Generator, sr: int = 16000, kind: str | None = None):
     kind = kind or rng.choice(KINDS)
-    if kind == "burst":
+    if kind == "blast":
+        from vaani.data import blast as _blast
+        x, m = _blast.blast(rng, sr)
+        pre = int(rng.uniform(0.05, 0.3) * sr)  # same silent lead-in as burst so the onset is inside the clip
+        x = np.concatenate([np.zeros(pre, np.float32), x]); onsets = [pre / sr]
+    elif kind == "burst":
         x = _decay(rng, sr, rng.uniform(0.02, 0.25))
         pre = int(rng.uniform(0.05, 0.3) * sr)
         x = np.concatenate([np.zeros(pre, np.float32), x])
@@ -41,7 +47,10 @@ def generate(rng: np.random.Generator, sr: int = 16000, kind: str | None = None)
     n = int(np.clip(len(x), 0.2 * sr, 2.0 * sr))
     x = np.pad(x, (0, max(0, n - len(x))))[:n]
     x = x / (np.abs(x).max() + 1e-9)
-    return x.astype(np.float32), {"kind": str(kind), "onsets_s": [float(o) for o in onsets]}
+    meta = {"kind": str(kind), "onsets_s": [float(o) for o in onsets]}
+    if kind == "blast":
+        meta.update(blast_kind=m["kind"], distance=m["distance"])
+    return x.astype(np.float32), meta
 
 
 def detect_onsets(x: np.ndarray, sr: int = 16000, frame_ms: float = 5.0, rise_db: float = 12.0,

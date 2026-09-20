@@ -45,3 +45,22 @@ def test_detect_onsets_matches_generator_for_click_train():
 def test_detect_onsets_falls_back_to_peak_when_nothing_stands_out():
     x = np.ones(16000, np.float32) * 0.1  # flat: no onset -> loudest sample, never an empty list
     assert impulses.detect_onsets(x, 16000) == [0.0]
+
+
+def test_blast_kind_is_far_more_impulsive_than_burst_and_keeps_the_default_draw():
+    """Friedlander blast (brief 2026-09-20 item 1): event crest ~25 dB vs ~15 dB for burst. KINDS is frozen
+    because the synthetic eval buckets draw from it; blast is opt-in via MixConfig.impulse_kinds."""
+    import numpy as np
+    from vaani.data import impulses
+
+    def crest_event(x, sr=16000, half_ms=100.0):
+        k = int(np.argmax(np.abs(x))); w = int(sr * half_ms / 1000); seg = x[max(0, k - w): k + w]
+        return 20 * np.log10(np.abs(seg).max() / (np.sqrt((seg ** 2).mean()) + 1e-12))
+
+    assert impulses.KINDS == ("burst", "click_train", "gated_noise") and "blast" in impulses.EXTRA_KINDS
+    b = np.mean([crest_event(impulses.generate(np.random.default_rng(i), kind="blast")[0]) for i in range(20)])
+    u = np.mean([crest_event(impulses.generate(np.random.default_rng(i), kind="burst")[0]) for i in range(20)])
+    assert b > 22 and b - u > 6
+    x, m = impulses.generate(np.random.default_rng(3), kind="blast")
+    assert m["kind"] == "blast" and m["blast_kind"] in ("small_arms", "artillery") and 0 < m["onsets_s"][0] < 0.35
+    assert np.abs(x).max() <= 1.0 and len(x) >= 0.2 * 16000
