@@ -1,0 +1,63 @@
+# Round 3 (plan 2026-09-20 Tier 2): same architecture as r2, retrained on the corrected physics.
+# Warm-start from r2 best; the loss and mixer changes are config-only.
+name: vaani_full_r3_wsnr04
+model: vaani
+controller_on: true
+loss: hybrid
+init_from: runs/vaani_full_r2/best.pt
+data:
+  manifests:
+  - data/manifests/librispeech_100h.parquet     # full train-clean-100 (r1/r2 used 20 h)
+  - data/manifests/ears.parquet                 # D5: vocal-effort axis (whisper/loud/fast), CC BY-NC
+  - data/manifests/cv_hi.parquet
+  - data/manifests/esc50.parquet
+  - data/manifests/dns_datasets_fullband.noise_fullband.freesound_000.tar.parquet
+  - data/manifests/mad.parquet
+  - data/manifests/gunshots.parquet             # D2: real transients (crest-audited) / overload material
+  - data/manifests/drone.parquet                # D1: multirotor tonal noise
+  - data/manifests/noisex92.parquet             # D7: leopard/m109/f16/buccaneer/hfchannel; machinegun is "changing" (crest 18.7/16.9)
+  bank: data/rirs/bank_r3.npz  # 2.9: 20 % armoured-compartment RIRs, 1.0 s tails (make_rir_bank.py --armoured-frac 0.2 --max-len-s 1.0)
+  crop_s: 4.0
+  epoch_len: 20000
+  mix:
+    # 2.2 data physics. Eval sets keep MixConfig defaults; these apply to training draws only.
+    impulse_peak_db: [15, 45]                   # p50 crest > 25 dB over background (tests/test_mixer.py)
+    impulse_kinds: [blast, blast, burst, click_train]  # blast (Friedlander, ~25 dB event crest) drawn half the time; gated_noise is a level step, not an impulse
+    impulse_room: true                          # impulse through the noise RIR on the room path
+    overload_softclip: true                     # ADC saturates; speech keeps its level under a burst
+    speech_rms_db: [-32, -18]                   # recorder gain: sets how much headroom a burst has before overload
+    # mic_mismatch_db stays 3.0: the 2.1 floor tracker's speech-presence margin (ref_speech_gain <= -8 dB) breaks at +-10
+dsp:
+  # 2.7 / 2.8 (DSP ahead of the model; diag_controller on eval_r2 test, 10 clips/bucket):
+  #   legacy rule            TPR 0.905 FPR 0.023 | diff-jump 3 dB          TPR 0.917 FPR 0.015
+  #   + limiter 26 dB        TPR 0.917 FPR 0.025 (limiter engagement feeds the burst flag; 18 dB headroom failed FPR at 0.052)
+  #   + blocking, margin 10  nhat~speech -> ~0 everywhere; ERLE stationary_15 -6.1 -> -2.4, _10 -1.7 -> +0.4, impulsive_15 -6.2 -> -0.6;
+  #                          refgain_-12dB loss 0.15/0.29 dB; low-SNR ERLE unchanged. (+15 dB stationary stays < 0: NLMS-side, not blocking.)
+  limiter: true                              # ablation: vaani_full_r3_nodsp (limiter + blocking off)
+  blocking: true
+  controller:
+    diff_jump_max_db: 3.0                       # burst = onset >= 12 dB AND (primary onset - reference onset) <= 3 dB
+    block_margin_db: 10.0                       # blocking matrix adapts only with the primary >= 10 dB over its own noise floor
+model_cfg:
+  df_order: 3                                   # 2.5 deep-filter head: complex FIR over t, t-1, t-2 (zero latency)
+  film: false                                   # 2.4: FiLM path measured inert (-0.003 STOI), dropped
+  coh: true                                     # 2.4: causal primary/reference coherence map as a 10th input channel
+loss_cfg:
+  w_complex: 50
+  w_mag: 50
+  p: 0.5
+  w_snr: 0.4                                    # sweep point: double the absolute-SNR term
+  snr_max_db: 30
+val:
+  dynamic_items: 200
+optim:
+  lr: 0.00025
+  lr_new: 0.0005
+  warmup: 200
+  clip: 5.0
+batch_size: 32
+epochs: 8
+amp: true
+device: cuda
+num_workers: 6
+seed: 0

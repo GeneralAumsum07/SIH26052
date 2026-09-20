@@ -8,7 +8,7 @@ import pytest
 import yaml
 
 
-@pytest.mark.parametrize("round", ["3", "3b"])
+@pytest.mark.parametrize("round", ["3", "3b", "3c"])
 @pytest.mark.parametrize("failure", ["rir", "train", "hash", "lock", "eval", "report", "none"])
 def test_round3_completion_requires_success(tmp_path, failure, round):
     bash = shutil.which("bash")
@@ -63,10 +63,10 @@ touch eval_lock
     assert (result.returncode == 0) == (failure == "none"), result.stderr
     assert (tmp_path / f"results_r2/ROUND{round.upper()}_DONE").exists() == (failure == "none")
     if failure == "none":
-        expected = ({"vaani_full_r3", "vaani_no_controller_r3", "vaani_full_r3_nodsp"}
-                    if round == "3" else {"vaani_full_r3_s1", "vaani_full_r3_s2",
-                    "vaani_no_controller_r3_s1", "vaani_no_controller_r3_s2", "vaani_full_r3_df1",
-                    "vaani_full_r3_df1_s1", "vaani_full_r3_df1_s2"})
+        expected = {"3": {"vaani_full_r3", "vaani_no_controller_r3", "vaani_full_r3_nodsp"},
+                    "3b": {"vaani_full_r3_s1", "vaani_full_r3_s2", "vaani_no_controller_r3_s1",
+                           "vaani_no_controller_r3_s2", "vaani_full_r3_df1", "vaani_full_r3_df1_s1", "vaani_full_r3_df1_s2"},
+                    "3c": {"vaani_full_r3_e32", "vaani_full_r3_wsnr0", "vaani_full_r3_wsnr04"}}[round]
         assert {p.parent.name for p in (tmp_path / "runs").glob("*/DONE")} == expected
 
 
@@ -82,3 +82,12 @@ def test_round3b_configs_change_only_intended_axes(base, suffix, seed, order):
     expected.update(name=name, seed=seed, num_workers=6)
     expected["model_cfg"]["df_order"] = order
     assert yaml.safe_load((root / f"{name}.yaml").read_text()) == expected
+
+
+@pytest.mark.parametrize("suffix,key,value", [("e32", "epochs", 32), ("wsnr0", "w_snr", 0.0), ("wsnr04", "w_snr", 0.4)])
+def test_round3c_configs_change_one_knob(suffix, key, value):
+    root = Path(__file__).parents[1] / "configs/exp"
+    expected = yaml.safe_load((root / "vaani_full_r3.yaml").read_text())
+    expected.update(name=f"vaani_full_r3_{suffix}", num_workers=6)
+    (expected if key == "epochs" else expected["loss_cfg"])[key] = value
+    assert yaml.safe_load((root / f"vaani_full_r3_{suffix}.yaml").read_text()) == expected

@@ -2,10 +2,11 @@
 # Ablation matrix. Usage: run_round.sh [1|2|3|3b]. Re-runnable: train resumes
 # from last.pt, evals skip existing CSVs. Round 2 needs the DNS manifest from fetch_data --dns-shards.
 # Round 3 (plan 2.6): three runs, scored on the frozen eval_r2 test split next to the r1/r2 rows.
+# 3b = seeds + df1 control; 3c = 32-epoch under-training control and the w_snr bracket {0, 0.4}.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 round=${1:-1}; sfx=""; [ "$round" = 2 ] && sfx=_r2
-if [ "$round" = 3 ] || [ "$round" = 3b ]; then
+if [ "$round" = 3 ] || [ "$round" = 3b ] || [ "$round" = 3c ]; then
   # These concurrent waves target the GPU host, not the laptop. Wave 3b holds
   # seeds 1/2 and the df_order=1 control; launch it only after the timing check.
   R3="vaani_full_r3 vaani_no_controller_r3 vaani_full_r3_nodsp"
@@ -13,6 +14,9 @@ if [ "$round" = 3 ] || [ "$round" = 3b ]; then
   if [ "$round" = 3b ]; then
     R3="vaani_full_r3_s1 vaani_full_r3_s2 vaani_no_controller_r3_s1 vaani_no_controller_r3_s2 vaani_full_r3_df1 vaani_full_r3_df1_s1 vaani_full_r3_df1_s2"
     marker=ROUND3B_DONE
+  elif [ "$round" = 3c ]; then
+    R3="vaani_full_r3_e32 vaani_full_r3_wsnr0 vaani_full_r3_wsnr04"
+    marker=ROUND3C_DONE
   fi
   mkdir -p runs results_r2
   # Each loader inherits these limits; otherwise every worker can claim the
