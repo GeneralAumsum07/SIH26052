@@ -106,14 +106,14 @@ def _git():
 def main():
     ap = argparse.ArgumentParser(); sub = ap.add_subparsers(dest="cmd", required=True)
     f = sub.add_parser("freeze"); f.add_argument("--eval-root", default="data/eval_r2"); f.add_argument("--anchor", required=True)
-    f.add_argument("--out", default="results_r2/tier46")
+    f.add_argument("--out", default="results_r2/tier46"); f.add_argument("--anchor-dir", default="runs/tier46_anchor")
     c = sub.add_parser("check"); c.add_argument("--eval-root", default="data/eval_r2"); c.add_argument("--protocol", default="results_r2/tier46/anchor.json")
     g = sub.add_parser("gate"); g.add_argument("--kind", choices=list(tier46_gate.UTILITY), required=True)
     g.add_argument("--anchor", required=True); g.add_argument("--candidate", required=True)
     g.add_argument("--protocol", default="results_r2/tier46/anchor.json"); g.add_argument("--out", required=True)
     a = ap.parse_args()
     if a.cmd == "freeze":
-        freeze(a.eval_root, [a.anchor], a.out)
+        freeze(a.eval_root, [a.anchor], a.out, Path(a.anchor_dir))
     elif a.cmd == "check":
         bad = check(a.eval_root, json.loads(Path(a.protocol).read_text()))
         print("\n".join(bad) if bad else "intact"); sys.exit(1 if bad else 0)
