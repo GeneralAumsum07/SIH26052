@@ -1,5 +1,5 @@
 """Non-trained comparison rows. Common API: enhance(mix (2,T)) -> (T,)."""
-import shutil, subprocess, tempfile
+import os, shutil, subprocess, tempfile
 from pathlib import Path
 
 import numpy as np, torch
@@ -51,5 +51,34 @@ class RNNoise:
         return resample_poly(y48, 1, 3)[: mix.shape[1]].astype(np.float32)
 
 
+class DeepFilterNet3:
+    """Published single-channel comparator (Schröter et al. 2023: 48 kHz, ~2.3M params, trained on DNS4).
+    Labelled in reports: mono, 48 kHz model, ~45x our parameter budget. Lives in `.venv-dfn` (py3.11, numpy<2,
+    torch 2.0.1) so it cannot pollute the main env; scripts/dfn_worker.py loads it once per eval process and
+    enhances clips over a tab-separated stdin line protocol through temp wavs (~0.3 s/clip vs ~20 s/process)."""
+    WORKER = Path(__file__).parents[2] / "scripts" / "dfn_worker.py"
+    PY = Path(__file__).parents[2] / ".venv-dfn" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+
+    def __init__(self):
+        if not self.PY.exists():
+            raise NotImplementedError(f"{self.PY} missing: python3.11 venv with deepfilternet, torch==2.0.1 cpu, soundfile")
+        self.p = subprocess.Popen([str(self.PY), str(self.WORKER)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                  stderr=subprocess.DEVNULL, text=True, bufsize=1)
+        assert self.p.stdout.readline().strip() == "ready", "dfn_worker failed to start"
+
+    def enhance(self, mix):
+        import soundfile as sf
+        with tempfile.TemporaryDirectory() as d:
+            i, o = Path(d, "i.wav"), Path(d, "o.wav")
+            sf.write(i, mix[0], 16000, subtype="FLOAT")
+            self.p.stdin.write(f"{i}\t{o}\n"); self.p.stdin.flush()
+            r = self.p.stdout.readline().strip()
+            if r != "ok":
+                raise RuntimeError(f"dfn_worker: {r}")
+            y, _ = sf.read(o, dtype="float32")
+        return y[: mix.shape[1]].astype(np.float32)
+
+
 def get(name: str):
-    return {"raw": Raw, "nlms_only": NlmsOnly, "gtcrn_pretrained": GtcrnPretrained, "rnnoise": RNNoise}[name]()
+    return {"raw": Raw, "nlms_only": NlmsOnly, "gtcrn_pretrained": GtcrnPretrained, "rnnoise": RNNoise,
+            "deepfilternet3": DeepFilterNet3}[name]()
