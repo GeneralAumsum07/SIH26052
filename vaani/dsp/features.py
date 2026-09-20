@@ -27,6 +27,8 @@ class FrameFeatures:
 
     def reset(self):
         self.sub_hist = None                        # last 100 ms of 4 ms sub-block energies; seeded by frame 0
+        self.sub_hist_r = None                      # same for the reference mic (differential jump, plan 2.7a)
+        self.diff_jump = 0.0                        # primary onset minus reference onset (dB); not a feature slot
         self.prev_mag = None
         self.Spp = np.zeros(257); self.Srr = np.zeros(257); self.Spr = np.zeros(257, complex)
         self.sp_smooth = 0.0
@@ -42,6 +44,14 @@ class FrameFeatures:
             self.sub_hist = np.full(SUB_HIST, sub.mean())   # no history yet: the first frame is its own floor
         f[0] = float(10 * np.log10(sub.max() / np.median(self.sub_hist)))
         self.sub_hist = np.concatenate([self.sub_hist[len(sub):], sub])
+        # the same onset test on the reference: a far-field burst jumps alike at both mics (diff ~ 0 dB), a
+        # consonant is near-mouth and jumps more at the primary. Kept off the 18-slot feature contract on
+        # purpose: the controller reads it directly, the model's FiLM/ONNX signature does not move.
+        sub_r = (r[-HOP:].reshape(-1, SUB) ** 2).mean(axis=1) + 1e-10
+        if self.sub_hist_r is None:
+            self.sub_hist_r = np.full(SUB_HIST, sub_r.mean())
+        self.diff_jump = f[0] - float(10 * np.log10(sub_r.max() / np.median(self.sub_hist_r)))
+        self.sub_hist_r = np.concatenate([self.sub_hist_r[len(sub_r):], sub_r])
         mag = np.abs(P)
         f[1] = 0.0 if self.prev_mag is None else float(np.sum(np.maximum(mag - self.prev_mag, 0)) / (np.sum(self.prev_mag) + 1e-8))
         self.prev_mag = mag

@@ -25,6 +25,13 @@ data:
     overload_softclip: true                     # ADC saturates; speech keeps its level under a burst
     speech_rms_db: [-32, -18]                   # recorder gain: sets how much headroom a burst has before overload
     # mic_mismatch_db stays 3.0: the 2.1 floor tracker's speech-presence margin (ref_speech_gain <= -8 dB) breaks at +-10
+dsp:
+  # 2.7 (DSP ahead of the model; diag_controller on eval_r2 test, 10 clips/bucket):
+  #   legacy rule            TPR 0.905 FPR 0.023 | diff-jump 3 dB          TPR 0.917 FPR 0.015
+  #   + limiter 26 dB        TPR 0.917 FPR 0.025 (limiter engagement feeds the burst flag; 18 dB headroom failed FPR at 0.052)
+  limiter: true                                 # ablation: vaani_full_r3_nolim
+  controller:
+    diff_jump_max_db: 3.0                       # burst = onset >= 12 dB AND (primary onset - reference onset) <= 3 dB
 model_cfg:
   df_order: 3                                   # 2.5 deep-filter head: complex FIR over t, t-1, t-2 (zero latency)
   film: false                                   # 2.4: FiLM path measured inert (-0.003 STOI), dropped

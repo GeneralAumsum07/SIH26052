@@ -65,8 +65,8 @@ def main():
             it = ds[int(i)]
             mix = it["mix"].numpy()
             clean = it["clean"].numpy()
-            r = pipeline.run(mix, controller_on=cfg["controller_on"])
-            x = torch.from_numpy(mix)[None]
+            r = pipeline.run(mix, controller_on=cfg["controller_on"], dsp_cfg=cfg.get("dsp"))
+            x = torch.from_numpy(r["mix"])[None]
             P = stft.stft(x[:, 0])
             R = stft.stft(x[:, 1])
             N = stft.stft(torch.from_numpy(r["n_hat"])[None])

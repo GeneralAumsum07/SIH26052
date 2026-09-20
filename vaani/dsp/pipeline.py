@@ -13,14 +13,28 @@ import numpy as np
 from vaani.dsp import stft
 from vaani.dsp.controller import Controller
 from vaani.dsp.features import FrameFeatures, N_FEATURES
+from vaani.dsp.limiter import Limiter
 from vaani.dsp.nlms import NLMS
 
 
-def run(mix: np.ndarray, controller_on: bool = True) -> dict:
+def run(mix: np.ndarray, controller_on: bool = True, dsp_cfg: dict | None = None) -> dict:
+    """dsp_cfg (plan 2.7, ablatable): {"limiter": bool, "controller": {Controller kwargs}}. None = r1/r2 behaviour.
+    Returns "mix" too: the limited signal when the limiter is on (what the model must see), else the input."""
+    dsp_cfg = dsp_cfg or {}
     prim, ref = mix[0].astype(np.float32), mix[1].astype(np.float32)
     T = len(prim)
     # local instances only (no module-level mutable state) -> safe in DataLoader workers
-    nlms, ff, ctl = NLMS(), FrameFeatures(), Controller()
+    nlms, ff, ctl = NLMS(), FrameFeatures(), Controller(**dsp_cfg.get("controller", {}))
+    n_blocks = (T + stft.HOP - 1) // stft.HOP  # tail: last block may be shorter than HOP
+    lim_hit = np.zeros(n_blocks + 1, bool)     # per hop block: did the limiter engage (feeds the burst flag)
+    if dsp_cfg.get("limiter"):
+        # hop-by-hop like the port; the STFT below then runs on the limited signal
+        lk = dsp_cfg["limiter"]; lim = Limiter(**(lk if isinstance(lk, dict) else {}))   # True or Limiter kwargs
+        lp, lr = np.empty_like(prim), np.empty_like(ref)
+        for j, i in enumerate(range(0, T, stft.HOP)):
+            lp[i:i + stft.HOP], lr[i:i + stft.HOP] = lim.process_block(prim[i:i + stft.HOP], ref[i:i + stft.HOP])
+            lim_hit[j] = lim.engaged > 0; lim.engaged = 0
+        prim, ref = lp, lr
 
     P = stft.np_stft(prim); R = stft.np_stft(ref)
     n_frames = P.shape[1]
@@ -35,7 +49,6 @@ def run(mix: np.ndarray, controller_on: bool = True) -> dict:
 
     gate = 1.0
     health = 0.0  # only used if n_frames exceeds the sample-derived block count (tail)
-    n_blocks = (T + stft.HOP - 1) // stft.HOP  # tail: last block may be shorter than HOP
     for k in range(n_frames):
         # NLMS block k, gated by the decision made for the *previous* frame
         if k < n_blocks:
@@ -49,8 +62,10 @@ def run(mix: np.ndarray, controller_on: bool = True) -> dict:
         f = ff.compute(pad[a:a + stft.N_FFT], padr[a:a + stft.N_FFT], P[:, k], R[:, k], health, gate)
         feats[k] = f
         if controller_on:
-            gate, b, r = ctl.step(f)
+            # frame k spans hop blocks k-1 and k (reflect-padded framing), so either block's hit counts
+            gate, b, r = ctl.step(f, ff.diff_jump, bool(lim_hit[max(k - 1, 0)] or lim_hit[min(k, n_blocks)]))
             gates[k], bursts[k], rel[k] = gate, b, r
     if not controller_on:
         feats[:] = 0.0
-    return {"n_hat": n_hat, "features": feats, "gate": gates, "burst": bursts, "reliability": rel}
+    return {"n_hat": n_hat, "features": feats, "gate": gates, "burst": bursts, "reliability": rel,
+            "mix": np.stack([prim, ref])}

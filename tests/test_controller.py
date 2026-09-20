@@ -81,3 +81,30 @@ def test_subframe_jump_sees_a_4ms_click():
     f = ff.compute(frame, frame, P, R, 0.0, 1.0)
     assert f.shape == (N_FEATURES,)
     assert f[0] >= 12.0
+
+
+def test_differential_jump_separates_far_field_click_from_near_mouth_onset():
+    """Same primary onset either way; only the reference tells a burst (equal at both mics) from a consonant."""
+    from vaani.dsp.features import FrameFeatures
+    ff = FrameFeatures(); rng = np.random.default_rng(0)
+    base = rng.standard_normal(512).astype(np.float32) * 0.01
+    P = np.fft.rfft(base); R = P.copy()
+    for _ in range(10):
+        ff.compute(base, base, P, R, 0.0, 1.0)
+    click = np.zeros(512, np.float32); click[300:364] = 0.5 * rng.standard_normal(64)
+    ff.compute(base + click, base + click, P, R, 0.0, 1.0)
+    assert abs(ff.diff_jump) < 3.0                       # far-field: both mics jump alike
+    ff.reset()
+    for _ in range(10):
+        ff.compute(base, base, P, R, 0.0, 1.0)
+    ff.compute(base + click, base + click * 10 ** (-12 / 20), P, R, 0.0, 1.0)
+    assert ff.diff_jump > 8.0                             # near-mouth: the primary jumps ~12 dB more
+
+
+def test_controller_diff_jump_rule_is_opt_in():
+    from vaani.dsp.controller import Controller
+    from vaani.dsp.features import FEATURE_NAMES
+    f = np.zeros(len(FEATURE_NAMES), np.float32); f[0] = 20.0; f[14] = 10.0   # big onset, primary 10 dB louder
+    assert Controller().step(f)[1] is False                                   # legacy rule: level_diff says speech
+    assert Controller(diff_jump_max_db=3.0).step(f, diff_jump=0.5)[1] is True  # 2.7a rule: both mics jumped alike
+    assert Controller(diff_jump_max_db=3.0).step(f, diff_jump=9.0)[1] is False

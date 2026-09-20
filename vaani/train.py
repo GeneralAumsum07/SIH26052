@@ -110,7 +110,7 @@ def main(config_path):
 
     d = cfg["data"]; mixcfg = MixConfig(**d.get("mix", {}))
     with_dsp = cfg["model"] == "vaani"  # gtcrn never needs n_hat/feats, skip the 150 ms/clip
-    dsk = dict(with_dsp=with_dsp, controller_on=cfg["controller_on"])
+    dsk = dict(with_dsp=with_dsp, controller_on=cfg["controller_on"], dsp_cfg=cfg.get("dsp"))
     ds = DynamicMixDataset(d["manifests"], "train", d.get("bank"), mixcfg, d.get("crop_s", 4.0),
                            d.get("epoch_len", 20000), cfg["seed"], **dsk)
     vds = DynamicMixDataset(d["manifests"], "val", d.get("bank"), mixcfg, d.get("crop_s", 4.0),

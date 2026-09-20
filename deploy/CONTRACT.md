@@ -10,9 +10,10 @@ available -- this is arithmetic from the STFT framing above, not a runtime measu
 Total: 16 ms + 16 ms = 32 ms.
 
 ## Per frame, in order
+0. (round-3 checkpoints, `dsp.limiter` in the checkpoint config) Sub-block limiter on the 256 new samples of BOTH mics, `vaani/dsp/limiter.py`: 2 ms sub-blocks, one shared gain, instant attack, 50 ms release, ceiling = 26 dB over a 500 ms RMS tracker that is frozen while engaged, engages only when the sub-block primary/reference ratio is within 4 dB of the tracked noise ratio (far-field). No added latency: the whole hop is limited before it reaches the NLMS, the STFT and the model. Whether the limiter engaged in this hop or the previous one is an input to step 3.
 1. NLMS block on the 256 new samples with gate = previous frame's `adapt_gate` (64 taps, mu 0.05, eps 1e-6) -> `n_hat` block. See `dsp_reference/` and `vaani/dsp/nlms.py`.
 2. Features (18, order below) from the current 512-sample primary/reference frames and their spectra. `vaani/dsp/features.py`.
-3. Controller -> `adapt_gate`, `burst_flag`, `reliability`. `vaani/dsp/controller.py`. Thresholds: jump 12 dB, level-diff <= 3 dB, hold 4 frames, ramp 12 frames, speech-freeze 0.5 (0.6 before 2026-09-20; see `dsp_reference/README.md`).
+3. Controller -> `adapt_gate`, `burst_flag`, `reliability`. `vaani/dsp/controller.py`. Thresholds: jump 12 dB, level-diff <= 3 dB, hold 4 frames, ramp 12 frames, speech-freeze 0.5 (0.6 before 2026-09-20; see `dsp_reference/README.md`). Round-3 checkpoints (`dsp.controller.diff_jump_max_db` = 3.0 in the checkpoint config) replace the level-diff test with the *differential jump*: the same 4 ms onset test run on the reference frame, subtracted from the primary's (feature 0); burst = onset >= 12 dB AND diff <= 3 dB, OR the limiter engaged (step 0). The differential jump is not one of the 18 features.
 4. ONNX `model.onnx`: inputs `spec6 (1,257,1,6)` = [prim_re, prim_im, ref_re, ref_im, nhat_re, nhat_im], `feats (1,1,18)`, `conv_cache (2,1,16,16,33)`, `tra_cache (2,3,1,1,16)`, `inter_cache (2,1,33,16)`, `df_cache (1,257,3,2)`, `coh_cache (1,4,257)`, all float32, all zero-initialised at stream start; outputs `spec_out (1,257,1,2)` (enhanced primary re/im) + the five caches, same shapes, updated. Feed caches back unchanged into the next frame's call. (v1 had three caches; `df_cache`/`coh_cache` were added 2026-09-20 for the round-3 architecture and are present, and passed through, for every exported checkpoint.)
 5. iSTFT overlap-add with the same sqrt-Hann window, on `spec_out`.
 
@@ -69,7 +70,7 @@ embedded lead must re-run `parity_and_timing`-equivalent timing on the actual ta
 A port passes when its `max_abs_err` against the PyTorch stream reference is < 1e-4.
 
 ## Golden vectors
-`dsp_reference/vectors/<case>.wav` (stereo input) and `<case>.npz` (n_hat, features, gate, burst, reliability). A port passes when n_hat matches to 1e-4 and gate/burst match exactly.
+`dsp_reference/vectors/<case>.wav` (stereo input) and `<case>.npz` (n_hat, features, gate, burst, reliability). A port passes when n_hat matches to 1e-4 and gate/burst match exactly. The current vectors are for the r1/r2 DSP (no limiter, level-diff rule); they are regenerated with the r3 `dsp` block when an r3 checkpoint becomes the shipped model, and the port then also has to match the limited `mix`.
 
 ## Not covered here
 Output crossfade/bypass on low reliability, overrun handling, and radio interfacing are the DSP/embedded leads' responsibility.

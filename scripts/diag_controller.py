@@ -13,6 +13,10 @@ Reports, per bucket:
   nhat_noise   corr(n_hat, mix_primary - clean)   <- n_hat tracking the noise (wanted)
   nhat_speech  corr(n_hat, clean)                 <- n_hat tracking the speech (unwanted)
   erle         10log10(||noise||^2 / ||primary - n_hat - clean||^2); negative = harmful
+
+Plan 2.7 gate (--limiter / --diff-jump-max, ablatable DSP config): also prints burst TPR = share of
+impulse onsets in fault_burst_* clips flagged within 3 frames (target > 0.5) and FPR = burst-frame rate
+on fault_none clips, i.e. speech + stationary noise with no burst at all (target < 5 %).
 """
 import argparse
 from collections import defaultdict
@@ -33,10 +37,17 @@ def main():
     ap.add_argument("--eval-root", default="data/eval")
     ap.add_argument("--split", default="test")
     ap.add_argument("--per-bucket", type=int, default=10)
+    ap.add_argument("--limiter", action="store_true", help="2.7b sub-block limiter ahead of the STFT")
+    ap.add_argument("--headroom", type=float, default=None, help="limiter headroom over the running level (dB)")
+    ap.add_argument("--diff-jump-max", type=float, default=None, help="2.7a burst rule threshold (dB); None = legacy level_diff rule")
     a = ap.parse_args()
+    lim = a.limiter if a.headroom is None else {"headroom_db": a.headroom}
+    dsp_cfg = {"limiter": lim, "controller": {} if a.diff_jump_max is None else {"diff_jump_max_db": a.diff_jump_max}}
+    print(f"dsp_cfg = {dsp_cfg}")
 
     ds = RenderedDataset(Path(a.eval_root) / a.split)
     seen, rows = defaultdict(int), defaultdict(list)
+    hits, onsets, fp_frames, none_frames = 0, 0, 0, 0
     for i in range(len(ds)):
         it = ds[i]
         bucket = it["meta"]["bucket"]
@@ -44,7 +55,13 @@ def main():
             continue
         seen[bucket] += 1
         mix, clean = it["mix"].numpy(), it["clean"].numpy()
-        r = pipeline.run(mix)
+        r = pipeline.run(mix, dsp_cfg=dsp_cfg)
+        if bucket.startswith("fault_burst"):
+            for t in it["meta"].get("impulse_onsets_s", []):
+                k = int(t * 16000 / 256); onsets += 1; hits += bool(r["burst"][k:k + 4].any())
+        elif bucket.startswith("fault_none"):
+            fp_frames += int(r["burst"].sum()); none_frames += len(r["burst"])
+        mix = r["mix"]   # limited when the limiter is on: ERLE and n_hat are judged against what the model sees
         noise = mix[0] - clean
         resid = mix[0] - r["n_hat"] - clean
         rows[bucket].append((
@@ -66,6 +83,9 @@ def main():
     print(f"\nOVERALL burst-frame rate {allv[:, 0].mean():.4f}   "
           f"frames over the 12 dB jump threshold (p99 basis): "
           f"{(allv[:, 2] >= 12).mean():.3f} of clips")
+    if onsets:
+        print(f"2.7 gate: burst TPR {hits / onsets:.3f} ({hits}/{onsets} onsets, target > 0.5)   "
+              f"FPR on fault_none {fp_frames / max(none_frames, 1):.4f} (target < 0.05)")
 
 
 if __name__ == "__main__":

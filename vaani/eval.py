@@ -30,7 +30,8 @@ def enhance_fn(spec: str, device=None):
             out = m(stft.stft(x[:, 0]))
         else:
             # DSP pipeline must run exactly as training did, hence the checkpoint's own controller_on
-            r = pipeline.run(mix, controller_on=cfg["controller_on"])
+            r = pipeline.run(mix, controller_on=cfg["controller_on"], dsp_cfg=cfg.get("dsp"))
+            x = torch.from_numpy(r["mix"])[None].to(device)   # limited when the checkpoint trained with the limiter
             spec6 = torch.cat([stft.stft(x[:, 0]), stft.stft(x[:, 1]),
                                 stft.stft(torch.from_numpy(r["n_hat"])[None].to(device))], -1)
             out = m(spec6, torch.from_numpy(r["features"])[None].to(device))

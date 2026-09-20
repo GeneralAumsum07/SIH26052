@@ -14,8 +14,11 @@ _I = {n: i for i, n in enumerate(FEATURE_NAMES)}
 
 class Controller:
     def __init__(self, jump_db=12.0, level_diff_max_db=3.0, hold_frames=4, ramp_frames=12,
-                 speech_freeze=0.5):
+                 speech_freeze=0.5, diff_jump_max_db=None):
         self.jump_db, self.ld_max, self.hold, self.ramp, self.sp_freeze = jump_db, level_diff_max_db, hold_frames, ramp_frames, speech_freeze
+        # plan 2.7a: when set, the burst test is "onset >= jump_db AND differential jump <= diff_jump_max_db" and
+        # the frame-level level_diff test is dropped (it reads ~0 dB for consonants too once the noise is loud).
+        self.dj_max = diff_jump_max_db
         self.reset()
 
     def reset(self):
@@ -23,10 +26,13 @@ class Controller:
         self.gate = 1.0
         self.ramp_pos = self.ramp   # fully ramped
 
-    def step(self, f: np.ndarray):
+    def step(self, f: np.ndarray, diff_jump: float = 0.0, limiter_hit: bool = False):
         jump = f[_I["log_energy_delta"]]
         ld = f[_I["level_diff_db"]]
-        burst_now = (jump >= self.jump_db) and (ld <= self.ld_max)
+        far = (diff_jump <= self.dj_max) if self.dj_max is not None else (ld <= self.ld_max)
+        # the limiter squashes the very onset the jump test looks for (TPR 0.90 -> 0.46 measured), but it only
+        # engages on far-field over-ceiling sub-blocks, so its engagement is itself the burst detection
+        burst_now = ((jump >= self.jump_db) and far) or limiter_hit
         if burst_now:
             self.hold_left = self.hold
         burst = self.hold_left > 0

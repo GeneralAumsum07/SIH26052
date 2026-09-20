@@ -30,7 +30,7 @@ def _load(path: str, n: int | None, rng) -> np.ndarray:
 
 class DynamicMixDataset(Dataset):
     def __init__(self, manifest_paths, split, bank_path, cfg: MixConfig, crop_s=4.0, epoch_len=20000, seed=0,
-                 with_dsp=False, controller_on=True):
+                 with_dsp=False, controller_on=True, dsp_cfg=None):
         df = pd.concat([manifests.read(p) for p in manifest_paths])
         df = df[df.split == split]
         self.speech = df[df.kind == "speech"].reset_index(drop=True)
@@ -43,7 +43,7 @@ class DynamicMixDataset(Dataset):
         self._bank = None
         self.cfg, self.n, self.epoch_len, self.seed = cfg, int(crop_s * SR), epoch_len, seed
         # with_dsp: run NLMS+features here so the ~150 ms/clip DSP lands in DataLoader workers, not the trainer
-        self.with_dsp, self.controller_on = with_dsp, controller_on
+        self.with_dsp, self.controller_on, self.dsp_cfg = with_dsp, controller_on, dsp_cfg
         assert len(self.speech) and len(self.cont), "empty manifest split"
 
     @property
@@ -83,8 +83,9 @@ class DynamicMixDataset(Dataset):
         meta["noise_class"] = "clean" if meta["clean_bucket"] else noise_class
         out = {"mix": torch.from_numpy(mixed), "clean": torch.from_numpy(clean), "meta": meta}
         if self.with_dsp:
-            r = pipeline.run(mixed, controller_on=self.controller_on)
+            r = pipeline.run(mixed, controller_on=self.controller_on, dsp_cfg=self.dsp_cfg)
             out["n_hat"] = torch.from_numpy(r["n_hat"]); out["feats"] = torch.from_numpy(r["features"])
+            out["mix"] = torch.from_numpy(r["mix"])   # the limited signal when the limiter is on
         return out
 
 
