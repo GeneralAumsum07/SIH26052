@@ -147,7 +147,7 @@ Listed so nothing is silently dropped. Each is a decision, not a task I can star
 ```
 Day 1  (20–21 Sep) Tier 1 code (1.1, 1.2, 1.5, 1.6, 1.7) → re-render → eval matrix overnight
 Day 2  (21 Sep)    Tier 1.5 adapters D1, D3, D4, D5 (+ D2 if arrived); 2.1 controller + diag_controller gate; 2.3 loss; 2.2 mixer
-Day 3  (22 Sep)    2.4 conditioning + 2.5 deep-filter head + export parity; train r3 overnight
+Day 3  (22 Sep)    2.4 + 2.5 done 20 Sep; now: 2.9 RIR mode, MAD relabel, 2.7 limiter+diffjump, 2.8 blocking matrix (DSP gates); train r3 when data lands
 Day 4  (23 Sep)    Eval r3 on Tier-1 split; mask_phase_probe + diag_conditioning gates; decide keep/drop per component
 Day 5  (24 Sep)    Second round only if a gate failed and the fix is obvious; else freeze
 Days 6–9           Envelope table, figures, CONTRACT.md board line, submission narrative
@@ -163,3 +163,34 @@ people, not code.
 - Start the Tier-2 training run before the 2.1 ERLE gate passes on the DSP alone.
 - Download a drone corpus before the licence is read.
 - Claim any number in this document that is marked *estimate* as a result.
+
+---
+
+## Addendum 2026-09-20 09:40 — impulse-and-reference-path brief (Downloads, six items)
+
+Rachit supplied `impulse-and-reference-path-brief.md` with `blast.py` and a newer
+`crest_audit.py`. Its measurements were taken against `13d3f0d`, i.e. **before** 2.1
+(commit `5d2c2d6`) and 2.2 (`5cf9cdd`) landed; where the brief and the landed code overlap
+the row below says what is already done and what is still open. Status as of this addendum:
+Tier 1 complete (headline `results_r2/matrix.md`, 08:46), 2.1–2.5 coded, r3 configs written,
+r3 training blocked only on the gunshot/EARS/drone downloads.
+
+| Brief | Verdict | Plan row | What remains |
+|---|---|---|---|
+| 1 Friedlander blast generator + realistic levels | **Adopted** (`8e0f751`). Measured through `impulses.generate()`: blast 29.7 dB full / 25.4 dB event vs burst 20.7/15.0, click_train 23.3/21.3 — the brief's +10 dB reproduces. `KINDS` stays frozen (eval-set draw); r3 draws `[blast, blast, burst, click_train]` via `MixConfig.impulse_kinds`. Level range (15, 45) dB + overload soft-clip + recorder gain landed in 2.2. | 2.2 (extended) | Nothing before r3. After r3: a `synthetic_blast` eval bucket (new render, new hash) if the r3 numbers on `fault_burst_*` justify a bucket of their own. |
+| 2 Crest-factor gate on every impulse corpus | **Adopted**; the brief's `crest_audit.py` replaces ours (thresholds `>30 dB full AND >22 dB event`, four-way verdict). | 1.5 (D2 gate) | Run on `data/raw/gunshots` when the zip lands; on `data/raw/mad/shooting|shelling|footsteps` now (expected NOT IMPULSIVE — YouTube-normalised); relabel MAD rows accordingly before the r3 manifests are read. |
+| 3 Sub-frame transient limiter **before** the STFT + sub-frame burst features | **Half done, half new.** The burst-detector half is 2.1: 4 ms onset ratio against a 100 ms median floor is what ships (jump_p99 20–28 dB on real bursts). The brief's *differential jump* (primary onset minus reference onset) is not in; the *limiter* is not in. | **new 2.7** | 2.7a differential-jump feature + rule `onset >= t1 and diffjump <= t2`, thresholds fit on the rendered fault buckets (the brief's 1 / −0.5 dB were fit pre-2.1; re-fit). 2.7b limiter on 2 ms sub-blocks, fast attack / 50 ms release, both mics, **ablatable** (`limiter` flag in the DSP pipeline) so the r3 eval gives a 2x2 with the controller. Gate: burst_flag TPR > 0.5 on `fault_burst_*` onsets, FPR on consonants < 5 % (measured on `fault_none` clips). Rides in the r3 round only if coded before the GPU is free; otherwise r4. |
+| 4 GSC-style blocking matrix on the reference path | **Agreed in diagnosis, gated in execution.** Our own `diag_controller` reproduced the brief's table (nhat~speech > nhat~noise above +5 dB pre-2.1); 2.1 fixed the sign everywhere but ERLE at +15 dB is still negative, which is exactly the "leaked speech exceeds noise" case a blocking matrix removes. The new fault table backs it: `fault_refgain_-12dB` costs 3.7 dB (10.70 -> 7.03) on `vaani_full_r2`. | **new 2.8** | Time-domain first (fits the C port): `ref_b = ref − a·d(prim)`, gain a and delay tracked long-term from speech-active frames, fed to the NLMS in place of `ref`. Gate before any retrain: `diag_controller` shows ERLE > 0 at **every** SNR incl. +15 and the `fault_refgain_-12dB` loss < 1.5 dB on the DSP alone. Per-bin frequency-domain NLMS (the brief's third bullet) is r4 — it changes the deploy contract. The brief's "speech_presence relative to a long-term baseline" is 2.1's floor tracker; done. |
+| 5 NOISEX-92 | **Adopted as D7, conditional.** Mirror quality is the risk the brief names (8 kHz / 8-bit copies are worthless). | 1.5 (D7) | Locate a 19.98 kHz / 16-bit copy; `crest_audit` on `machinegun` before it is labelled impulsive; record the provenance uncertainty in the manifest licence string (DRA Malvern 1992, redistribution unclear). Map leopard/m109/destroyerengine/volvo/f16/buccaneer -> stationary; hfchannel is the channel-noise class nothing else covers. |
+| 6 Armoured-compartment RIR mode | **Adopted**, cheap. | **new 2.9** | `rirs.build_bank` second draw mode: 1.5–2.5 m box, low absorption, RT60 drawn long for the volume, ~20 % of the bank. New `bank.npz` -> r3 config points at it; the eval-set bank stays as is (hash contract). |
+| Decisions "not to revisit" | Consistent with this plan: latency = window (32 ms) as `CONTRACT.md` derives; phase work justified by the SNR target (2.5's gate is `mask_phase_probe`, not PESQ/STOI); throat mic stays a bounded extension. No change. | — | — |
+
+Sequencing change: 2.9 and the item-2 relabelling before the r3 manifests are frozen; 2.7 and
+2.8 are coded next (both DSP-only, both gated by `diag_controller` on the DSP alone, no GPU);
+r3 trains the moment the data lands with whatever of 2.7/2.8 has passed its gate — nothing
+waits on the GPU for them. The 2.7 limiter and the 2.8 blocking matrix each get an `_off`
+ablation config so the matrix stays a clean 2x2x2 against the controller.
+
+Download logistics (same session): the `requests` downloader died on a Zenodo read-timeout at
+510 MB of the gunshot zip; the queue now runs the archives through `aria2c -c --max-tries=0`
+(`scripts/run_fetch_queue.sh`), resumable across the hotspot -> USB-tethering switch.
