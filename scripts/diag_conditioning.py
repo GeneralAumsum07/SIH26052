@@ -13,8 +13,12 @@ Interpretation:
     dual-channel gain is coming from the reference spectrum alone.
   * film_gain_ratio << 1                   -> the FiLM shift is negligible next to the
     activations it is added to.
+  * "coh zeroed" dSTOI = zeroed minus as-trained STOI. A negative value means
+    coherence helps; e.g. -0.01 is a 0.01 absolute STOI loss on zeroing. Near zero
+    suggests no measured benefit on these clips, not proof the pathway is unused.
 """
 import argparse
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
 import numpy as np
@@ -26,6 +30,27 @@ from vaani.dsp import pipeline, stft
 from vaani.train import build_model
 
 SR = 16000
+
+
+@contextmanager
+def zero_coherence(model):
+    """Ablate only the coherence feature, retaining the three input spectra."""
+    if not model.use_coh:
+        raise ValueError("coherence ablation requires a coh=true checkpoint")
+
+    def zero_channel(_module, inputs):
+        # ERB is linear and per channel, so zeroing here also zeros every SFE
+        # copy of coherence without recomputing or damaging reference features.
+        features = inputs[0].clone()
+        assert features.shape[1] == 10, "expected nine spectral channels plus coherence"
+        features[:, 9] = 0
+        return (features,)
+
+    handle = model.sfe.register_forward_pre_hook(zero_channel)
+    try:
+        yield
+    finally:
+        handle.remove()
 
 
 def main():
@@ -44,15 +69,21 @@ def main():
     m.eval()
 
     # --- static check: how big is the FiLM shift next to the activations it modifies? ---
-    w = m.encoder.film.weight.detach()
-    b = m.encoder.film.bias.detach()
-    print(f"film.weight  |w|_mean {w.abs().mean():.5f}  |w|_max {w.abs().max():.5f}")
-    print(f"film.bias    |b|_mean {b.abs().mean():.5f}  |b|_max {b.abs().max():.5f}")
+    film = m.encoder.film
+    if film is not None:
+        w = film.weight.detach()
+        b = film.bias.detach()
+        print(f"film.weight  |w|_mean {w.abs().mean():.5f}  |w|_max {w.abs().max():.5f}")
+        print(f"film.bias    |b|_mean {b.abs().mean():.5f}  |b|_max {b.abs().max():.5f}")
+    else:
+        print("FiLM disabled; feature-zeroing variants are expected no-ops.")
 
     ds = RenderedDataset(Path(a.eval_root) / a.split)
     idx = np.linspace(0, len(ds) - 1, min(a.n, len(ds))).astype(int)
 
     variants = ["as trained", "feats zeroed", "n_hat zeroed", "ref zeroed", "feats+n_hat zeroed"]
+    if m.use_coh:
+        variants.append("coh zeroed")
     acc = {v: [] for v in variants}
     film_ratio = []
 
@@ -73,25 +104,31 @@ def main():
             F = torch.from_numpy(r["features"])[None]
             Z = torch.zeros_like(F)
 
-            for name, spec6, feats in [
+            inputs = [
                 ("as trained", torch.cat([P, R, N], -1), F),
                 ("feats zeroed", torch.cat([P, R, N], -1), Z),
                 ("n_hat zeroed", torch.cat([P, R, torch.zeros_like(N)], -1), F),
                 ("ref zeroed", torch.cat([P, torch.zeros_like(R), N], -1), F),
                 ("feats+n_hat zeroed", torch.cat([P, R, torch.zeros_like(N)], -1), Z),
-            ]:
-                out = m(spec6, feats)
+            ]
+            if m.use_coh:
+                inputs.append(("coh zeroed", torch.cat([P, R, N], -1), F))
+            for name, spec6, feats in inputs:
+                with zero_coherence(m) if name == "coh zeroed" else nullcontext():
+                    out = m(spec6, feats)
                 y = stft.istft(out, length=mix.shape[1])[0].numpy()
                 acc[name].append(_stoi(clean, y, SR, extended=False))
-                if name == "as trained":
+                if name == "as trained" and film is not None:
                     shift = m.encoder.film(torch.clamp(F * m.encoder.feat_scale, -3.0, 3.0))
                     film_ratio.append(float(shift.abs().mean() / (grab["x"].abs().mean() + 1e-9)))
     h.remove()
 
     base = float(np.mean(acc["as trained"]))
     print(f"\nclips: {len(idx)}   checkpoint: {a.ckpt}")
-    print(f"film_shift / activation magnitude: {np.mean(film_ratio):.4f}"
-          "   (<0.01 means the conditioning is numerically irrelevant)\n")
+    if film_ratio:
+        print(f"film_shift / activation magnitude: {np.mean(film_ratio):.4f}"
+              "   (<0.01 means the conditioning is numerically irrelevant)\n")
+    print("dSTOI = variant - as trained (negative means zeroing hurts).")
     print(f"{'variant':<22s} {'STOI':>7s} {'dSTOI':>8s}")
     for v in variants:
         mu = float(np.mean(acc[v]))

@@ -50,3 +50,41 @@ def test_diag_conditioning_runs(monkeypatch, capsys, evalroot, vaani_ckpt):
     from scripts import diag_conditioning
     out = _run(monkeypatch, capsys, diag_conditioning, ["--ckpt", vaani_ckpt, "--eval-root", evalroot, "--n", "1"])
     assert "feats zeroed" in out
+
+
+def test_diag_conditioning_r3_runs(monkeypatch, capsys, evalroot, tmp_path):
+    from scripts import diag_conditioning
+    cfg = {"film": False, "coh": True, "df_order": 3}
+    ckpt = tmp_path / "r3.pt"
+    torch.save({"model": build_model("vaani", model_cfg=cfg).state_dict(),
+                "config": {"model": "vaani", "controller_on": True, "model_cfg": cfg}}, ckpt)
+    out = _run(monkeypatch, capsys, diag_conditioning,
+               ["--ckpt", str(ckpt), "--eval-root", evalroot, "--n", "1"])
+    assert "coh zeroed" in out
+    assert "FiLM disabled" in out
+    assert "film_shift /" not in out
+
+
+def test_coherence_ablation_preserves_spectra_and_restores_after_error():
+    from scripts.diag_conditioning import zero_coherence
+    model = build_model("vaani", model_cfg={"film": False, "coh": True, "df_order": 3}).eval()
+    spec = torch.randn(1, 257, 4, 6)
+    feats = torch.zeros(1, 4, 18)
+    seen = []
+    # Observe what SFE actually receives after the diagnostic's pre-hook runs.
+    with torch.no_grad(), zero_coherence(model):
+        handle = model.sfe.register_forward_pre_hook(lambda _m, args: seen.append(args[0].clone()))
+        model(spec, feats)
+        handle.remove()
+    handle = model.sfe.register_forward_pre_hook(lambda _m, args: seen.append(args[0].clone()))
+    with torch.no_grad():
+        baseline = model(spec, feats)
+    handle.remove()
+    torch.testing.assert_close(seen[0][:, :9], seen[1][:, :9], rtol=0, atol=0)
+    assert torch.count_nonzero(seen[0][:, 9]) == 0
+    assert torch.count_nonzero(seen[1][:, 9]) > 0
+    with pytest.raises(RuntimeError, match="probe"):
+        with zero_coherence(model):
+            raise RuntimeError("probe")
+    with torch.no_grad():
+        torch.testing.assert_close(model(spec, feats), baseline, rtol=0, atol=0)
