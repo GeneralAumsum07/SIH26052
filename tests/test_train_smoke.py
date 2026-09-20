@@ -102,3 +102,20 @@ def test_losses_shapes_and_clean_term():
     sp = losses.SpeechPreservationLoss(clean_l1=1.0)
     assert torch.allclose(sp(pred, true, None, torch.tensor([False, False])), h)
     assert sp(pred, true, None, torch.tensor([True, False])) > h
+
+
+def test_df_param_group_gets_own_lr_and_clip():
+    import torch
+    from vaani.models.vaani_net import VaaniNet
+    from vaani.train import build_param_groups, clip_groups
+    m = VaaniNet(df_order=3, film=False, coh=True)
+    groups = build_param_groups(m, dict(lr=1e-4, lr_df=1e-3, clip_df=1.0))
+    assert [g["lr"] for g in groups] == [1e-4, 1e-3] and groups[1]["params"] == list(m.df.parameters())
+    assert sum(len(g["params"]) for g in groups) == len(list(m.parameters()))
+    # without lr_df the head stays in the shared group, as in r3
+    assert len(build_param_groups(m, dict(lr=1e-4))) == 1
+    for p in m.parameters(): p.grad = torch.full_like(p, 10.0)
+    clip_groups(groups, 5.0)
+    df_norm = torch.stack([p.grad.norm() for p in m.df.parameters()]).norm()
+    rest = torch.stack([p.grad.norm() for p in groups[0]["params"]]).norm()
+    assert abs(df_norm - 1.0) < 1e-4 and abs(rest - 5.0) < 1e-3

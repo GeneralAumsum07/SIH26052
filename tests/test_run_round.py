@@ -8,7 +8,7 @@ import pytest
 import yaml
 
 
-@pytest.mark.parametrize("round", ["3", "3b", "3c"])
+@pytest.mark.parametrize("round", ["3", "3b", "3c", "3d"])
 @pytest.mark.parametrize("failure", ["rir", "train", "hash", "lock", "eval", "report", "none"])
 def test_round3_completion_requires_success(tmp_path, failure, round):
     bash = shutil.which("bash")
@@ -66,7 +66,8 @@ touch eval_lock
         expected = {"3": {"vaani_full_r3", "vaani_no_controller_r3", "vaani_full_r3_nodsp"},
                     "3b": {"vaani_full_r3_s1", "vaani_full_r3_s2", "vaani_no_controller_r3_s1",
                            "vaani_no_controller_r3_s2", "vaani_full_r3_df1", "vaani_full_r3_df1_s1", "vaani_full_r3_df1_s2"},
-                    "3c": {"vaani_full_r3_e32", "vaani_full_r3_wsnr0", "vaani_full_r3_wsnr04"}}[round]
+                    "3c": {"vaani_full_r3_e32", "vaani_full_r3_wsnr0", "vaani_full_r3_wsnr04"},
+                    "3d": {"vaani_full_r3_dflr", "vaani_full_r3_dflr_s1"}}[round]
         assert {p.parent.name for p in (tmp_path / "runs").glob("*/DONE")} == expected
 
 
@@ -90,4 +91,13 @@ def test_round3c_configs_change_one_knob(suffix, key, value):
     expected = yaml.safe_load((root / "vaani_full_r3.yaml").read_text())
     expected.update(name=f"vaani_full_r3_{suffix}", num_workers=6)
     (expected if key == "epochs" else expected["loss_cfg"])[key] = value
+    assert yaml.safe_load((root / f"vaani_full_r3_{suffix}.yaml").read_text()) == expected
+
+
+@pytest.mark.parametrize("suffix,seed", [("dflr", 0), ("dflr_s1", 1)])
+def test_round3d_configs_only_add_the_df_group(suffix, seed):
+    root = Path(__file__).parents[1] / "configs/exp"
+    expected = yaml.safe_load((root / "vaani_full_r3.yaml").read_text())
+    expected.update(name=f"vaani_full_r3_{suffix}", seed=seed, num_workers=6)
+    expected["optim"].update(lr_df=0.0025, clip_df=1.0)
     assert yaml.safe_load((root / f"vaani_full_r3_{suffix}.yaml").read_text()) == expected

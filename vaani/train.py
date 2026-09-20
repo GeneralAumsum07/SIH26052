@@ -76,6 +76,31 @@ def prepare_batch(batch, model_name, device, burst_weight=1.0):
     return inputs, target, fw.to(device), is_clean.to(device)
 
 
+def build_param_groups(model, optim_cfg):
+    """AdamW groups. FiLM projections get lr_new. With lr_df set, the deep-filter head gets its own
+    group (lr_df, clipped alone at clip_df): r3 showed its tap gradient is heavy-tailed (per-batch norm
+    3..120 on real batches), so Adam's second moment pinned the taps near zero at the shared lr."""
+    lr = optim_cfg["lr"]
+    is_df = lambda n: n.startswith("df.") and "lr_df" in optim_cfg
+    groups = [{"params": [p for n, p in model.named_parameters() if "film" not in n and not is_df(n)], "lr": lr}]
+    film = [p for n, p in model.named_parameters() if "film" in n]
+    if film:
+        groups.append({"params": film, "lr": optim_cfg.get("lr_new", lr)})
+    df = [p for n, p in model.named_parameters() if is_df(n)]
+    if df:
+        groups.append({"params": df, "lr": optim_cfg["lr_df"], "clip": optim_cfg.get("clip_df")})
+    return groups
+
+
+def clip_groups(groups, clip):
+    """Groups carrying their own clip are normalised separately, so a burst batch that blows up the tap
+    gradient no longer drags every other parameter's update down with it."""
+    own = [g for g in groups if g.get("clip")]
+    for g in own:
+        torch.nn.utils.clip_grad_norm_(g["params"], g["clip"])
+    torch.nn.utils.clip_grad_norm_([p for g in groups if g not in own for p in g["params"]], clip)
+
+
 def _git_hash():
     try:
         return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True, cwd=ROOT).strip()
@@ -124,13 +149,7 @@ def main(config_path):
 
     model = build_model(cfg["model"], cfg.get("init_from"), cfg.get("model_cfg")).to(device)
     n_params = sum(p.numel() for p in model.parameters())
-    # only the FiLM projection gets lr_new; the zero-init conv slices share tensors with
-    # pretrained weights so they train at the base lr
-    new_params = [p for n, p in model.named_parameters() if "film" in n]
-    old_params = [p for n, p in model.named_parameters() if "film" not in n]
-    groups = [{"params": old_params, "lr": cfg["optim"]["lr"]}]
-    if new_params:
-        groups.append({"params": new_params, "lr": cfg["optim"].get("lr_new", cfg["optim"]["lr"])})
+    groups = build_param_groups(model, cfg["optim"])
     opt = torch.optim.AdamW(groups, weight_decay=1e-4)
     total = cfg["max_steps"] if cfg.get("max_steps") else cfg["epochs"] * len(dl)
     warm = cfg["optim"].get("warmup", 500)
@@ -179,7 +198,7 @@ def main(config_path):
                 continue
             bad = 0
             opt.zero_grad(set_to_none=True); loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), cfg["optim"].get("clip", 5.0))
+            clip_groups(groups, cfg["optim"].get("clip", 5.0))
             opt.step(); sched.step(); step += 1
             if step % 20 == 0:
                 tb.add_scalar("train/loss", loss.item(), step); tb.add_scalar("train/lr", sched.get_last_lr()[0], step)
@@ -193,7 +212,9 @@ def main(config_path):
         print(f"epoch {epoch} step {step} val_stoi {v:.4f} best {best:.4f} skipped {skipped}")
         if cfg.get("max_steps") and step >= cfg["max_steps"]:
             break
-    run_info.update(end=time.time(), wall_s=time.time() - t_start, best_val_stoi=best, steps=step, skipped_steps=skipped)
+    # tap-weight norm: a null df result must be diagnosable (untrained taps) rather than believed
+    df_norm = float(sum(p.norm() ** 2 for n, p in model.named_parameters() if n.startswith("df.")) ** 0.5)
+    run_info.update(end=time.time(), wall_s=time.time() - t_start, best_val_stoi=best, steps=step, skipped_steps=skipped, df_norm=df_norm)
     json.dump(run_info, open(run_dir / "run.json", "w"), indent=2)
     tb.close()
 
