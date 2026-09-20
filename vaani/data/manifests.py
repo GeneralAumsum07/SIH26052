@@ -30,7 +30,11 @@ def write(rows: list[dict], path: str | Path) -> None:
 
 
 def read(path: str | Path) -> pd.DataFrame:
-    return pd.read_parquet(path)
+    df = pd.read_parquet(path)
+    # manifests built on Windows carried backslashes, which libsndfile on the GPU host cannot open (wave 4 crashed on
+    # cadre/demand); forward slashes work on both, so normalise here and write them that way from now on
+    df["path"] = df["path"].str.replace("\\", "/", regex=False)
+    return df
 
 
 def content_hash(paths: list[str | Path]) -> str:

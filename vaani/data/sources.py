@@ -58,7 +58,7 @@ def stationarity_class(x: np.ndarray, sr: int, frame_ms: float = 32.0) -> str:
 def _row(source_id, corpus, kind, group_id, speaker_id, path, dur, licence, noise_class=""):
     sha1 = hashlib.sha1(Path(path).read_bytes()).hexdigest()[:12]
     row = dict(source_id=source_id, corpus=corpus, kind=kind, group_id=group_id,
-               speaker_id=speaker_id, path=str(path), duration_s=dur, licence=licence,
+               speaker_id=speaker_id, path=Path(path).as_posix(), duration_s=dur, licence=licence,
                split=assign(group_id), sha1=sha1, noise_class=noise_class)
     assert set(row) == set(COLUMNS), "row shape must match manifests.COLUMNS"
     return row

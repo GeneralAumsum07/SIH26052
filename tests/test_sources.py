@@ -188,3 +188,14 @@ def test_scan_demand_writes_the_12cm_pair_as_one_stereo_row_per_environment(tmp_
     x, sr = sf.read(rows[0]["path"], dtype="float32")
     assert sr == 16000 and x.shape == (16000, 2)
     assert x[:, 1].std() > 3 * x[:, 0].std()   # column 1 really is ch09, not a duplicate of ch01
+
+
+def test_manifest_paths_are_posix_on_write_and_on_read(tmp_path):
+    # the GPU host is Linux: a backslash path from a Windows-built manifest is one unopenable filename there
+    from vaani.data import manifests
+    sf.write(tmp_path / "a.wav", _white_noise(), 16000)
+    row = sources._row("x:a", "x", "noise", "g", "", tmp_path / "a.wav", 1.0, "n/a")
+    assert "\\" not in row["path"]
+    df = __import__("pandas").DataFrame([dict(row, path=row["path"].replace("/", "\\"))])
+    df.to_parquet(tmp_path / "m.parquet", index=False)
+    assert "\\" not in manifests.read(tmp_path / "m.parquet").path.iloc[0]
