@@ -10,9 +10,10 @@ D=data/download/demand; mkdir -p "$D"
 for env in DKITCHEN DLIVING DWASHING NFIELD NPARK NRIVER OHALLWAY OMEETING OOFFICE PCAFETER PRESTO PSTATION SCAFE SPSQUARE STRAFFIC TBUS TCAR TMETRO; do
   dst=$D/${env}_16k.zip
   [ -f "$dst.ok" ] && continue
-  aria2c -c -x4 -s4 -k 10M --max-tries=0 --retry-wait=10 --timeout=60 --file-allocation=none \
+  rate=16k; [ "$env" = SCAFE ] && rate=48k   # Zenodo has no SCAFE_16k.zip (404); scan_demand resamples the 48 kHz one
+  aria2c -c -x4 -s4 -k 10M --max-tries=5 --retry-wait=10 --timeout=60 --file-allocation=none \
     --console-log-level=warn --summary-interval=60 -d "$D" -o "$(basename "$dst")" \
-    "https://zenodo.org/records/1227121/files/${env}_16k.zip?download=1" \
+    "https://zenodo.org/records/1227121/files/${env}_${rate}.zip?download=1" \
     && touch "$dst.ok" && echo "$(date +%H:%M) done $dst" >> "$LOG"
 done
 touch "$D/QUEUE_DONE"

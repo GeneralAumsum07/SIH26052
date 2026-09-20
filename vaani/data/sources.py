@@ -206,8 +206,10 @@ def scan_demand(root: Path, out: Path, pair=DEMAND_PAIR) -> list[dict]:
     for env in sorted(p for p in root.iterdir() if p.is_dir() and (p / f"ch{pair[0]:02d}.wav").exists()):
         dst = out / "demand" / (env.name + ".flac")
         if not dst.exists():
-            chans = [sf.read(env / f"ch{c:02d}.wav", dtype="float32")[0] for c in pair]
+            chans, srs = zip(*(sf.read(env / f"ch{c:02d}.wav", dtype="float32") for c in pair))
             x = np.stack(chans, 1)
+            if srs[0] != SR:   # SCAFE exists on Zenodo only as the 48 kHz zip
+                g = np.gcd(srs[0], SR); x = resample_poly(x, SR // g, srs[0] // g, axis=0).astype(np.float32)
             dst.parent.mkdir(parents=True, exist_ok=True); sf.write(dst, x, SR, subtype="PCM_16")
         x, _ = sf.read(dst, dtype="float32")
         rows.append(_row(f"demand:{env.name}", "demand", "noise", f"demand-{env.name}", "", dst, len(x) / SR, "CC BY-SA 4.0",

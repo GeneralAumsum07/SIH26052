@@ -181,11 +181,16 @@ def test_scan_demand_writes_the_12cm_pair_as_one_stereo_row_per_environment(tmp_
         (root / env).mkdir(parents=True)
         for c in range(1, 17):
             sf.write(root / env / f"ch{c:02d}.wav", rng.standard_normal(16000).astype(np.float32) * (0.1 if c != 9 else 0.5), 16000)
+    (root / "SCAFE").mkdir()   # Zenodo ships SCAFE only at 48 kHz; the scan must resample it like the others
+    for c in range(1, 17):
+        sf.write(root / "SCAFE" / f"ch{c:02d}.wav", rng.standard_normal(48000).astype(np.float32) * 0.1, 48000)
     rows = sources.scan_demand(root, tmp_path / "out")
-    assert {r["source_id"] for r in rows} == {"demand:DKITCHEN", "demand:NPARK"}
+    assert {r["source_id"] for r in rows} == {"demand:DKITCHEN", "demand:NPARK", "demand:SCAFE"}
+    scafe = next(r for r in rows if r["source_id"] == "demand:SCAFE")
+    assert sf.info(scafe["path"]).samplerate == 16000 and abs(scafe["duration_s"] - 1.0) < 1e-3
     assert all(r["corpus"] == "demand" and r["kind"] == "noise" and r["group_id"] == "demand-" + r["source_id"][7:] for r in rows)
     assert all(r["licence"] == "CC BY-SA 4.0" and r["noise_class"] in ("stationary", "changing") for r in rows)
-    x, sr = sf.read(rows[0]["path"], dtype="float32")
+    x, sr = sf.read(next(r for r in rows if r["source_id"] == "demand:DKITCHEN")["path"], dtype="float32")
     assert sr == 16000 and x.shape == (16000, 2)
     assert x[:, 1].std() > 3 * x[:, 0].std()   # column 1 really is ch09, not a duplicate of ch01
 
