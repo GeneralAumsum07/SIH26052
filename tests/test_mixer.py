@@ -249,3 +249,30 @@ def test_r3_impulse_crest_distribution():
         bg = np.sqrt((out[0, : max(160, start - 160)] ** 2).mean() + 1e-12) if start > 320 else np.sqrt((out[0, start + 8000:] ** 2).mean() + 1e-12)
         crest.append(20 * np.log10(np.abs(w).max() / bg))
     assert np.percentile(crest, 50) > 25.0, np.percentile(crest, [10, 50, 90])
+
+
+def test_measured_two_mic_noise_row_is_used_verbatim_on_both_paths(tmp_path):
+    # DEMAND rows are (n, 2): a real mic pair. The inter-channel relation is the point, so neither the RIR bank
+    # nor the per-channel random filters may touch it; only the SNR gain may (identical on both channels).
+    rirs.build_bank(tmp_path / "b.npz", n=2, seed=0)
+    bank = rirs.RirBank(tmp_path / "b.npz")
+    for p_room in (0.0, 1.0):
+        rng = np.random.default_rng(1)
+        cfg = mixer.MixConfig(p_room=p_room, p_clip=0.0, p_ref_dropout=0.0, p_wind=0.0, p_clean=0.0)
+        s = _speech(rng)
+        nz = np.stack([rng.standard_normal(len(s)), rng.standard_normal(len(s))], 1).astype(np.float32)
+        mix, clean, meta = mixer.mix(rng, s, [nz], None, [], bank, cfg)
+        # subtract the speech image to recover the noise the mixer actually added
+        rng2 = np.random.default_rng(1)
+        mix_s, _, _ = mixer.mix(rng2, s, [np.zeros_like(nz)], None, [], bank, cfg)
+        added = (mix - mix_s) / meta["norm_gain"]
+        # post-mix mismatch EQ touches both channels equally, so the waveform match is loose; the relation is exact:
+        # independent channels in must stay independent out (a mono row spatialised any way gives |corr| >> 0.1)
+        for m in range(2):
+            assert np.corrcoef(added[m], nz[:, m])[0, 1] > 0.9, (p_room, m)
+        assert abs(np.corrcoef(added[0], added[1])[0, 1]) < 0.1, p_room
+        if p_room == 0.0:   # contrast: the same channel as a mono row comes out correlated across mics (room RIRs decorrelate more)
+            mono, _, _ = mixer.mix(np.random.default_rng(1), s, [nz[:, 0].copy()], None, [], bank, cfg)
+            assert abs(np.corrcoef(*(mono - mix_s))[0, 1]) > 0.3
+        assert np.isfinite(mix).all()
+    assert mixer._fit(nz[:100], 250, np.random.default_rng(0)).shape == (250, 2)   # looping keeps the pair 2 wide

@@ -55,7 +55,7 @@ def _fit(x: np.ndarray, n: int, rng) -> np.ndarray:
     if len(x) >= n:
         o = int(rng.integers(0, len(x) - n + 1)); return x[o:o + n]
     reps = int(np.ceil(n / len(x)))
-    return np.tile(x, reps)[:n]
+    return np.tile(x, (reps,) + (1,) * (x.ndim - 1))[:n]   # tile along time only; (m, 2) rows must stay 2 wide
 
 
 def _frac_delay(x: np.ndarray, delay_samples: float) -> np.ndarray:
@@ -99,6 +99,8 @@ def mix(rng, speech, noises, impulse, impulse_onsets_s, bank, cfg: MixConfig, no
         clean = s2[0].copy()
         noise2 = np.zeros((2, n), np.float32)
         for i, nz in enumerate(noises):
+            if nz.ndim == 2:   # measured two-mic pair (DEMAND): its inter-channel relation is real, keep it
+                noise2 += _fit(nz, n, rng).T; continue
             h_n = r["noise"][i % len(r["noise"])]
             h_n = h_n / (np.abs(h_n[0]).max() + 1e-9)
             noise2 += _conv2(_fit(nz, n, rng), h_n, n)
@@ -112,6 +114,8 @@ def mix(rng, speech, noises, impulse, impulse_onsets_s, bank, cfg: MixConfig, no
         noise2 = np.zeros((2, n), np.float32)
         for nz in noises:
             nz = _fit(nz, n, rng)
+            if nz.ndim == 2:   # measured pair: no synthetic arrival paths either
+                noise2 += nz.T; continue
             # independent short random filters per channel: different arrival paths
             for m in range(2):
                 taps = rng.normal(0, 1, 3); taps[0] = 1.0; taps[1:] *= 0.3
