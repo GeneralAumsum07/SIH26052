@@ -71,8 +71,10 @@ def _ref_dropout(m, seconds, ctx):
 
 
 def _ref_obstructed(m, _, ctx):
-    """Hand or fabric over the reference mic: muffled and attenuated, not silent."""
-    out = m.copy(); out[1] = (lfilter([0.08], [1.0, -0.92], m[1]) * 3.0).astype(np.float32); return out
+    """Hand or fabric over the reference mic: muffled and attenuated, not silent.
+    Unity-gain one-pole near 200 Hz measures about -6 dB broadband on clean speech. The frozen eval_r2 render used
+    a x3.0 makeup (+3 dB, i.e. muffled but louder); that set is kept as is, later renders get the attenuated form."""
+    out = m.copy(); out[1] = lfilter([0.08], [1.0, -0.92], m[1]).astype(np.float32); return out
 
 
 def _ref_gain(m, db, ctx):
@@ -80,8 +82,9 @@ def _ref_gain(m, db, ctx):
 
 
 def _ref_desync(m, samples, ctx):
-    """Clock slip / wiring delay between the two capture channels."""
-    out = m.copy(); out[1] = np.roll(m[1], int(samples)); return out
+    """Clock slip / wiring delay between the two capture channels: the reference arrives late, the gap is silence.
+    (The frozen eval_r2 render used np.roll, which wrapped the last 64 samples to the front.)"""
+    out = m.copy(); out[1] = np.concatenate([np.zeros(int(samples), np.float32), m[1, :-int(samples)]]); return out
 
 
 def _identity(m, _, ctx):
@@ -97,7 +100,8 @@ FAULTS = {
     "fault_refobstruct":    ({}, _ref_obstructed, None),
     "fault_refgain_-12dB":  ({}, _ref_gain, -12.0),
     "fault_refdesync":      ({}, _ref_desync, 64),
-    # bursts far above the training range: the shipped mixer caps peaks at +12 dB re speech RMS
+    # loud bursts: above the r1/r2 training range (peaks capped at +12 dB re speech RMS) but inside r3's [15, 45] dB draw,
+    # so for r3 these are in-distribution transient buckets, not generalisation tests
     "fault_burst_p24dB":    ({"impulse_peak_db": (24.0, 24.0)}, _identity, None),
     "fault_burst_p36dB":    ({"impulse_peak_db": (36.0, 36.0)}, _identity, None),
     "fault_burst_overload": ({"impulse_peak_db": (36.0, 36.0)}, _clip_primary, 0.25),

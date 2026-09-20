@@ -56,6 +56,18 @@ def _mark(metric, mean):
     return " ✓" if mean > TARGETS[metric] else " ✗"
 
 
+def _envelope(g):
+    """Lowest input SNR (dB) from which all target metrics pass at every higher SNR present; 'none' if the top fails."""
+    if len(g) == 0: return "-"
+    passed = {snr: all(np.nanmean(gs[m]) > TARGETS[m] for m in TARGETS) for snr, gs in g.groupby("snr_in")}
+    low = None
+    for snr in sorted(passed, reverse=True):   # walk down from the top until the first failure
+        if not passed[snr]: break
+        low = snr
+    if low is None: return "none"
+    return "met" if np.isinf(low) else f">= {low:g} dB"   # clean_inf has no SNR axis: it either passes or not
+
+
 def _cell(g, metrics=METRICS):
     """One system's row in the per-bucket table: SNR/SI-SDR/STOI/PESQ (✓/✗ against target) + recovery median."""
     if len(g) == 0: return "-"
@@ -95,6 +107,19 @@ def main():
         for m in metrics + ["snr_gain"]:
             t = ci(g[m]); cells.append(fmt(t) + _mark(m, t[0]))
         lines.append(f"| {sysname} | {len(g)} | " + " | ".join(cells) + " |")
+    # The nominal average hides a large pass region under the 0 dB bucket. Report the declared operating envelope:
+    # per noise class, the lowest input SNR from which every bucket up to +15 dB meets all three targets.
+    lines += ["", "## Operating envelope (lowest input SNR at which SNR_out>15 / STOI>0.85 / PESQ>2.5 all hold, and stay met above it)", "",
+              "| system | " + " | ".join(classes := sorted(df[df.fault.isna()].noise_class.dropna().unique())) + " |", "|---|" + "---|" * len(classes)]
+    for sysname, g in df[df.fault.isna()].groupby("system"):
+        lines.append(f"| {sysname} | " + " | ".join(_envelope(g[g.noise_class == c]) for c in classes) + " |")
+    burst = df[df.fault.fillna("").str.startswith("fault_burst")]
+    if len(burst):
+        # loud transients live only in the burst fault buckets; the number the project is about must not omit them
+        lines += ["", "## Transient-present envelope (fault_burst_* buckets: +24/+36 dB bursts and overload, input SNR 0/5 dB)", "",
+                  "| system | n | " + " | ".join(metrics) + " |", "|---|---|" + "---|" * len(metrics)]
+        for sysname, g in burst.groupby("system"):
+            lines.append(f"| {sysname} | {len(g)} | " + " | ".join(fmt(t := ci(g[m])) + _mark(m, t[0]) for m in metrics) + " |")
     if df.fault.notna().any():
         # fault buckets share seeds with fault_none, so each row reads as a delta against that reference clip set
         lines += ["", "## Reliability faults (outside the nominal envelope; same speech/noise/room per seed, fault is the only variable)", "",

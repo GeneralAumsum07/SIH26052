@@ -11,7 +11,7 @@ if [ "$round" = 3 ] || [ "$round" = 3b ]; then
   R3="vaani_full_r3 vaani_no_controller_r3 vaani_full_r3_nodsp"
   marker=ROUND3_DONE
   if [ "$round" = 3b ]; then
-    R3="vaani_full_r3_s1 vaani_full_r3_s2 vaani_no_controller_r3_s1 vaani_no_controller_r3_s2 vaani_full_r3_df1"
+    R3="vaani_full_r3_s1 vaani_full_r3_s2 vaani_no_controller_r3_s1 vaani_no_controller_r3_s2 vaani_full_r3_df1 vaani_full_r3_df1_s1 vaani_full_r3_df1_s2"
     marker=ROUND3B_DONE
   fi
   mkdir -p runs results_r2

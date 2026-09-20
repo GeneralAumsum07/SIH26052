@@ -35,6 +35,10 @@ case "$*" in
     name=${@: -1}; name=${name##*/}; name=${name%.yaml}
     mkdir -p "runs/$name"
     [ "$ROUND_TEST_FAILURE" != train ] || exit 1 ;;
+  *verify_eval_set.py*)
+    # the real gate recomputes the digest; the stub only needs to fail when the fixture says the set is wrong
+    [[ "$*" == *"data/eval_r2/test eda217ab2a38" ]] || exit 2
+    [ "$(cat data/eval_r2/test/EVALSET_HASH)" = eda217ab2a38 ] || exit 1 ;;
   *vaani.eval*)
     [ -f eval_lock ] || exit 2
     [[ "$*" == *"--asr --asr-device cuda --dnsmos"* ]] || exit 2
@@ -61,14 +65,15 @@ touch eval_lock
     if failure == "none":
         expected = ({"vaani_full_r3", "vaani_no_controller_r3", "vaani_full_r3_nodsp"}
                     if round == "3" else {"vaani_full_r3_s1", "vaani_full_r3_s2",
-                    "vaani_no_controller_r3_s1", "vaani_no_controller_r3_s2", "vaani_full_r3_df1"})
+                    "vaani_no_controller_r3_s1", "vaani_no_controller_r3_s2", "vaani_full_r3_df1",
+                    "vaani_full_r3_df1_s1", "vaani_full_r3_df1_s2"})
         assert {p.parent.name for p in (tmp_path / "runs").glob("*/DONE")} == expected
 
 
 @pytest.mark.parametrize("base,suffix,seed,order", [
     ("vaani_full_r3", "s1", 1, 3), ("vaani_full_r3", "s2", 2, 3),
     ("vaani_no_controller_r3", "s1", 1, 3), ("vaani_no_controller_r3", "s2", 2, 3),
-    ("vaani_full_r3", "df1", 0, 1),
+    ("vaani_full_r3", "df1", 0, 1), ("vaani_full_r3", "df1_s1", 1, 1), ("vaani_full_r3", "df1_s2", 2, 1),
 ])
 def test_round3b_configs_change_only_intended_axes(base, suffix, seed, order):
     root = Path(__file__).parents[1] / "configs/exp"
