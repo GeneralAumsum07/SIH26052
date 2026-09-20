@@ -41,6 +41,19 @@ sources:
     # scripts/run_fetch_queue.sh pulls p001-p020; fetch_data scans whatever has landed.
     download_dir: data/download/ears
     extract_to: data/download/ears/extracted
+  cadre:
+    # Cadre Gunshot Audio Forensics dataset (D2, NIJ grant 2016-DN-BX-0183): 20 firearms x 20 positions, Zoom H4N
+    # 96 kHz stereo, ~2 s per shot. Registration-gated page; scripts/fetch_cadre.sh pulls the 18 Zoom Box archives
+    # into data/download/cadre and this block only unzips them. crest_audit 2026-09-20: 19/20 folders 32-37 dB full /
+    # 22-28 dB event, 0 % clip; M16_Zoom (21.8 event) is dropped by the scan. Terms: as-is for any researcher, cite the grant.
+    download_dir: data/download/cadre
+    extract_to: data/raw/cadre
+  demand:
+    # DEMAND (Thiemann et al. 2013, Zenodo 1227121, CC BY-SA 4.0): 18 environments x 5 min, 16-mic grid at 16 kHz.
+    # scripts/fetch_demand.sh pulls the zips; the scan takes ch01+ch09 (measured ~11.9 cm apart from the diffuse-field
+    # coherence null, our rig's 12 cm) as one stereo row per environment - the only measured two-mic noise in the pool.
+    download_dir: data/download/demand
+    extract_to: data/raw/demand
   noisex92:
     # NOISEX-92 (D7, plan addendum 2026-09-20). Provenance: DRA Malvern 1992, mirrored by SPIB (spib.linse.ufsc.br,
     # .mat) and speechdnn/Noises (GitHub, .wav). The GitHub copies of leopard/m109/machinegun are 8 kHz/8-bit - those

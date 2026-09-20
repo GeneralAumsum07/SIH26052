@@ -154,3 +154,37 @@ def test_scan_noisex92_refuses_lossy_mirror_copies_and_never_labels_impulsive(tm
     sf.write(root / "leopard.wav", _white_noise(), 8000, subtype="PCM_U8")    # the GitHub mirror's leopard/m109/machinegun
     with pytest.raises(AssertionError):
         sources.scan_noisex92(root, tmp_path / "out")
+
+
+def test_scan_cadre_groups_by_firearm_and_skips_the_crest_failure(tmp_path):
+    # Cadre layout: <gun>/<Gun>_Zoom/ZM_<exp><A-D>_S<shot>.wav, 96 kHz stereo (H4N X/Y). One firearm = one split;
+    # M16_Zoom failed the crest gate (21.8 dB event) so the scan must drop it rather than label it impulsive.
+    root = tmp_path / "cadre"
+    for gun, sub in (("Glock_19", "Glock9_1_Zoom"), ("Glock_19", "Glock9_2_Zoom"), ("M16A1_AR15", "M16_Zoom")):
+        (root / gun / sub).mkdir(parents=True)
+        for f in ("ZM_041A_S01.wav", "ZM_101B_S02.wav"):
+            sf.write(root / gun / sub / f, np.stack([_white_noise(), _white_noise()], 1), 96000)
+    rows = sources.scan_cadre(root, tmp_path / "out")
+    assert len(rows) == 4 and not any("M16" in r["source_id"] for r in rows)
+    assert {r["group_id"] for r in rows} == {"cadre-Glock9_1_Zoom", "cadre-Glock9_2_Zoom"}
+    assert all(r["noise_class"] == "impulsive" and r["corpus"] == "cadre" and r["kind"] == "noise" for r in rows)
+    assert {r["source_id"] for r in rows} >= {"cadre:Glock9_1_Zoom/ZM_041A_S01", "cadre:Glock9_2_Zoom/ZM_101B_S02"}
+    assert all(sf.info(r["path"]).samplerate == 16000 and sf.info(r["path"]).channels == 1 for r in rows)
+
+
+def test_scan_demand_writes_the_12cm_pair_as_one_stereo_row_per_environment(tmp_path):
+    # DEMAND: <ENV>/ch01..ch16.wav, 16 kHz, 5 min. Diffuse-field coherence nulls (2026-09-20, DKITCHEN + NPARK)
+    # put ch01-ch09 at ~11.9 cm, our rig's spacing; that pair becomes a (n, 2) row the mixer uses verbatim.
+    root = tmp_path / "demand"
+    rng = np.random.default_rng(0)
+    for env in ("DKITCHEN", "NPARK"):
+        (root / env).mkdir(parents=True)
+        for c in range(1, 17):
+            sf.write(root / env / f"ch{c:02d}.wav", rng.standard_normal(16000).astype(np.float32) * (0.1 if c != 9 else 0.5), 16000)
+    rows = sources.scan_demand(root, tmp_path / "out")
+    assert {r["source_id"] for r in rows} == {"demand:DKITCHEN", "demand:NPARK"}
+    assert all(r["corpus"] == "demand" and r["kind"] == "noise" and r["group_id"] == "demand-" + r["source_id"][7:] for r in rows)
+    assert all(r["licence"] == "CC BY-SA 4.0" and r["noise_class"] in ("stationary", "changing") for r in rows)
+    x, sr = sf.read(rows[0]["path"], dtype="float32")
+    assert sr == 16000 and x.shape == (16000, 2)
+    assert x[:, 1].std() > 3 * x[:, 0].std()   # column 1 really is ch09, not a duplicate of ch01

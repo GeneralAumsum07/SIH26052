@@ -195,6 +195,44 @@ def scan_gunshots(root: Path, out: Path) -> list[dict]:
     return rows
 
 
+DEMAND_PAIR = (1, 9)   # diffuse-field coherence null at ~1.44 kHz in DKITCHEN and NPARK => ~11.9 cm, our rig's 12 cm
+
+
+def scan_demand(root: Path, out: Path, pair=DEMAND_PAIR) -> list[dict]:
+    """DEMAND (Thiemann et al. 2013, Zenodo 1227121, CC BY-SA 4.0): <ENV>/ch01..ch16.wav, 16 kHz, 5 min, 16-mic grid.
+    One stereo row per environment from the channel pair nearest our mic spacing; the mixer keeps a (n, 2) noise
+    row's inter-channel relation instead of spatialising it, so this is the only measured two-mic noise we have."""
+    rows = []
+    for env in sorted(p for p in root.iterdir() if p.is_dir() and (p / f"ch{pair[0]:02d}.wav").exists()):
+        dst = out / "demand" / (env.name + ".flac")
+        if not dst.exists():
+            chans = [sf.read(env / f"ch{c:02d}.wav", dtype="float32")[0] for c in pair]
+            x = np.stack(chans, 1)
+            dst.parent.mkdir(parents=True, exist_ok=True); sf.write(dst, x, SR, subtype="PCM_16")
+        x, _ = sf.read(dst, dtype="float32")
+        rows.append(_row(f"demand:{env.name}", "demand", "noise", f"demand-{env.name}", "", dst, len(x) / SR, "CC BY-SA 4.0",
+                         stationarity_class(x[:, 0], SR)))
+    return rows
+
+
+CADRE_CREST_FAIL = {"M16_Zoom"}   # crest_audit 2026-09-20: 31.4 full / 21.8 event, under the 22 dB event line
+
+
+def scan_cadre(root: Path, out: Path) -> list[dict]:
+    """Cadre Gunshot Audio Forensics dataset (NIJ 2016-DN-BX-0183, 2018): <gun>/<Gun>_Zoom/ZM_<exp><A-D>_S<shot>.wav,
+    96 kHz stereo from the Zoom H4N X/Y pair (phone recordings not taken: AGC). 20 firearms x 20 positions
+    (0.5-150 m). One firearm folder = one recording session = one split. Terms: as-is for any researcher, cite the grant."""
+    rows = []
+    for f in sorted(root.rglob("ZM_*.wav")):
+        arm = f.parent.name
+        if arm in CADRE_CREST_FAIL:
+            continue
+        dst = out / "cadre" / arm / (f.stem + ".flac")
+        dur = to_flac16k(f, dst) if not dst.exists() else sf.info(dst).duration
+        rows.append(_row(f"cadre:{arm}/{f.stem}", "cadre", "noise", f"cadre-{arm}", "", dst, dur, "NIJ 2016-DN-BX-0183 as-is", "impulsive"))
+    return rows
+
+
 def scan_drone(root: Path, out: Path) -> list[dict]:
     """DroneAudioDataset (Al-Emadi et al. 2019): <set>/<class>/<clip>.wav. Only the drone folders are taken;
     the 'unknown' folders are ESC-50 and Speech Commands noise already in the pool. Recorded indoors; no licence

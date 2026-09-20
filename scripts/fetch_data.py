@@ -116,6 +116,28 @@ def main():
         if any(root.rglob("*.wav")):
             manifests.write(sources.scan_ears(root, raw), mdir / "ears.parquet")
 
+    cad = cfg["sources"].get("cadre")
+    if cad:
+        # archives come from scripts/fetch_cadre.sh (Box shared links behind a registration page); unzip what landed
+        root = Path(cad["extract_to"]); root.mkdir(parents=True, exist_ok=True)
+        for zp in sorted(Path(cad["download_dir"]).glob("*_zoom.zip")):
+            if zp.with_name(zp.name + ".ok").exists():
+                extract(zp, root / zp.name[: -len("_zoom.zip")])
+        if any(root.rglob("ZM_*.wav")):
+            manifests.write(sources.scan_cadre(root, raw), mdir / "cadre.parquet")
+
+    dm = cfg["sources"].get("demand")
+    if dm:
+        root = Path(dm["extract_to"]); root.mkdir(parents=True, exist_ok=True)
+        for zp in sorted(Path(dm["download_dir"]).glob("*_16k.zip")):
+            env = zp.name[: -len("_16k.zip")]
+            # zips carry their own <ENV>/ folder and all share `root`, so extract()'s single .done marker cannot gate them
+            if zp.with_name(zp.name + ".ok").exists() and not (root / env / "ch01.wav").exists():
+                with zipfile.ZipFile(zp) as z:
+                    z.extractall(root)
+        if any(root.glob("*/ch01.wav")):
+            manifests.write(sources.scan_demand(root, raw), mdir / "demand.parquet")
+
     nx = cfg["sources"].get("noisex92")
     if nx and Path(nx["dir"]).exists():
         # D7: 15 files fetched by hand (12 wavs from the speechdnn mirror, leopard/m109/machinegun from SPIB .mat);
