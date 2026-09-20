@@ -35,3 +35,21 @@ def test_selection_is_deterministic_and_gated():
     assert sc.select(dict(reversed(list(r.items()))), "postfilter")[0] == "b"   # insertion order does not matter
     assert sc.select({"z": _res(0.5, 0.05, 0.85, False)}, "postfilter") == (None, None)
     r["e"] = _res(0.5, 0.06, 0.70); assert sc.select(r, "postfilter")[0] == "e"   # PESQ breaks the SNR tie before the floor
+
+
+def test_refiner_kind_names_and_selects_a_cascade_setting():
+    s = {"cascade": "runs/x/best.pt"}
+    assert sc.setting_name(s) == "refiner" and sc.setting_name(None) == "anchor"
+    gates = {g: True for g in sc.SCREEN_GATES}; gates["paired_uncertainty"] = False
+    r = {"refiner": (s, {"gates": gates, "nominal": {"d_snr_out": {"mean": 0.6}, "d_pesq_wb": {"mean": 0.06}}})}
+    assert sc.select(r, "refiner")[0] == "refiner"                     # no gain_floor key: the sort must not KeyError
+
+
+def test_refiner_screen_refuses_missing_or_foreign_checkpoint(tmp_path):
+    import torch
+    proto = tmp_path / "anchor.json"; proto.write_text(json.dumps(_proto()))
+    with pytest.raises(SystemExit, match="--checkpoint"):
+        sc.screen("refiner", proto, tmp_path, "val", tmp_path / "out", 1)
+    ck = tmp_path / "best.pt"; torch.save({"model": {}, "config": {"model": "vaani_cascade", "first_stage": {"sha256": "b" * 64}}}, ck)
+    with pytest.raises(SystemExit, match="another first stage"):
+        sc.screen("refiner", proto, tmp_path, "val", tmp_path / "out", 1, checkpoint=ck)

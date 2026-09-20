@@ -19,16 +19,18 @@ from vaani import metrics, tier46_gate  # noqa: E402
 from vaani.data.dataset import RenderedDataset  # noqa: E402
 from vaani.dsp import stft  # noqa: E402
 from vaani.dsp.postfilter import DEFAULTS, ResidualPostFilter  # noqa: E402
-from vaani.eval import _ckpt_spectrum_fn  # noqa: E402
+from vaani.eval import _ckpt_spectrum_fn, enhance_fn  # noqa: E402
 
-GRID = {"postfilter": [dict(gain_floor=g, noise_bias=b) for g, b in itertools.product((0.70, 0.85), (1.0, 1.5))]}
+GRID = {"postfilter": [dict(gain_floor=g, noise_bias=b) for g, b in itertools.product((0.70, 0.85), (1.0, 1.5))],
+        "refiner": None}   # one trained cascade checkpoint, passed with --checkpoint
 SCREEN_GATES = ("utility", "intelligibility", "per_bucket", "severe_burst", "recovery")   # paired_uncertainty is reported, not required, on val
 COLS = ["system", "id", "bucket", "noise_class", "snr_in", "clipped", "ref_dropout", "impulse_peak_db", "fault", "speech_source",
         "snr_out", "si_sdr", "stoi", "pesq_wb", "recovery_s"]
 
 
 def setting_name(s):
-    return "anchor" if s is None else "gf%.2f_nb%.1f" % (s["gain_floor"], s["noise_bias"])
+    if s is None: return "anchor"
+    return "refiner" if "cascade" in s else "gf%.2f_nb%.1f" % (s["gain_floor"], s["noise_bias"])
 
 
 def cache_key(proto, split):
@@ -56,13 +58,15 @@ def open_cache(cache_dir: Path, proto, split):
 
 
 # ---- worker side -------------------------------------------------------------------------------------------------
-_ds = _spec = _cache = _settings = None
+_ds = _spec = _cache = _settings = _casc = None
 
 
 def _init(root, ckpt, cache_dir, settings):
-    global _ds, _spec, _cache, _settings
+    global _ds, _spec, _cache, _settings, _casc
     torch.set_num_threads(1)
     _ds = RenderedDataset(root); _spec, _ = _ckpt_spectrum_fn(ckpt, device="cpu"); _cache = Path(cache_dir); _settings = settings
+    cas = [s["cascade"] for s in settings if "cascade" in s]
+    _casc = enhance_fn(f"cascade:{cas[0]}", device="cpu") if cas else None   # the refiner runs its own frozen stage + DSP, no cached spectra
 
 
 def _spectrum(mix, path: Path):
@@ -86,14 +90,15 @@ def _work(i):
     yt = _spectrum(it["twin"].numpy(), _cache / f"{stem}.twin.npz") if "twin" in it and meta.get("impulse_onsets_s") else None
     rows = []
     for s in [None] + list(_settings):
-        est = _wave(y, s, mix.shape[1])
+        est = _casc(mix) if s is not None and "cascade" in s else _wave(y, s, mix.shape[1])
         row = dict(system=setting_name(s), id=meta.get("id"), bucket=meta.get("bucket"), noise_class=meta.get("noise_class"),
                    snr_in=meta.get("snr_db"), clipped=meta.get("clipped"), ref_dropout=meta.get("ref_dropout"),
                    impulse_peak_db=meta.get("impulse_peak_db"), fault=meta.get("fault"), speech_source=meta.get("speech_source"),
                    snr_out=metrics.snr_db(clean, est), si_sdr=metrics.si_sdr_db(clean, est),
                    stoi=metrics.stoi(clean, est), pesq_wb=metrics.pesq_wb(clean, est), recovery_s=float("nan"))
         if yt is not None:
-            row["recovery_s"] = metrics.recovery_time_s(est, _wave(yt, s, it["twin"].shape[1]), meta["impulse_onsets_s"][0])
+            twin = _casc(it["twin"].numpy()) if s is not None and "cascade" in s else _wave(yt, s, it["twin"].shape[1])
+            row["recovery_s"] = metrics.recovery_time_s(est, twin, meta["impulse_onsets_s"][0])
         rows.append(row)
     return rows
 
@@ -104,12 +109,18 @@ def select(results, kind):
     gates; ties by dPESQ, then higher gain floor, then name. Returns (name, setting) or (None, None)."""
     ok = [(n, s, r) for n, (s, r) in results.items() if all(r["gates"].get(g, False) for g in SCREEN_GATES)]
     if not ok: return None, None
-    ok.sort(key=lambda t: (-t[2]["nominal"]["d_snr_out"]["mean"], -t[2]["nominal"]["d_pesq_wb"]["mean"], -t[1]["gain_floor"], t[0]))
+    ok.sort(key=lambda t: (-t[2]["nominal"]["d_snr_out"]["mean"], -t[2]["nominal"]["d_pesq_wb"]["mean"], -t[1].get("gain_floor", 0), t[0]))
     return ok[0][0], ok[0][1]
 
 
-def screen(kind, protocol_path, eval_root, split, out_dir, workers, grid=None, check_split=True):
+def screen(kind, protocol_path, eval_root, split, out_dir, workers, grid=None, check_split=True, checkpoint=None):
     proto = json.loads(Path(protocol_path).read_text()); out_dir = Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
+    if kind == "refiner":
+        if not checkpoint: raise SystemExit("refiner screen needs --checkpoint <cascade best.pt>")
+        ck = torch.load(checkpoint, map_location="cpu", weights_only=True)
+        if ck["config"].get("first_stage", {}).get("sha256") != proto["anchor"]["sha256"]:
+            raise SystemExit(f"{checkpoint} was trained on another first stage than the protocol anchor; refusing to screen")
+        grid = [{"cascade": str(checkpoint)}]
     if split == "test": raise SystemExit("selection runs on val only; test is the frozen benchmark")
     root = Path(eval_root) / split
     if check_split:   # the val files must be the ones frozen in anchor.json; tuning on drifted data is not a screen
@@ -139,8 +150,11 @@ def screen(kind, protocol_path, eval_root, split, out_dir, workers, grid=None, c
     if chosen is None:
         print("no setting passed the screen gates on val; the post-filter experiment stops here (nothing is evaluated on test)")
         return None
-    sel = {"base_checkpoint": ckpt, "postfilter": {**{k: v for k, v in DEFAULTS.items() if k != "epsilon"}, **chosen},
-           "provenance": {"screen": (out_dir / "summary.json").as_posix(), "anchor_sha256": proto["anchor"]["sha256"], "cache_key": key, "selected": name}}
+    prov = {"screen": (out_dir / "summary.json").as_posix(), "anchor_sha256": proto["anchor"]["sha256"], "cache_key": key, "selected": name}
+    if kind == "refiner":
+        sel = {"cascade_checkpoint": chosen["cascade"], "eval_system": f"cascade:{chosen['cascade']}", "provenance": prov}
+    else:
+        sel = {"base_checkpoint": ckpt, "postfilter": {**{k: v for k, v in DEFAULTS.items() if k != "epsilon"}, **chosen}, "provenance": prov}
     sel_path = out_dir.parent / f"{kind}.selected.yaml"
     if sel_path.exists(): raise SystemExit(f"{sel_path} already exists; a pre-registered selection is never overwritten")
     sel_path.write_text(yaml.safe_dump(sel, sort_keys=False))
@@ -152,8 +166,9 @@ def main():
     ap = argparse.ArgumentParser(); ap.add_argument("kind", choices=list(GRID))
     ap.add_argument("--protocol", default="results_r2/tier46/anchor.json"); ap.add_argument("--eval-root", default="data/eval_r2")
     ap.add_argument("--split", default="val"); ap.add_argument("--out", required=True); ap.add_argument("--workers", type=int, default=8)
+    ap.add_argument("--checkpoint", help="refiner: the trained cascade best.pt")
     a = ap.parse_args()
-    screen(a.kind, a.protocol, a.eval_root, a.split, a.out, a.workers)
+    screen(a.kind, a.protocol, a.eval_root, a.split, a.out, a.workers, checkpoint=a.checkpoint)
 
 
 if __name__ == "__main__":
