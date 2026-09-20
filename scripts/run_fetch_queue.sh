@@ -27,7 +27,7 @@ fetch https://zenodo.org/api/records/7004819/files/edge-collected-gunshot-audio.
 
 # drone (attribution accepted 2026-09-20) + the first six EARS speakers: what r3 waits for (~4 GB)
 fetch https://github.com/saraalemadi/DroneAudioDataset/archive/master.zip data/download/drone/master.zip
-for i in $(seq -w 1 6); do fetch $EARS/p0$i.zip data/download/ears/p0$i.zip; done
+for i in $(seq -f %03g 1 6); do fetch $EARS/p$i.zip data/download/ears/p$i.zip; done  # seq -w 1 6 gave p01 (404)
 uv run python scripts/fetch_data.py --only drone,ears > data/download/fetch_drone.log 2>&1
 echo "$(date +%H:%M) r3 manifests scanned (drone + ears p001-p006)" >> "$LOG"
 
@@ -36,7 +36,7 @@ DNS1="freesound_001 audioset_000 audioset_001"
 for s in $DNS1; do fetch $B/datasets_fullband.noise_fullband.$s.tar.bz2 data/download/dns/datasets_fullband.noise_fullband.$s.tar.bz2; done
 uv run python scripts/fetch_data.py --dns-shards $(for s in $DNS1; do echo $B/datasets_fullband.noise_fullband.$s.tar.bz2; done) > data/download/fetch_dns.log 2>&1
 
-for i in $(seq -w 7 20); do fetch $EARS/p0$i.zip data/download/ears/p0$i.zip; done
+for i in $(seq -f %03g 7 20); do fetch $EARS/p$i.zip data/download/ears/p$i.zip; done
 uv run python scripts/fetch_data.py --only ears > data/download/fetch_ears.log 2>&1
 
 # remaining audioset shards last; each ~1-5 GB
