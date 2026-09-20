@@ -8,3 +8,10 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 .obsidian/
+
+# eval runtime state: regenerable from the test split + checkpoints; per-system CSVs and matrix.md stay tracked
+results*/asr/
+results*/*.log
+results*/*DONE
+results*/.eval_report.lock
+results*/*.partial*.csv
