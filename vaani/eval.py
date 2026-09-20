@@ -12,7 +12,7 @@ from tqdm import tqdm
 from vaani import metrics
 from vaani.data.dataset import RenderedDataset
 from vaani.dsp import pipeline, stft
-from vaani.models import baselines
+from vaani.models import baselines, cascade
 from vaani.train import build_model
 
 
@@ -33,9 +33,13 @@ def enhance_fn(spec: str, device=None):
             zt = torch.view_as_real(torch.from_numpy(z))[None].to(out.device)
             return stft.istft(zt, length=mix.shape[1])[0].cpu().numpy()
         return f
-    if not spec.startswith("ckpt:"):
+    if spec.startswith("cascade:"):   # Tier 4.6 frozen first stage + refiner; one self-contained checkpoint
+        spec_fn, cfg = _ckpt_spectrum_fn(spec[8:], device)
+        if cfg["model"] != cascade.MODEL_NAME: raise ValueError(f"{spec[8:]} is a {cfg['model']!r} checkpoint, not a cascade")
+    elif spec.startswith("ckpt:"):
+        spec_fn, _ = _ckpt_spectrum_fn(spec[5:], device)
+    else:
         return baselines.get(spec).enhance
-    spec_fn, _ = _ckpt_spectrum_fn(spec[5:], device)
 
     def f(mix):
         return stft.istft(spec_fn(mix), length=mix.shape[1])[0].cpu().numpy()
@@ -46,7 +50,8 @@ def _ckpt_spectrum_fn(path, device=None):
     """The checkpoint's full output spectrum (mask + deep-filter taps), still on `device`; iSTFT is the caller's."""
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     ck = torch.load(path, map_location="cpu", weights_only=True); cfg = ck["config"]
-    m = build_model(cfg["model"], model_cfg=cfg.get("model_cfg")).to(device); m.load_state_dict(ck["model"]); m.eval()
+    m = cascade.FrozenCascade.from_config(cfg) if cfg["model"] == cascade.MODEL_NAME else build_model(cfg["model"], model_cfg=cfg.get("model_cfg"))
+    m = m.to(device); m.load_state_dict(ck["model"]); m.eval()
 
     @torch.no_grad()
     def spec_of(mix):

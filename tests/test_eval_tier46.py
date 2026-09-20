@@ -19,3 +19,17 @@ def test_unity_postfilter_matches_ckpt_path(tmp_path):
     y.write_text(yaml.safe_dump({"base_checkpoint": ANCHOR.as_posix(), "postfilter": {"gain_floor": 0.7}}))
     got2 = ev.enhance_fn(f"post:{y.as_posix()}", device="cpu")(mix)
     assert np.abs(got2 - ref).max() > 1e-4 and np.abs(got2[:256 * 14] - ref[:256 * 14]).max() < 1e-6
+
+
+@pytest.mark.skipif(not (CLIP.exists() and ANCHOR.exists()), reason="needs the rendered eval_r2 split and the frozen anchor")
+def test_zero_init_cascade_matches_ckpt_path(tmp_path):
+    import torch
+    from vaani.models.cascade import FrozenCascade
+    c, cfg = FrozenCascade.from_first_stage(ANCHOR); ck = tmp_path / "cascade.pt"
+    torch.save({"model": c.state_dict(), "config": cfg, "step": 0}, ck)
+    mix = sf.read(CLIP, dtype="float32")[0].T
+    ref = ev.enhance_fn(f"ckpt:{ANCHOR.as_posix()}", device="cpu")(mix)
+    got = ev.enhance_fn(f"cascade:{ck.as_posix()}", device="cpu")(mix)
+    assert got.shape == ref.shape and np.abs(got - ref).max() < 1e-6
+    with pytest.raises(ValueError):
+        ev.enhance_fn(f"cascade:{ANCHOR.as_posix()}", device="cpu")
