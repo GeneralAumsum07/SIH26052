@@ -213,7 +213,7 @@ def main(config_path):
         if cfg.get("max_steps") and step >= cfg["max_steps"]:
             break
     # tap-weight norm: a null df result must be diagnosable (untrained taps) rather than believed
-    df_norm = float(sum(p.norm() ** 2 for n, p in model.named_parameters() if n.startswith("df.")) ** 0.5)
+    df_norm = float(sum(p.detach().norm() ** 2 for n, p in model.named_parameters() if n.startswith("df.")) ** 0.5)
     run_info.update(end=time.time(), wall_s=time.time() - t_start, best_val_stoi=best, steps=step, skipped_steps=skipped, df_norm=df_norm)
     json.dump(run_info, open(run_dir / "run.json", "w"), indent=2)
     tb.close()
