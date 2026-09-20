@@ -5,7 +5,7 @@
 # Order: gunshot zip -> DNS freesound_001 + audioset_000-001 -> EARS p001-p020 -> drone -> audioset_002-006.
 set -u
 cd "$(dirname "$0")/.."
-export PATH="$PATH:/c/Users/Rachit/AppData/Local/Microsoft/WinGet/Links"
+export PATH="$PATH:/c/Users/Rachit/AppData/Local/Microsoft/WinGet/Links:/c/Users/Rachit/AppData/Local/Microsoft/WinGet/Packages/aria2.aria2_Microsoft.Winget.Source_8wekyb3d8bbwe/aria2-1.37.0-win-64bit-build1"
 LOG=data/download/queue.log
 B=https://dns4public.blob.core.windows.net/dns4archive/datasets_fullband/noise_fullband
 
