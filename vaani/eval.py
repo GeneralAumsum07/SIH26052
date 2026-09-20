@@ -42,18 +42,22 @@ def enhance_fn(spec: str, device=None):
 _ds = _fn = _sys = None
 
 
-def _init(system, root, split):
+def _init(system, root, split, dnsmos=False):
     # per-process state: the tiny model on CPU (no 8x CUDA contexts) and one torch thread so 8 workers don't oversubscribe
-    global _ds, _fn, _sys
+    global _ds, _fn, _sys, _mos
     torch.set_num_threads(1)
     _ds, _fn, _sys = RenderedDataset(root / split), enhance_fn(system, device="cpu"), system
+    _mos = None
+    if dnsmos:
+        from vaani.dnsmos import DNSMOS; _mos = DNSMOS()
 
 
 def _nan_row(meta):
     return dict(system=_sys, id=meta.get("id"), bucket=meta.get("bucket"), noise_class=meta.get("noise_class"),
                 snr_in=meta.get("snr_db"), clipped=meta.get("clipped"), ref_dropout=meta.get("ref_dropout"),
                 impulse_peak_db=meta.get("impulse_peak_db"), fault=meta.get("fault"), speech_source=meta.get("speech_source"), snr_out=float("nan"), si_sdr=float("nan"),
-                stoi=float("nan"), pesq_wb=float("nan"), recovery_s=float("nan"), asr_text="")
+                stoi=float("nan"), pesq_wb=float("nan"), dnsmos_sig=float("nan"), dnsmos_bak=float("nan"), dnsmos_ovrl=float("nan"),
+                recovery_s=float("nan"), asr_text="")
 
 
 def _work(i):
@@ -66,6 +70,8 @@ def _work(i):
         row = _nan_row(meta)
         row.update(snr_out=metrics.snr_db(clean, est), si_sdr=metrics.si_sdr_db(clean, est),
                    stoi=metrics.stoi(clean, est), pesq_wb=metrics.pesq_wb(clean, est))
+        if _mos is not None:   # non-intrusive P.835 on the enhanced output only
+            m = _mos(est); row.update(dnsmos_sig=m["sig"], dnsmos_bak=m["bak"], dnsmos_ovrl=m["ovrl"])
         if "twin" in it and meta["impulse_onsets_s"]:
             row["recovery_s"] = metrics.recovery_time_s(est, _fn(it["twin"].numpy()), meta["impulse_onsets_s"][0])
         return row, est
@@ -82,6 +88,7 @@ def main():
     ap.add_argument("--asr-device", default="cpu", help="cpu|cuda; ASR is not in the deployed path, so cuda only speeds up eval")
     ap.add_argument("--workers", type=int, default=8, help="CPU processes for DSP+metrics (0 = in-process, for debugging); Whisper stays in this process")
     ap.add_argument("--asr-threads", type=int, default=4, help="concurrent Whisper decodes (GPU batches them)")
+    ap.add_argument("--dnsmos", action="store_true", help="also score DNSMOS P.835 SIG/BAK/OVRL (deploy/dnsmos/sig_bak_ovr.onnx)")
     a = ap.parse_args()
     root = Path(a.eval_root); n = len(RenderedDataset(root / a.split))
     asr = None
@@ -92,12 +99,12 @@ def main():
             print("faster-whisper not installed; --asr rows will be NaN")  # never a hard dependency
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
     cols = ["system", "id", "bucket", "noise_class", "snr_in", "clipped", "ref_dropout", "impulse_peak_db", "fault", "speech_source",
-            "snr_out", "si_sdr", "stoi", "pesq_wb", "recovery_s", "asr_text"]
+            "snr_out", "si_sdr", "stoi", "pesq_wb", "dnsmos_sig", "dnsmos_bak", "dnsmos_ovrl", "recovery_s", "asr_text"]
     with open(a.out, "w", encoding="utf-8", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=cols); w.writeheader()
         # imap keeps CSV order deterministic; results stream back so ASR overlaps the workers' DSP/PESQ
-        if a.workers == 0: _init(a.system, root, a.split)
-        pool_cm = Pool(a.workers, initializer=_init, initargs=(a.system, root, a.split)) if a.workers else nullcontext()
+        if a.workers == 0: _init(a.system, root, a.split, a.dnsmos)
+        pool_cm = Pool(a.workers, initializer=_init, initargs=(a.system, root, a.split, a.dnsmos)) if a.workers else nullcontext()
         with pool_cm as pool, ThreadPoolExecutor(a.asr_threads) as tp:
             stream = pool.imap(_work, range(n)) if pool else map(_work, range(n))
             def transcribe(item):

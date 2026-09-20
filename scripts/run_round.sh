@@ -14,7 +14,7 @@ if [ "$round" = 3 ]; then
   done
   wait
   for r in vaani_full_r3 vaani_no_controller_r3 vaani_full_r3_nodsp; do
-    [ -f results_r2/$r.csv ] || uv run python -m vaani.eval --system ckpt:runs/$r/best.pt --split test --eval-root data/eval_r2 --out results_r2/$r.csv --asr --asr-device cuda > results_r2/eval_$r.log 2>&1
+    [ -f results_r2/$r.csv ] || uv run python -m vaani.eval --system ckpt:runs/$r/best.pt --split test --eval-root data/eval_r2 --out results_r2/$r.csv --asr --asr-device cuda --dnsmos > results_r2/eval_$r.log 2>&1
   done
   uv run python -m vaani.report results_r2/*.csv --asr-ref results_r2/asr/clean.csv --out results_r2/matrix.md > results_r2/report.log 2>&1
   echo "round3 done $(date)" > results_r2/ROUND3_DONE; exit 0

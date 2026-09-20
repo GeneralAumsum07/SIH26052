@@ -6,7 +6,7 @@ import argparse, re
 
 import numpy as np, pandas as pd
 
-METRICS = ["snr_out", "si_sdr", "stoi", "pesq_wb"]
+METRICS = ["snr_out", "si_sdr", "stoi", "pesq_wb", "dnsmos_ovrl"]  # dnsmos_ovrl only where the CSV has it (r3+, --dnsmos)
 # problem-statement targets (SIH26052): SNR>15 dB, STOI>0.85, PESQ>2.5
 TARGETS = {"snr_out": 15.0, "stoi": 0.85, "pesq_wb": 2.5}
 ENGLISH_PREFIXES = ("ls:", "ears:")  # source_id prefixes whose speech is English; everything else reports WER as n/a
@@ -74,6 +74,7 @@ def main():
     a = ap.parse_args()
     df = pd.concat([pd.read_csv(p, dtype={"id": str}) for p in a.csvs])
     metrics = list(METRICS)
+    for m in metrics: df[m] = df[m] if m in df else np.nan   # r1/r2 CSVs predate dnsmos_ovrl; they read n/a
     if a.asr_ref:
         df = add_wer(df, a.asr_ref); metrics.append("wer")
     # older CSVs predate the fault column; treat them as fault-free
