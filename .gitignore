@@ -11,7 +11,8 @@ __pycache__/
 
 # eval runtime state: regenerable from the test split + checkpoints; per-system CSVs and matrix.md stay tracked
 results*/asr/
-results*/*.log
+results*/**/*.log
 results*/*DONE
 results*/.eval_report.lock
 results*/*.partial*.csv
+results*/**/spectra/

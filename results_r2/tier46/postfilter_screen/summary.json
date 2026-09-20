@@ -1,0 +1,193 @@
+{
+ "kind": "postfilter",
+ "split": "val",
+ "cache_key": "7ff8329347d60d9f",
+ "anchor_sha256": "9eb956addd21fdab40bc39dee461ec05e83cf0399b43fd2946473bb6abf2e70c",
+ "selected": null,
+ "settings": {
+  "gf0.70_nb1.0": {
+   "setting": {
+    "gain_floor": 0.7,
+    "noise_bias": 1.0
+   },
+   "gates": {
+    "utility": false,
+    "paired_uncertainty": false,
+    "intelligibility": true,
+    "per_bucket": false,
+    "severe_burst": false,
+    "recovery": true
+   },
+   "nominal": {
+    "d_snr_out": {
+     "mean": -0.4467676563046546,
+     "lo": -0.5461109606093952,
+     "hi": -0.36667006423571336
+    },
+    "d_stoi": {
+     "mean": -0.0011873730675507463,
+     "lo": -0.001285779126638848,
+     "hi": -0.0010918650195212596
+    },
+    "d_pesq_wb": {
+     "mean": 5.915872088514592e-05,
+     "lo": -0.005746352044128463,
+     "hi": 0.00531385855462575
+    },
+    "candidate_means": {
+     "snr_out": 13.575152823372443,
+     "stoi": 0.9130613642560808,
+     "pesq_wb": 2.329625453129773
+    },
+    "targets_met": false
+   },
+   "aggregates": {
+    "severe_d_snr_out": -1.4939715624684393,
+    "burst_d_snr_out": NaN
+   },
+   "recovery": {
+    "unrecovered_anchor": 15,
+    "unrecovered_candidate": 15,
+    "median_delta_s": 0.0
+   }
+  },
+  "gf0.70_nb1.5": {
+   "setting": {
+    "gain_floor": 0.7,
+    "noise_bias": 1.5
+   },
+   "gates": {
+    "utility": false,
+    "paired_uncertainty": false,
+    "intelligibility": true,
+    "per_bucket": false,
+    "severe_burst": false,
+    "recovery": true
+   },
+   "nominal": {
+    "d_snr_out": {
+     "mean": -0.5652177816851599,
+     "lo": -0.6717022997407683,
+     "hi": -0.47582214472636536
+    },
+    "d_stoi": {
+     "mean": -0.001372194718691898,
+     "lo": -0.0014741120560283066,
+     "hi": -0.001271686181056963
+    },
+    "d_pesq_wb": {
+     "mean": -0.0014807743230167497,
+     "lo": -0.008753927176741299,
+     "hi": 0.004898608972923943
+    },
+    "candidate_means": {
+     "snr_out": 13.456702697991938,
+     "stoi": 0.9128765426049397,
+     "pesq_wb": 2.328085520085871
+    },
+    "targets_met": false
+   },
+   "aggregates": {
+    "severe_d_snr_out": -1.6528934093919578,
+    "burst_d_snr_out": NaN
+   },
+   "recovery": {
+    "unrecovered_anchor": 15,
+    "unrecovered_candidate": 15,
+    "median_delta_s": 0.0
+   }
+  },
+  "gf0.85_nb1.0": {
+   "setting": {
+    "gain_floor": 0.85,
+    "noise_bias": 1.0
+   },
+   "gates": {
+    "utility": false,
+    "paired_uncertainty": false,
+    "intelligibility": true,
+    "per_bucket": true,
+    "severe_burst": false,
+    "recovery": true
+   },
+   "nominal": {
+    "d_snr_out": {
+     "mean": -0.22473890792029025,
+     "lo": -0.30487816732654094,
+     "hi": -0.1688323237747952
+    },
+    "d_stoi": {
+     "mean": -0.00038954825636219626,
+     "lo": -0.00043365353360130853,
+     "hi": -0.0003459427260338053
+    },
+    "d_pesq_wb": {
+     "mean": 0.0038543023784890955,
+     "lo": -0.000385678709312522,
+     "hi": 0.007835047103709704
+    },
+    "candidate_means": {
+     "snr_out": 13.797181571756807,
+     "stoi": 0.9138591890672692,
+     "pesq_wb": 2.333420596787377
+    },
+    "targets_met": false
+   },
+   "aggregates": {
+    "severe_d_snr_out": -1.1214634841728874,
+    "burst_d_snr_out": NaN
+   },
+   "recovery": {
+    "unrecovered_anchor": 15,
+    "unrecovered_candidate": 15,
+    "median_delta_s": 0.0
+   }
+  },
+  "gf0.85_nb1.5": {
+   "setting": {
+    "gain_floor": 0.85,
+    "noise_bias": 1.5
+   },
+   "gates": {
+    "utility": false,
+    "paired_uncertainty": false,
+    "intelligibility": true,
+    "per_bucket": true,
+    "severe_burst": false,
+    "recovery": true
+   },
+   "nominal": {
+    "d_snr_out": {
+     "mean": -0.27365915454332396,
+     "lo": -0.35747958299368643,
+     "hi": -0.21333987900123672
+    },
+    "d_stoi": {
+     "mean": -0.00042636913084560384,
+     "lo": -0.0004703909049301173,
+     "hi": -0.00038297596772081903
+    },
+    "d_pesq_wb": {
+     "mean": 0.004423467421261201,
+     "lo": 0.00020679817854124153,
+     "hi": 0.00837602206788166
+    },
+    "candidate_means": {
+     "snr_out": 13.748261325133774,
+     "stoi": 0.9138223681927857,
+     "pesq_wb": 2.333989761830149
+    },
+    "targets_met": false
+   },
+   "aggregates": {
+    "severe_d_snr_out": -1.2146761031996196,
+    "burst_d_snr_out": NaN
+   },
+   "recovery": {
+    "unrecovered_anchor": 15,
+    "unrecovered_candidate": 15,
+    "median_delta_s": 0.0
+   }
+  }
+ }
+}
