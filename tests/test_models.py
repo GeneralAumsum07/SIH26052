@@ -60,3 +60,19 @@ def test_gtcrn_cuda_smoke():
     with torch.no_grad():
         y = m(x)
     assert y.shape == x.shape
+
+
+def test_hgtcrn_uses_both_mics():
+    # H-GTCRN is the one comparator that reads the reference mic: swapping the mics must change the output.
+    # A synthetic tone is suppressed as non-speech, so the energy check needs a real rendered clip (skipped if absent).
+    import pytest, soundfile as sf
+    from pathlib import Path
+    f = Path("data/eval_r2/test/stationary_5/0000.mix.wav")
+    if not f.exists(): pytest.skip("eval_r2 not rendered")
+    mix = sf.read(f, dtype="float32")[0].T
+    for name in ("h_gtcrn", "h_gtcrn_iva"):
+        y = get(name).enhance(mix)
+        assert y.shape == (mix.shape[1],) and np.isfinite(y).all()
+        assert not np.allclose(y, get(name).enhance(mix[::-1].copy()), atol=1e-4)
+    # the masking-on-noisy variant must keep speech-level energy; the IVA variant is known to collapse on our geometry
+    assert np.sqrt(np.mean(get("h_gtcrn").enhance(mix) ** 2)) > 0.3 * np.sqrt(np.mean(mix[0] ** 2))

@@ -52,6 +52,27 @@ class RNNoise:
         return np.pad(y, (0, mix.shape[1] - len(y)))   # rnnoise_demo drops the trailing partial 480-sample frame
 
 
+class HGTCRN:
+    """H-GTCRN (Wang et al., Interspeech 2025): FD-WPE + AuxIVA front end and a dual-channel GTCRN mask, 16 kHz, ~49k params.
+    The only comparator that consumes both mics, so it is the fairest external reference. Labelled: trained on the authors'
+    simulated two-mic data, not ours; not tuned. `variant` picks what the CRM multiplies: the raw mixture ("noisy", the
+    authors' more robust default) or the IVA-selected speech channel ("iva")."""
+    def __init__(self, variant="noisy"):
+        import importlib
+        mod = importlib.import_module(f"vaani.models.hgtcrn.masking_on_{variant}")
+        self.m = mod.GTCRN_IVA().eval()
+        ck = torch.load(CKPT.with_name(f"hgtcrn_masking_on_{variant}.tar"), map_location="cpu", weights_only=True)
+        self.m.load_state_dict(ck["model"])
+
+    def enhance(self, mix):
+        with torch.no_grad():
+            return self.m(torch.from_numpy(np.ascontiguousarray(mix))[None])[0].numpy().astype(np.float32)
+
+
+class HGTCRNIva(HGTCRN):
+    def __init__(self): super().__init__("iva")
+
+
 class DeepFilterNet3:
     """Published single-channel comparator (Schröter et al. 2023: 48 kHz, ~2.3M params, trained on DNS4).
     Labelled in reports: mono, 48 kHz model, ~45x our parameter budget. Lives in `.venv-dfn` (py3.11, numpy<2,
@@ -82,4 +103,4 @@ class DeepFilterNet3:
 
 def get(name: str):
     return {"raw": Raw, "nlms_only": NlmsOnly, "gtcrn_pretrained": GtcrnPretrained, "rnnoise": RNNoise,
-            "deepfilternet3": DeepFilterNet3}[name]()
+            "deepfilternet3": DeepFilterNet3, "h_gtcrn": HGTCRN, "h_gtcrn_iva": HGTCRNIva}[name]()
