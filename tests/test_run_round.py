@@ -8,7 +8,7 @@ import pytest
 import yaml
 
 
-@pytest.mark.parametrize("round", ["3", "3b", "3c", "3d"])
+@pytest.mark.parametrize("round", ["3", "3b", "3c", "3d", "4"])
 @pytest.mark.parametrize("failure", ["rir", "train", "hash", "lock", "eval", "report", "none"])
 def test_round3_completion_requires_success(tmp_path, failure, round):
     bash = shutil.which("bash")
@@ -67,7 +67,8 @@ touch eval_lock
                     "3b": {"vaani_full_r3_s1", "vaani_full_r3_s2", "vaani_no_controller_r3_s1",
                            "vaani_no_controller_r3_s2", "vaani_full_r3_df1", "vaani_full_r3_df1_s1", "vaani_full_r3_df1_s2"},
                     "3c": {"vaani_full_r3_e32", "vaani_full_r3_wsnr0", "vaani_full_r3_wsnr04"},
-                    "3d": {"vaani_full_r3_dflr", "vaani_full_r3_dflr_s1"}}[round]
+                    "3d": {"vaani_full_r3_dflr", "vaani_full_r3_dflr_s1"},
+                    "4": {"vaani_full_r4", "vaani_full_r4_s1", "vaani_full_r4_ctl"}}[round]
         assert {p.parent.name for p in (tmp_path / "runs").glob("*/DONE")} == expected
 
 
@@ -101,3 +102,22 @@ def test_round3d_configs_only_add_the_df_group(suffix, seed):
     expected.update(name=f"vaani_full_r3_{suffix}", seed=seed, num_workers=6)
     expected["optim"].update(lr_df=0.0025, clip_df=1.0)
     assert yaml.safe_load((root / f"vaani_full_r3_{suffix}.yaml").read_text()) == expected
+
+
+R4_NEW_MANIFESTS = ["data/manifests/dns_datasets_fullband.noise_fullband.audioset_000.tar.parquet",
+                    "data/manifests/dns_datasets_fullband.noise_fullband.audioset_001.tar.parquet",
+                    "data/manifests/dns_datasets_fullband.noise_fullband.freesound_001.tar.parquet",
+                    "data/manifests/cadre.parquet", "data/manifests/demand.parquet"]
+
+
+@pytest.mark.parametrize("suffix,seed,new_data", [("", 0, True), ("_s1", 1, True), ("_ctl", 0, False)])
+def test_round4_configs_are_e32_plus_df_group_warm_started_with_the_new_data(suffix, seed, new_data):
+    # r4 = the one recipe change that moved (32 epochs) continued from e32 best, with the dflr optimizer groups and the
+    # wave-4 corpora (three more DNS shards, Cadre, DEMAND). _ctl keeps the r3 manifests so epochs and data separate.
+    root = Path(__file__).parents[1] / "configs/exp"
+    expected = yaml.safe_load((root / "vaani_full_r3_e32.yaml").read_text())
+    expected.update(name=f"vaani_full_r4{suffix}", seed=seed, num_workers=6, init_from="runs/vaani_full_r3_e32/best.pt")
+    expected["optim"].update(lr_df=0.0025, clip_df=1.0)
+    if new_data:
+        expected["data"]["manifests"] = expected["data"]["manifests"] + R4_NEW_MANIFESTS
+    assert yaml.safe_load((root / f"vaani_full_r4{suffix}.yaml").read_text()) == expected

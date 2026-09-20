@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Ablation matrix. Usage: run_round.sh [1|2|3|3b|3c|3d]. Re-runnable: train resumes
+# Ablation matrix. Usage: run_round.sh [1|2|3|3b|3c|3d|4]. Re-runnable: train resumes
 # from last.pt, evals skip existing CSVs. Round 2 needs the DNS manifest from fetch_data --dns-shards.
 # Round 3 (plan 2.6): three runs, scored on the frozen eval_r2 test split next to the r1/r2 rows.
-# 3b = seeds + df1 control; 3c = 32-epoch under-training control and the w_snr bracket {0, 0.4}; 3d = deep-filter head with its own lr/clip.
+# 3b = seeds + df1 control; 3c = 32-epoch under-training control and the w_snr bracket {0, 0.4}; 3d = deep-filter head with its own lr/clip;
+# 4 = e32 continued with the 3d optimizer groups and the wave-4 corpora, plus the same-data control.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 round=${1:-1}; sfx=""; [ "$round" = 2 ] && sfx=_r2
-if [ "$round" = 3 ] || [ "$round" = 3b ] || [ "$round" = 3c ] || [ "$round" = 3d ]; then
+if [ "$round" = 3 ] || [ "$round" = 3b ] || [ "$round" = 3c ] || [ "$round" = 3d ] || [ "$round" = 4 ]; then
   # These concurrent waves target the GPU host, not the laptop. Wave 3b holds
   # seeds 1/2 and the df_order=1 control; launch it only after the timing check.
   R3="vaani_full_r3 vaani_no_controller_r3 vaani_full_r3_nodsp"
@@ -20,6 +21,9 @@ if [ "$round" = 3 ] || [ "$round" = 3b ] || [ "$round" = 3c ] || [ "$round" = 3d
   elif [ "$round" = 3d ]; then
     R3="vaani_full_r3_dflr vaani_full_r3_dflr_s1"
     marker=ROUND3D_DONE
+  elif [ "$round" = 4 ]; then
+    R3="vaani_full_r4 vaani_full_r4_s1 vaani_full_r4_ctl"
+    marker=ROUND4_DONE
   fi
   mkdir -p runs results_r2
   # Each loader inherits these limits; otherwise every worker can claim the
