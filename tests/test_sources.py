@@ -65,7 +65,7 @@ def test_scan_dns_noise_classifies_and_sets_licence(tmp_path):
 
 def test_scan_esc50_excludes_vocal_and_labels_impulsive(tmp_path):
     root = tmp_path / "root"; (root / "meta").mkdir(parents=True); (root / "audio").mkdir()
-    rows_csv = [("a.wav", "rain", "100"), ("b.wav", "door_wood_knock", "101"), ("c.wav", "coughing", "102")]
+    rows_csv = [("a.wav", "rain", "100"), ("b.wav", "fireworks", "101"), ("c.wav", "coughing", "102")]
     with open(root / "meta" / "esc50.csv", "w") as fh:
         fh.write("filename,fold,target,category,esc10,src_file,take\n")
         for fn, cat, src in rows_csv:
@@ -73,9 +73,9 @@ def test_scan_esc50_excludes_vocal_and_labels_impulsive(tmp_path):
             sf.write(root / "audio" / fn, _white_noise(), SR)
     rows = sources.scan_esc50(root, tmp_path / "out")
     by_cat = {r["source_id"].split(":")[1].split("/")[0]: r for r in rows}
-    assert set(by_cat) == {"rain", "door_wood_knock"}
+    assert set(by_cat) == {"rain", "fireworks"}
     assert by_cat["rain"]["noise_class"] == "stationary"
-    assert by_cat["door_wood_knock"]["noise_class"] == "impulsive"
+    assert by_cat["fireworks"]["noise_class"] == "impulsive"
     assert by_cat["rain"]["group_id"] == "esc50-100"
 
 
@@ -91,7 +91,7 @@ def test_scan_mad_reads_csv_labels_and_drops_communication(tmp_path):
     rows = sources.scan_mad(root, tmp_path / "out")
     by_id = {r["source_id"]: r for r in rows}
     assert set(by_id) == {"mad:shooting/7_1", "mad:helicopter/7_2"}
-    assert by_id["mad:shooting/7_1"]["noise_class"] == "impulsive"
+    assert by_id["mad:shooting/7_1"]["noise_class"] == "changing"  # crest audit: YouTube gunfire is not impulsive
     assert by_id["mad:helicopter/7_2"]["noise_class"] == "stationary"
     assert all(r["group_id"] == "mad-7" for r in rows)
 

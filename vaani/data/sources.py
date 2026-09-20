@@ -102,7 +102,9 @@ def scan_commonvoice_hi(root: Path, out: Path, min_snr_db: float = 30.0) -> list
 
 # MAD label indices (cls_list in the repo's main.py). "communication" is radio speech: not noise.
 MAD_CLASSES = ["communication", "shooting", "footsteps", "shelling", "vehicle", "helicopter", "fighter"]
-MAD_CLASS_MAP = {"shooting": "impulsive", "shelling": "impulsive", "footsteps": "impulsive",
+# crest_audit 2026-09-20: shooting 16.0/12.2 dB, shelling 17.6/11.2, footsteps 21.9/17.6 (full/event) - all at or
+# below speech (18/13). YouTube normalisation flattened them; they are non-stationary noise, not transients.
+MAD_CLASS_MAP = {"shooting": "changing", "shelling": "changing", "footsteps": "changing",
                  "vehicle": "stationary", "helicopter": "stationary", "fighter": "stationary"}
 
 
@@ -137,10 +139,12 @@ def scan_dns_noise(root: Path, out: Path) -> list[dict]:
     return rows
 
 
-# ESC-50 categories that are human vocalisations (too speech-like for a noise corpus) or clearly impulsive.
+# ESC-50 categories that are human vocalisations (too speech-like for a noise corpus) or impulsive enough to keep.
 ESC50_EXCLUDE = {"crying_baby", "sneezing", "coughing", "laughing", "breathing", "snoring"}
-ESC50_IMPULSIVE = {"door_wood_knock", "glass_breaking", "fireworks", "clapping", "mouse_click", "can_opening",
-                   "church_bells", "footsteps", "keyboard_typing", "clock_tick"}
+# crest_audit 2026-09-20 (event crest, dB): keyboard_typing 22.1, mouse_click 21.6, can_opening 20.1, fireworks 20.0,
+# footsteps 19.8, clock_tick 19.2 kept as "limited" transients (only keyboard_typing meets the >22 gate outright);
+# church_bells 10.7, glass_breaking 13.0, door_wood_knock 15.6, clapping 17.4 dropped - speech-level crest.
+ESC50_IMPULSIVE = {"fireworks", "mouse_click", "can_opening", "footsteps", "keyboard_typing", "clock_tick"}
 
 
 def scan_esc50(root: Path, out: Path) -> list[dict]:
