@@ -2,19 +2,25 @@
 
 Upstream GTCRN uses sqrt-Hann window twice (analysis+synthesis == COLA).
 """
+from __future__ import annotations
+
 import numpy as np
-import torch
+
+try:
+    import torch
+except ImportError:   # the board timing script runs the numpy DSP with no torch installed (Zero 2 W, 512 MB)
+    torch = None
 
 N_FFT = 512
 HOP = 256
 WIN = 512
 
 
-def window(device=None) -> torch.Tensor:
+def window(device=None) -> "torch.Tensor":
     return torch.hann_window(WIN, device=device).pow(0.5)
 
 
-def stft(x: torch.Tensor) -> torch.Tensor:
+def stft(x: "torch.Tensor") -> "torch.Tensor":
     """x: (..., T) -> (..., F, T', 2) real/imag, matching upstream GTCRN input."""
     shape = x.shape
     x = x.reshape(-1, shape[-1])
@@ -23,7 +29,7 @@ def stft(x: torch.Tensor) -> torch.Tensor:
     return s.reshape(*shape[:-1], *s.shape[1:])
 
 
-def istft(spec: torch.Tensor, length: int | None = None) -> torch.Tensor:
+def istft(spec: "torch.Tensor", length: int | None = None) -> "torch.Tensor":
     shape = spec.shape
     spec = spec.reshape(-1, *shape[-3:])
     c = torch.view_as_complex(spec.contiguous())
