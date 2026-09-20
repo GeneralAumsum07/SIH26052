@@ -91,7 +91,10 @@ def scan_commonvoice_hi(root: Path, out: Path, min_snr_db: float = 30.0) -> list
             dur = to_flac16k(src, dst) if not dst.exists() else sf.info(dst).duration
             x, _ = sf.read(dst, dtype="float32")
             if estimate_snr_db(x, SR) < min_snr_db:
-                dst.unlink(missing_ok=True)
+                try:
+                    dst.unlink(missing_ok=True)
+                except PermissionError:   # Windows: another process has it open; the row is dropped either way
+                    print(f"[cv_hi] could not delete {dst} (in use)")
                 continue
             kept += 1
             spk = r["client_id"][:16]

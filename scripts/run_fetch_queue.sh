@@ -20,7 +20,7 @@ fetch() {  # fetch <url> <dst>: resume whatever is on disk, mark .ok on completi
 }
 
 fetch https://zenodo.org/api/records/7004819/files/edge-collected-gunshot-audio.zip/content data/download/gunshots/edge-collected-gunshot-audio.zip
-uv run python scripts/fetch_data.py > data/download/fetch_gunshots.log 2>&1
+uv run python scripts/fetch_data.py --only gunshots > data/download/fetch_gunshots.log 2>&1
 
 # freesound_000 is already local; 002/003 do not exist on the blob (404 checked 2026-09-20). List from Rachit.
 DNS1="freesound_001 audioset_000 audioset_001"
@@ -31,7 +31,7 @@ for i in $(seq -w 1 20); do
   fetch https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p0$i.zip data/download/ears/p0$i.zip
 done
 # drone corpus (attribution accepted 2026-09-20) + EARS scan; the round1 sources are idempotent
-uv run python scripts/fetch_data.py > data/download/fetch_drone.log 2>&1
+uv run python scripts/fetch_data.py --only drone,ears > data/download/fetch_drone.log 2>&1
 
 # remaining audioset shards after EARS so speech diversity lands before more noise; each ~1-5 GB
 DNS2="audioset_002 audioset_003 audioset_004 audioset_005 audioset_006"
