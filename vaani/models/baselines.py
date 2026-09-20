@@ -48,8 +48,10 @@ class RNNoise:
             (np.clip(x48, -1, 1) * 32767).astype(np.int16).tofile(i)
             subprocess.run([exe, str(i), str(o)], check=True, capture_output=True)
             y48 = np.fromfile(o, np.int16).astype(np.float32) / 32767
-        y = resample_poly(y48, 1, 3)[: mix.shape[1]].astype(np.float32)
-        return np.pad(y, (0, mix.shape[1] - len(y)))   # rnnoise_demo drops the trailing partial 480-sample frame
+        # rnnoise_demo emits each frame one 480-sample (10 ms) frame late: measured lag 160 samples at 16 kHz on three
+        # test clips, which turned a +14 dB output into -3 dB under plain SNR. Realign, then pad the dropped tail frame.
+        y = resample_poly(y48[480:], 1, 3)[: mix.shape[1]].astype(np.float32)
+        return np.pad(y, (0, mix.shape[1] - len(y)))
 
 
 class HGTCRN:
