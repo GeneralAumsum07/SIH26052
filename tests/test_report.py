@@ -39,3 +39,19 @@ def test_report_counts_unrecovered_bursts(tmp_path):
     try: report.main()
     finally: sys.argv = old
     assert "failures=1/2" in out.read_text(encoding="utf-8")
+
+
+def test_report_protocol_header_names_anchor_and_hashed_splits(tmp_path):
+    import json, sys
+    from vaani import report
+    p = tmp_path / "x.csv"
+    p.write_text("system,id,bucket,noise_class,snr_in,clipped,ref_dropout,impulse_peak_db,snr_out,si_sdr,stoi,pesq_wb,recovery_s,asr_text\n"
+                 "s,0,stationary_0,stationary,0,False,False,,10,10,0.9,2,,\n")
+    proto = tmp_path / "anchor.json"
+    proto.write_text(json.dumps({"anchor": {"source": "runs/e32/best.pt", "sha256": "ab" * 32, "git": "c" * 40},
+                                 "splits": {"test": {"n_items": 1, "files": {"a": "1", "b": "2"}}}}))
+    out = tmp_path / "m.md"; old = sys.argv; sys.argv = ["report.py", str(p), "--out", str(out), "--protocol", str(proto)]
+    try: report.main()
+    finally: sys.argv = old
+    t = out.read_text(encoding="utf-8")
+    assert "runs/e32/best.pt" in t and "abababababababab" in t and "test split 1 items / 2 files" in t

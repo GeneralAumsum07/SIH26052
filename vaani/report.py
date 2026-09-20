@@ -83,6 +83,7 @@ def _cell(g, metrics=METRICS):
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("csvs", nargs="+"); ap.add_argument("--out", required=True)
     ap.add_argument("--asr-ref", help="results/asr/clean.csv from scripts/asr_clean_reference.py; adds a WER column")
+    ap.add_argument("--protocol", help="results_r2/tier46/anchor.json: prints the frozen split/anchor identity above the tables")
     a = ap.parse_args()
     df = pd.concat([pd.read_csv(p, dtype={"id": str}) for p in a.csvs])
     metrics = list(METRICS)
@@ -94,7 +95,13 @@ def main():
     df["fault"] = df.fault.where(df.fault.notna(), None)
     df["snr_gain"] = df.snr_out - df.snr_in  # improvement reading; the target is judged on absolute snr_out
     df["nominal"] = (~df.clipped) & (~df.ref_dropout) & df.fault.isna() & df.snr_in.isin([0, 5, 10])
-    lines = ["# Ablation matrix", "",
+    lines = ["# Ablation matrix", ""]
+    if a.protocol:
+        import json
+        pr = json.loads(open(a.protocol, encoding="utf-8").read()); an = pr.get("anchor", {})
+        lines += [f"Protocol: anchor `{an.get('source')}` sha256 `{str(an.get('sha256'))[:16]}`, git `{str(an.get('git'))[:12]}`; "
+                  + "; ".join(f"{k} split {v['n_items']} items / {len(v['files'])} files content-hashed" for k, v in pr.get("splits", {}).items()), ""]
+    lines += [
              "PESQ: wideband P.862.2 @16 kHz (`pesq` package). P.862 is withdrawn by ITU in favour of P.863; reported because the brief requests it.",
              "SNR_out = 10log10(||s||^2/||s_hat-s||^2) vs clean primary (distortion counts as error). SI-SDR reported separately.",
              "Targets (problem statement): SNR_out>15 dB, STOI>0.85, PESQ>2.5 - marked per bucket row and per overall nominal row.",
