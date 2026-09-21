@@ -41,7 +41,10 @@ def enhance_fn(spec: str, device=None):
             zt = torch.view_as_real(torch.from_numpy(z))[None].to(out.device)
             return stft.istft(zt, length=mix.shape[1])[0].cpu().numpy()
         return f
-    if spec.startswith("cascade:"):   # Tier 4.6 frozen first stage + refiner; one self-contained checkpoint
+    if spec.startswith("onnx:"):      # `onnx:<graph.onnx>@<checkpoint.pt>`: score the exported graph itself
+        graph, ckpt = spec[5:].rsplit("@", 1)
+        spec_fn = _onnx_spectrum_fn(graph, ckpt)
+    elif spec.startswith("cascade:"):   # Tier 4.6 frozen first stage + refiner; one self-contained checkpoint
         spec_fn, cfg = _ckpt_spectrum_fn(spec[8:], device)
         if cfg["model"] != cascade.MODEL_NAME: raise ValueError(f"{spec[8:]} is a {cfg['model']!r} checkpoint, not a cascade")
     elif spec.startswith("ckpt:"):
@@ -52,6 +55,36 @@ def enhance_fn(spec: str, device=None):
     def f(mix):
         return stft.istft(spec_fn(mix), length=mix.shape[1])[0].cpu().numpy()
     return f
+
+
+def _onnx_spectrum_fn(onnx_path, ckpt_path):
+    """The exported graph's output spectrum, streamed frame by frame as the embedded loop runs it.
+
+    Scoring the graph rather than the checkpoint is what makes an optimized export (quantized,
+    pruned, or a future TensorRT-targeted graph) measurable in SNR/STOI/PESQ instead of only in
+    bytes and milliseconds. The checkpoint is still required and is not redundant: it carries the
+    DSP configuration the weights were trained behind (`controller_on`, `dsp`), which the graph
+    does not encode. Caches come from the graph's own declared shapes and are zeroed per clip --
+    carrying them between clips would leak one item's state into the next.
+
+    CPU only, and `device` is deliberately not a parameter: the deployment claim is a single-core
+    CPU claim, and eval workers already run one torch thread each.
+    """
+    from vaani import export  # keeps onnxruntime off the import path of the ordinary checkpoint eval
+
+    cfg = torch.load(ckpt_path, map_location="cpu", weights_only=True)["config"]
+    sess = export.load_session(onnx_path)
+    cache_names, zero = export.zero_caches(sess)
+
+    def spec_of(mix):
+        r = pipeline.run(mix, controller_on=cfg["controller_on"], dsp_cfg=cfg.get("dsp"))
+        x = torch.from_numpy(r["mix"])[None]   # limited when the checkpoint trained with the limiter
+        spec6 = torch.cat([stft.stft(x[:, 0]), stft.stft(x[:, 1]),
+                           stft.stft(torch.from_numpy(r["n_hat"])[None])], -1).numpy()
+        feats = np.ascontiguousarray(r["features"][None], dtype=np.float32)
+        out, _ = export.stream_onnx(sess, spec6, feats, cache_names, [c.copy() for c in zero])
+        return torch.from_numpy(out)
+    return spec_of
 
 
 def _ckpt_spectrum_fn(path, device=None, conditional_cfg=None):

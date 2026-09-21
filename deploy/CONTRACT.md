@@ -111,6 +111,38 @@ for stage one; it is not a runtime measurement or an ONNX kernel instruction cou
 The refiner's 16-channel 3x3 convolution runs across all 257 bins: 592,128
 MAC/frame in that layer alone. Small parameter count does not mean low compute.
 
+## INT8 quantization: measured and not adopted
+
+`deploy/tier46/cascade.int8.onnx` exists and keeps this contract's input/output names and
+static shapes, so the embedded loop can feed it unchanged. **It is not the deployment
+target.** Measured on the same laptop and protocol as the section above (interleaved,
+best of five 10-second runs, `deploy/tier46/int8_report.json`):
+
+| graph | bytes | nodes | initializer bytes | ms/frame mean | ms/frame p99 |
+|---|---:|---:|---:|---:|---:|
+| `cascade.onnx` (FP32) | 474,599 | 1,756 | 210,108 | 0.908 | 1.212 |
+| `cascade.int8.onnx` | 567,969 | 1,906 | 157,133 | 1.318 | 1.603 |
+| `cascade.int8_pc.onnx` (per-channel) | 569,805 | 1,906 | 157,133 | 1.305 | 1.586 |
+
+INT8 dynamic quantization is **19.7 % larger and 1.45x slower** here. Two structural
+reasons, both specific to a model this small and worth knowing before repeating the
+experiment:
+
+- Weights are only 210 KB of a 474 KB graph; the rest is node protobuf. Quantization cut
+  weight bytes to 157 KB but added 150 nodes, and the node overhead exceeded the saving.
+- ORT's dynamic path has no integer kernel for `GRU`, which is most of this model's
+  recurrence, so the 29 inserted `DynamicQuantizeLinear` nodes are added work on top of an
+  unchanged float recurrence. Only one `MatMul` was left unquantized.
+
+Quality cost on the frozen split is in `results_r2/optim/optimization.md`; the accuracy
+question is moot for deployment given the size and latency results, but it is measured
+rather than assumed because a complex-valued mask network is more phase-sensitive to
+weight quantization than a magnitude-only one.
+
+An embedded lead re-running this on a target where the weights *do* dominate the memory
+budget, or on a runtime with an integer GRU kernel, should expect a different answer:
+these numbers describe this graph on ORT 1.30 CPU, not quantization in general.
+
 ## Artifact generation and availability
 
 Run from the repository root with the locally retained trained checkpoint:

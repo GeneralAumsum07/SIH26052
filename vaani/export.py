@@ -124,37 +124,73 @@ def export(ckpt_path, out_path):
     return Path(out_path)
 
 
-def parity_and_timing(ckpt_path, onnx_path, seconds=10):
-    v, mc = _load_batch_model(ckpt_path)
+def load_session(onnx_path, threads=1):
+    """One ORT CPU session at the embedded single-core budget."""
+    opts = ort.SessionOptions()
+    opts.intra_op_num_threads = threads  # matches the embedded single-core budget
+    opts.log_severity_level = 3  # silence unused-initializer warnings at the source
+    return ort.InferenceSession(str(onnx_path), sess_options=opts, providers=["CPUExecutionProvider"])
+
+
+def zero_caches(sess):
+    """Cache names and zero initial values read off the graph, not off a checkpoint.
+
+    The contract says every cache is zero at stream start, so the graph's own declared
+    shapes are sufficient: this works for a quantized or pruned graph, and for widths and
+    optional caches this code has never seen. Inputs 0/1 are spec6 and feats.
+    """
+    names, values = [], []
+    for spec in sess.get_inputs()[2:]:
+        if any(not isinstance(d, int) for d in spec.shape):
+            raise ValueError(f"cache input {spec.name!r} has a dynamic shape {spec.shape}; export is static batch-1")
+        names.append(spec.name); values.append(np.zeros(spec.shape, np.float32))
+    return names, values
+
+
+def stream_onnx(sess, spec, feats, cache_names=None, caches=None):
+    """Frame-by-frame ORT run carrying caches forward, exactly as the embedded loop must.
+
+    spec (1,257,T,6) and feats (1,T,18) are float32 numpy. Returns the concatenated output
+    spectrum (1,257,T,2) and the per-frame milliseconds with frame zero dropped -- it is a
+    session/allocator warm-up and skews timing, but its output is still in the returned
+    spectrum so parity covers it.
+    """
+    if cache_names is None or caches is None:
+        cache_names, caches = zero_caches(sess)
+    outs, times = [], []
+    for t in range(spec.shape[2]):
+        inp = {"spec6": spec[:, :, t:t + 1], "feats": feats[:, t:t + 1], **dict(zip(cache_names, caches))}
+        t0 = time.perf_counter()
+        o = sess.run(None, inp)
+        if t > 0:
+            times.append((time.perf_counter() - t0) * 1000)
+        outs.append(o[0]); caches = o[1:]
+    return np.concatenate(outs, axis=2), times
+
+
+def random_stream_inputs(seconds=10, seed=0):
+    """The shared 10-second random-input timing protocol; torch tensors so the batch reference can consume them."""
     T = int(seconds * 16000 / 256)
     if T < 2:
         raise ValueError("Timing requires at least two frames (one warm-up and one measured)")
-    torch.manual_seed(0)
-    spec = torch.randn(1, 257, T, 6) * 0.1
-    f = torch.randn(1, T, 18)
+    torch.manual_seed(seed)
+    return torch.randn(1, 257, T, 6) * 0.1, torch.randn(1, T, 18)
+
+
+def timing_stats(times):
+    return {"ms_per_frame_mean": float(np.mean(times)), "ms_per_frame_p99": float(np.percentile(times, 99))}
+
+
+def parity_and_timing(ckpt_path, onnx_path, seconds=10):
+    v, mc = _load_batch_model(ckpt_path)
+    spec, f = random_stream_inputs(seconds)
     with torch.no_grad():
         ref = v(spec, f).numpy()
 
-    opts = ort.SessionOptions()
-    opts.intra_op_num_threads = 1  # matches the embedded single-core budget
-    opts.log_severity_level = 3  # silence unused-initializer warnings at the source
-    sess = ort.InferenceSession(str(onnx_path), sess_options=opts, providers=["CPUExecutionProvider"])
-
+    sess = load_session(onnx_path)
     _, caches, in_names, _ = _stream_twin(v, mc)
-    caches = [c.numpy() for c in caches]
-    outs, times = [], []
-    for t in range(T):
-        inp = {"spec6": spec[:, :, t:t + 1].numpy(), "feats": f[:, t:t + 1].numpy(), **dict(zip(in_names[2:], caches))}
-        t0 = time.perf_counter()
-        o = sess.run(None, inp)
-        if t > 0:  # frame 0 is a warm-up (session/allocator warm-up skews timing); still used for parity
-            times.append((time.perf_counter() - t0) * 1000)
-        outs.append(o[0]); caches = o[1:]
-
-    got = np.concatenate(outs, axis=2)
-    return {"max_abs_err": float(np.abs(got - ref).max()),
-            "ms_per_frame_mean": float(np.mean(times)),
-            "ms_per_frame_p99": float(np.percentile(times, 99))}
+    got, times = stream_onnx(sess, spec.numpy(), f.numpy(), in_names[2:], [c.numpy() for c in caches])
+    return {"max_abs_err": float(np.abs(got - ref).max()), **timing_stats(times)}
 
 
 if __name__ == "__main__":
