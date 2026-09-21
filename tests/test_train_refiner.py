@@ -97,3 +97,24 @@ def test_best_checkpoint_is_self_contained_and_exportable(tmp_path, monkeypatch)
     r = export.parity_and_timing(tmp_path / "runs/ref/best.pt", onnx, seconds=0.5)
     assert r["max_abs_err"] < 1e-4
     assert json.load(open(tmp_path / "runs/ref/run.json"))["params"] == 2498
+
+
+def test_parallel_screen_scorer_matches_serial_loop(tmp_path, monkeypatch):
+    """score_items fans DSP and metrics out to a pool; the numbers must equal the plain per-item loop."""
+    from vaani.data.dataset import RenderedDataset
+    from vaani.dsp import pipeline, stft
+    from vaani import metrics
+    first = _first_stage(tmp_path); cfg = torch.load(first, weights_only=True)["config"]
+    model = VaaniNet(**MC); model.load_state_dict(torch.load(first, weights_only=True)["model"]); model.eval()
+    ds = RenderedDataset("data/eval_r2/val"); idx = [0, 1]
+    monkeypatch.setattr(tr, "SCREEN_WORKERS", 2)
+    par = tr.score_items(model, ds, idx, cfg, torch.device("cpu"))
+    ser = []
+    with torch.no_grad():
+        for i in idx:
+            it = ds[i]; mix, clean = it["mix"].numpy(), it["clean"].numpy()
+            r = pipeline.run(mix, controller_on=True, dsp_cfg=cfg["dsp"]); x = torch.from_numpy(r["mix"])[None]
+            spec6 = torch.cat([stft.stft(x[:, 0]), stft.stft(x[:, 1]), stft.stft(torch.from_numpy(r["n_hat"])[None])], -1)
+            y = stft.istft(model(spec6, torch.from_numpy(r["features"])[None]).float(), length=mix.shape[1])[0].numpy()
+            ser.append((metrics.snr_db(clean, y), metrics.stoi(clean, y), metrics.pesq_wb(clean, y)))
+    assert np.allclose(par, np.asarray(ser), atol=1e-6)

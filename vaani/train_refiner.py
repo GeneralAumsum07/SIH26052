@@ -22,6 +22,7 @@ from vaani.train import _save, prepare_batch
 LOSS_CFG = dict(w_complex=50, w_mag=50, p=0.5, w_snr=0.2, snr_max_db=30)
 STOI_TOL, PESQ_W, EARLY_EPOCH, EARLY_SNR, EARLY_PESQ = 0.003, 5.0, 2, 0.1, 0.01
 SCREEN_PER_BUCKET = 4
+SCREEN_WORKERS = 32   # CPU processes for the screen's DSP and metrics
 
 
 def _sha(path):
@@ -54,18 +55,55 @@ def screen_items(eval_root, split):
     return ds, [i for b in sorted(per) for i in per[b]]
 
 
+_pool = None
+_screen_cache = {}
+
+
+def _screen_pool():
+    """One persistent spawn pool for the CPU halves of the screen (DSP front end, PESQ/STOI); children never touch
+    CUDA. Thread caps keep 32 workers inside the box's pid cgroup (see rirs.build_bank)."""
+    global _pool
+    if _pool is None:
+        import os
+        from multiprocessing import get_context
+        caps = {k: "1" for k in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMBA_NUM_THREADS")}
+        saved = {k: os.environ.get(k) for k in caps}; os.environ.update(caps)
+        try: _pool = get_context("spawn").Pool(SCREEN_WORKERS)
+        finally:
+            for k, v in saved.items():
+                if v is None: os.environ.pop(k, None)
+                else: os.environ[k] = v
+    return _pool
+
+
+def _dsp_item(args):
+    mix, clean, controller_on, dsp_cfg = args
+    r = pipeline.run(mix, controller_on=controller_on, dsp_cfg=dsp_cfg)
+    return {"clean": clean, "mix": r["mix"], "n_hat": r["n_hat"], "features": r["features"], "n": mix.shape[1]}
+
+
+def _metric_item(args):
+    clean, y = args
+    return (metrics.snr_db(clean, y), metrics.stoi(clean, y), metrics.pesq_wb(clean, y))
+
+
 @torch.no_grad()
 def score_items(model, ds, idx, first_cfg, device):
-    """Per-item (snr_out, stoi, pesq_wb) through the anchor's DSP pipeline, exactly as vaani.eval runs a checkpoint."""
-    was_training = model.training; model.eval(); out = []
-    for i in idx:
-        it = ds[i]; mix, clean = it["mix"].numpy(), it["clean"].numpy()
-        r = pipeline.run(mix, controller_on=first_cfg["controller_on"], dsp_cfg=first_cfg.get("dsp"))
+    """Per-item (snr_out, stoi, pesq_wb) through the anchor's DSP pipeline, exactly as vaani.eval runs a checkpoint.
+    The DSP front end does not depend on the model, so it is computed once per (dataset, idx) and reused every
+    epoch; the model forward runs here on `device`; PESQ/STOI fan out to the pool. Same numbers as the serial loop."""
+    key = (id(ds), tuple(idx))
+    if key not in _screen_cache:
+        items = [ds[i] for i in idx]
+        _screen_cache[key] = _screen_pool().map(_dsp_item, [(it["mix"].numpy(), it["clean"].numpy(), first_cfg["controller_on"],
+                                                             first_cfg.get("dsp")) for it in items], chunksize=4)
+    was_training = model.training; model.eval(); ys = []
+    for r in _screen_cache[key]:
         x = torch.from_numpy(r["mix"])[None].to(device)
         spec6 = torch.cat([stft.stft(x[:, 0]), stft.stft(x[:, 1]), stft.stft(torch.from_numpy(r["n_hat"])[None].to(device))], -1)
-        y = stft.istft(model(spec6, torch.from_numpy(r["features"])[None].to(device)).float(), length=mix.shape[1])[0].cpu().numpy()
-        out.append((metrics.snr_db(clean, y), metrics.stoi(clean, y), metrics.pesq_wb(clean, y)))
+        ys.append(stft.istft(model(spec6, torch.from_numpy(r["features"])[None].to(device)).float(), length=r["n"])[0].cpu().numpy())
     model.train(was_training)
+    out = _screen_pool().map(_metric_item, [(r["clean"], y) for r, y in zip(_screen_cache[key], ys)], chunksize=4)
     return np.asarray(out, float)
 
 
