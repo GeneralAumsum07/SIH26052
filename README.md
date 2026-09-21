@@ -1,9 +1,12 @@
 # VAANI - dual-mic speech enhancement (SIH26052, DRDO)
 
 Real-time speech enhancement for a two-microphone headset: a time-domain NLMS
-front end on the reference mic, a small GTCRN-derived network (VaaniNet, ~50k
-params) conditioned on DSP features, and a controller that handles bursts and
-reference faults. Targets: SNR gain > 15 dB, STOI > 0.85, PESQ > 2.5.
+front end on the reference mic, a GTCRN-derived network and a residual refiner.
+The evaluated cascade has 52,747 parameters and an estimated 82.460 matrix
+MMAC/s; see [the counting convention and deployment measurements](deploy/CONTRACT.md).
+The controller gates DSP adaptation; graceful single-channel fallback under
+reference faults is not implemented. Report targets: SNR_out > 15 dB, STOI > 0.85,
+PESQ > 2.5. SNR_out is absolute output SNR, not SNR improvement.
 
 ## Setup
 
@@ -51,7 +54,7 @@ a manifest built on Windows loads on Linux.
 ```bash
 uv run python -m vaani.train configs/exp/vaani_full_r3_e32.yaml
 uv run python -m vaani.eval --system vaani_full_r3_e32 --split test --eval-root data/eval_r2 --workers 8 --asr --asr-device cuda --dnsmos
-uv run python -m vaani.report results_r2/*.csv --out results_r2/matrix.md --asr-ref results_r2/asr/clean.csv
+uv run python -m vaani.report "results_r2/*.csv" --out results_r2/matrix.md --asr-ref results_r2/asr/clean.csv --protocol results_r2/tier46_v2/anchor.json
 ```
 
 `scripts/run_round.sh [1|2|3|3b|3c|3d|4]` runs a whole ablation wave and drops a
@@ -61,8 +64,10 @@ frozen `data/eval_r2` test split (`results_r2/`, 2280 items) so rows stay
 comparable across waves. The directory suffix names the **eval set**, not the
 training round.
 
-Per-system CSVs and `matrix.md` are tracked; eval logs, ASR transcript dumps
-and run markers are ignored. Val STOI printed during training is **not**
+Per-system CSVs, `matrix.md` and the clean test ASR reference are versioned report
+inputs. The report records the ASR reference hash, excludes `.partial*.csv`
+snapshots and rejects duplicate evaluation/reference keys. Eval logs, other ASR
+dumps and run markers are ignored. Val STOI printed during training is **not**
 comparable across seeds or across runs with different noise pools (val is
 rendered from the run's own pool); only the test-split matrix is.
 
@@ -77,12 +82,23 @@ rendered from the run's own pool); only the test-split matrix is.
 
 ### Where things stand
 
-`results_r2/matrix.md` is the source of truth. As of round 3 the full model
-clears STOI (0.906) on the nominal envelope but not SNR_out (~13.9 dB) or PESQ
-(~2.3); training 32 epochs instead of 8 was the only ablation that moved the
-numbers, so round 4 continues that recipe on the wider noise pool (all DNS
-shards, Cadre, DEMAND) with a same-data control. Reference-mic ablations zero
-the gain; the coherence map and noise estimate taps are inert.
+The [matrix](results_r2/matrix.md) separates point estimates from interval-supported
+passes. The selected cascade's operating envelope, based on means, starts at
+input SNR +5 dB for changing/impulsive noise and +10 dB for stationary noise.
+On the nominal envelope (617 clips), it scores **15.150 dB [14.865,15.461]**,
+**0.922 STOI [0.917,0.927]**, **2.548 PESQ [2.498,2.603]**. SNR and PESQ clear
+their targets only at the point estimate. This is one refiner seed; the intervals
+describe evaluation-item variation, not training-seed uncertainty.
+
+On transient-present clips it scores **10.465 dB / 0.843 / 1.805**, failing all
+three targets. Reference gain loss is also unresolved: at -12 dB reference gain,
+the cascade's 5.697 dB is below the single-channel baseline's 8.383 dB.
+
+The controller did not improve nominal quality across three r3 seeds; removing
+limiter/blocking DSP improved the single tested ablation, and wider wave-4 data
+did not outperform the same-data control. These are measured limitations, not
+grounds to remove components from an already-trained checkpoint. See the
+[review resolution and deferred work](docs/adversarial-review-133-resolution.md).
 
 ## Layout
 

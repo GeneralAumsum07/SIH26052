@@ -5,13 +5,29 @@ Short (0.5 s) clips + compressed npz so this stays committed under deploy/
 against these) instead of the git-ignored /data/ tree.
 """
 from pathlib import Path
+import argparse
+import hashlib
+import json
 import numpy as np
 import soundfile as sf
 
 from vaani.dsp import pipeline
 
-out = Path("deploy/dsp_reference/vectors")
+ap = argparse.ArgumentParser(description=__doc__)
+ap.add_argument("--checkpoint", help="Read controller/DSP configuration from the deployed checkpoint")
+ap.add_argument("--out", help="Separate output directory; legacy vectors are preserved by default")
+args = ap.parse_args()
+cfg = {}
+if args.checkpoint:
+    import torch
+    ck = torch.load(args.checkpoint, map_location="cpu", weights_only=True)["config"]
+    cfg = {"controller_on": ck.get("controller_on", True), "dsp": ck.get("dsp", {}),
+           "checkpoint": Path(args.checkpoint).as_posix(),
+           "checkpoint_sha256": hashlib.sha256(Path(args.checkpoint).read_bytes()).hexdigest()}
+out = Path(args.out or ("deploy/dsp_reference/vectors_cascade" if args.checkpoint else "deploy/dsp_reference/vectors"))
 out.mkdir(parents=True, exist_ok=True)
+if cfg:
+    (out / "config.json").write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
 rng = np.random.default_rng(42)
 
 SR = 16000
@@ -34,8 +50,18 @@ drop = cases["speech_plus_noise"].copy()
 drop[1, n // 2:] *= 0.01
 cases["ref_dropout"] = drop
 
+if cfg:
+    # Constant speech from frame zero seeds the controller's energy floor too
+    # high to open the blocking adaptation gate. A quiet lead-in followed by
+    # near-mouth speech exercises that path without triggering a far-field burst.
+    onset_rng = np.random.default_rng(77)
+    floor = onset_rng.normal(0, 0.002, n).astype(np.float32)
+    speech = onset_rng.normal(0, 0.1, n).astype(np.float32)
+    speech[:int(0.15 * SR)] = 0
+    cases["speech_onset"] = np.stack([floor + speech, floor + 0.15 * np.roll(speech, 5)])
+
 for name, x in cases.items():
     sf.write(out / f"{name}.wav", x.T, SR, subtype="FLOAT")  # PCM16 quantised (and clipped the burst) so the npz never matched the wav
-    r = pipeline.run(x)
+    r = pipeline.run(x, controller_on=cfg.get("controller_on", True), dsp_cfg=cfg.get("dsp"))
     np.savez_compressed(out / f"{name}.npz", **r)
     print(name, "burst frames:", int(r["burst"].sum()))

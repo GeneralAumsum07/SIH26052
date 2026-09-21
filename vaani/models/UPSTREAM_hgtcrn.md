@@ -13,4 +13,11 @@ Upstream README (2026-09-18) warns the paper's Masking 1/2 labels are swapped vs
 authoritative. The released code uses a plain Hann window where the paper says sqrt-Hann; kept as released.
 Registered as `h_gtcrn` (masking on noisy) and `h_gtcrn_iva`. On our 12 cm rig mixtures the IVA variant collapses to
 near-silence on the first clip tried (rms 0.004 vs 0.048 for the noisy variant); the authors document that variant as
-sensitive to IVA permutation/leakage. Both are reported; `h_gtcrn` is the reference row.
+sensitive to IVA permutation/leakage. `h_gtcrn` is the reference row.
+
+The `h_gtcrn_iva` CSV is retained as a diagnostic of **our unreproduced integration**.
+We have not reproduced the authors' configuration/results and do not present this
+row as their result or use it to claim superiority over their method. Nominal
+SI-SDR -19.349 dB and STOI 0.696 warrant an integration investigation; they do not
+by themselves identify a scale, channel-order or permutation bug. The generated
+matrix labels the variant explicitly in every table.

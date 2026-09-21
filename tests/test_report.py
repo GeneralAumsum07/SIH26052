@@ -1,5 +1,34 @@
 import pandas as pd
+import pytest
 from vaani import report
+
+
+def test_add_wer_rejects_duplicate_reference_keys(tmp_path):
+    ref = tmp_path / "ref.csv"
+    row = dict(id="0000", bucket="b", asr_text="hello")
+    pd.DataFrame([row, row]).to_csv(ref, index=False)
+    with pytest.raises(ValueError, match="duplicate"):
+        report.add_wer(pd.DataFrame([row]), ref)
+
+
+def test_load_results_excludes_partial_snapshots_and_rejects_duplicates(tmp_path):
+    row = dict(system="s", bucket="b", id="0000", snr_out=16)
+    final = tmp_path / "s.csv"
+    partial = tmp_path / "s.partial1.csv"
+    pd.DataFrame([row]).to_csv(final, index=False)
+    pd.DataFrame([row]).to_csv(partial, index=False)
+    assert len(report.load_results([str(final), str(partial)])) == 1
+    assert len(report.load_results([str(tmp_path / "*.csv")])) == 1
+    with pytest.raises(ValueError, match="duplicate"):
+        report.load_results([str(final), str(final)])
+
+
+def test_target_mark_distinguishes_point_estimate_from_interval():
+    assert report._mark("snr_out", (15.15, 14.86, 15.46)) == " ~"
+    assert report._mark("snr_out", (16, 15.1, 17)) == " ✓"
+    assert report._mark("snr_out", (15, 14, 16)) == " ✗"
+    assert report._mark("snr_out", (16, 15, 17)) == " ~"
+    assert report._mark("snr_out", (float("nan"),) * 3) == ""
 
 
 def test_wer_counts_substitutions_insertions_deletions():

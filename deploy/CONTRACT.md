@@ -1,4 +1,9 @@
-# VAANI deployment contract (v1)
+# VAANI deployment contract (trained Tier 4.6 cascade)
+
+The evaluated deployment candidate is `runs/vaani_tier46_refiner/best.pt`: frozen
+`vaani_full_r4_ctl` first stage plus residual refiner. It exports to
+`deploy/tier46/cascade.onnx`. The older `deploy/model.onnx` is a first-stage-only
+target; its historical measurements below do not describe the cascade.
 
 Audio: 16 kHz, 2 channels (0 = primary near-mouth, 1 = reference), float32 [-1,1].
 STFT: n_fft 512, hop 256, window = sqrt(periodic Hann 512), center=True (reflect pad 256).
@@ -16,7 +21,11 @@ Total: 16 ms + 16 ms = 32 ms.
 2. Features (18, order below) from the current 512-sample primary/reference frames and their spectra. `vaani/dsp/features.py`.
 3. Controller -> `adapt_gate`, `burst_flag`, `reliability`. `vaani/dsp/controller.py`. Thresholds: jump 12 dB, level-diff <= 3 dB, hold 4 frames, ramp 12 frames, speech-freeze 0.5 (0.6 before 2026-09-20; see `dsp_reference/README.md`). Round-3 checkpoints (`dsp.controller.diff_jump_max_db` = 3.0 in the checkpoint config) replace the level-diff test with the *differential jump*: the same 4 ms onset test run on the reference frame, subtracted from the primary's (feature 0); burst = onset >= 12 dB AND diff <= 3 dB, OR the limiter engaged (step 0). The differential jump is not one of the 18 features.
 4. ONNX `model.onnx`: inputs `spec6 (1,257,1,6)` = [prim_re, prim_im, ref_re, ref_im, nhat_re, nhat_im], `feats (1,1,18)`, `conv_cache (2,1,16,16,33)`, `tra_cache (2,3,1,1,16)`, `inter_cache (2,1,33,16)`, `df_cache (1,257,3,2)`, `coh_cache (1,4,257)`, all float32, all zero-initialised at stream start; outputs `spec_out (1,257,1,2)` (enhanced primary re/im) + the five caches, same shapes, updated. Feed caches back unchanged into the next frame's call. (v1 had three caches; `df_cache`/`coh_cache` were added 2026-09-20 for the round-3 architecture and are present, and passed through, for every exported checkpoint.)
-5. iSTFT overlap-add with the same sqrt-Hann window, on `spec_out`.
+5. For `tier46/cascade.onnx`, the refiner runs inside the same ONNX call after the first stage.
+   It adds input `refine_cache (1,16,2,257)` and output `refine_cache_out` to the signature above;
+   all six caches are zero-initialised at stream start and fed back on every frame. `spec_out`
+   is the refined spectrum. The cache stores the previous two refiner hidden frames, oldest first.
+6. iSTFT overlap-add with the same sqrt-Hann window, on `spec_out`.
 
 For the *no-controller* configuration: gate = 1, feats = zeros.
 
@@ -25,7 +34,7 @@ log_energy_delta, spectral_flux, peak_to_rms, clip_frac_primary, clip_frac_refer
 
 (18 total; exact order and definitions in `vaani/dsp/features.py::FEATURE_NAMES`.)
 
-## Cache shapes and zero-init
+## First-stage cache shapes and zero-init
 All five caches are per-stream (batch=1) state carried frame-to-frame; zero-initialise once
 at stream start (`vaani/models/vaani_net.py::init_caches`), never between frames of the
 same stream:
@@ -45,7 +54,7 @@ same stream:
 `film` (18-feature FiLM shift on the first encoder layer; off in round 3), `coh` (coherence map as a
 10th input channel). `vaani/export.py` reads them from the checkpoint; the ONNX signature does not change.
 
-## Export and parity
+## Export and parity: historical first-stage measurement
 `vaani/export.py::export(ckpt_path, out_path)` builds the streaming twin (`StreamVaaniNet`),
 loads weights via `convert_to_stream` (a plain `load_state_dict` does not work -- the stream
 conv wrappers nest keys one level deeper), and traces one frame with
@@ -53,7 +62,7 @@ conv wrappers nest keys one level deeper), and traces one frame with
 
 `vaani/export.py::parity_and_timing(ckpt_path, onnx_path, seconds)` runs the ONNX Runtime
 session frame-by-frame (CPU, `intra_op_num_threads=1`) against the batch `VaaniNet` doing the
-same, carrying caches forward exactly as the embedded loop must. On the round-3 shipped
+same, carrying caches forward exactly as the embedded loop must. On the historical round-3
 checkpoint (`runs/vaani_full_r3_dflr/best.pt`, `df_order` 3 + coherence, exported to
 `deploy/model.onnx` on 2026-09-20), a 10-second random-input run measured (CPU, ONNX Runtime,
 `intra_op_num_threads=1`, dev laptop, frame 0 excluded from timing as a warm-up frame but still
@@ -73,8 +82,65 @@ embedded lead must re-run `parity_and_timing`-equivalent timing on the actual ta
 
 A port passes when its `max_abs_err` against the PyTorch stream reference is < 1e-4.
 
+## Trained cascade measurement and arithmetic budget
+
+Measured 2026-09-21 on the development laptop (Windows 11, AMD64 Family 25 Model
+117, ONNX Runtime 1.30.0 CPU provider, one intra-op thread), using the same
+10-second random-input protocol, 625 frames, frame zero excluded from timing:
+
+- Maximum absolute error against batch PyTorch: **1.505e-6**, tolerance <1e-4.
+- Model time: **0.999 ms mean / 1.696 ms p99** per 16 ms hop.
+- Graph size: **474,599 bytes**.
+
+These are model-only desktop measurements, excluding DSP, STFT/iSTFT and audio
+I/O. They do not establish end-to-end latency or target-board feasibility.
+Timing varies across runs; `tier46/trained_cascade_timing.json` records the
+checkpoint/graph SHA256, environment, measurement and layer arithmetic counts.
+
+| component | total parameters | trainable during refiner training | matrix MAC/frame | matrix MMAC/s at 62.5 frames/s |
+|---|---:|---:|---:|---:|
+| Frozen r4_ctl first stage | 50,249 | 0 | 686,112 | 42.882 |
+| Residual refiner | 2,498 | 2,498 | 633,248 | 39.578 |
+| Cascade | 52,747 | 2,498 | 1,319,360 | 82.460 |
+
+MACs are a derived dense Conv/Linear/GRU matrix-operation estimate from one
+streaming call, including fixed ERB transforms and padded positions. Biases,
+normalization, activations, elementwise operations and DSP/STFT are excluded.
+This explicit convention replaces the review's unexplained 38.7 MMAC/s estimate
+for stage one; it is not a runtime measurement or an ONNX kernel instruction count.
+The refiner's 16-channel 3x3 convolution runs across all 257 bins: 592,128
+MAC/frame in that layer alone. Small parameter count does not mean low compute.
+
+## Artifact generation and availability
+
+Run from the repository root with the locally retained trained checkpoint:
+
+```bash
+uv run python -m vaani.export runs/vaani_tier46_refiner/best.pt --out deploy/tier46/cascade.onnx --seconds 10 --report-json deploy/tier46/trained_cascade_timing.json
+```
+
+`runs/` checkpoints and generated ONNX files are intentionally ignored. A clean
+clone can reproduce the matrix from included CSVs, but cannot reproduce this
+trained export without the checkpoint. No public checkpoint download is currently
+specified. Obtain the exact checkpoint from the experiment owner and verify
+SHA256 `932b086a2842eb88f4232b087fd99f8769bd102135e6b887dd6ecf38ab5aa2f6`.
+The checkpoint embeds both stages; no separate anchor is required for export.
+Existing `cascade_untrained.*` files are scratch identity-cascade artifacts and
+must not be substituted for the trained graph.
+
 ## Golden vectors
-`dsp_reference/vectors/<case>.wav` (stereo input) and `<case>.npz` (n_hat, features, gate, burst, reliability). A port passes when n_hat matches to 1e-4 and gate/burst match exactly. The current vectors are for the r1/r2 DSP (no limiter, level-diff rule); they are regenerated with the r3 `dsp` block when an r3 checkpoint becomes the shipped model, and the port then also has to match the limited `mix`.
+
+`dsp_reference/vectors_cascade/<case>.wav` and `<case>.npz` cover the trained
+cascade's DSP configuration: limiter, blocking matrix, differential-jump
+controller. `config.json` binds that configuration to the checkpoint SHA256.
+Match `n_hat`, `features` and limited `mix` within 1e-4, and `gate`, `burst` and
+`reliability` exactly. Replay tests require both this set and the preserved
+legacy r1/r2 set in `dsp_reference/vectors/`.
+
+```bash
+uv run python scripts/make_golden_vectors.py --checkpoint runs/vaani_tier46_refiner/best.pt
+uv run pytest tests/test_golden_vectors.py -q
+```
 
 ## Not covered here
 Output crossfade/bypass on low reliability, overrun handling, and radio interfacing are the DSP/embedded leads' responsibility.

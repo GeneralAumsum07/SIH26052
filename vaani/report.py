@@ -2,7 +2,8 @@
 Nominal envelope = unclipped, no ref dropout, SNR in {0,5,10}.
 Severe envelope = everything else (reported, never claimed as target-met).
 """
-import argparse, re
+import argparse, glob, hashlib, re, warnings
+from pathlib import Path
 
 import numpy as np, pandas as pd
 
@@ -39,7 +40,12 @@ def wer(hyp, ref):
 def add_wer(df, ref_csv):
     """Attach per-item WER of asr_text against the clean-reference transcript (matched on bucket+id)."""
     ref = pd.read_csv(ref_csv, dtype={"id": str}).rename(columns={"asr_text": "ref_text"})
-    df = df.astype({"id": str}).merge(ref, on=["bucket", "id"], how="left")
+    if ref.duplicated(["bucket", "id"]).any():
+        raise ValueError("ASR reference contains duplicate (bucket, id) keys")
+    # Only attach the transcript: metadata in a future reference must not rename
+    # evaluation columns or multiply observations (and thereby narrow the CIs).
+    df = df.astype({"id": str}).merge(ref[["bucket", "id", "ref_text"]],
+                                        on=["bucket", "id"], how="left", validate="many_to_one")
     # an absent hypothesis means the eval ran without ASR, not that the system erased the speech
     df["wer"] = [wer(h, r) if isinstance(h, str) and h else np.nan for h, r in zip(df.asr_text, df.ref_text.fillna(""))]
     # the WER normaliser is Latin-only and Whisper-small's Hindi is unreliable: non-English speech gets no WER at all
@@ -51,9 +57,31 @@ def add_wer(df, ref_csv):
 def fmt(t): return "n/a" if not np.isfinite(t[0]) else f"{t[0]:.3f} [{t[1]:.3f},{t[2]:.3f}]"
 
 
-def _mark(metric, mean):
+def _mark(metric, interval):
+    mean, lower, _ = interval
     if metric not in TARGETS or not np.isfinite(mean): return ""
-    return " ✓" if mean > TARGETS[metric] else " ✗"
+    if mean <= TARGETS[metric]: return " ✗"
+    return " ✓" if lower > TARGETS[metric] else " ~"
+
+
+def load_results(paths):
+    """Partial snapshots overlap the final result; never count them as new items."""
+    frames = []
+    # PowerShell leaves wildcards literal for native executables. Expand here as
+    # well so the documented command consumes the same files on every platform.
+    expanded = [p for pattern in paths for p in (sorted(glob.glob(str(pattern))) if glob.has_magic(str(pattern)) else [pattern])]
+    for p in expanded:
+        if ".partial" in Path(p).name:
+            warnings.warn(f"Skipping partial evaluation snapshot: {p}", stacklevel=2)
+            continue
+        frames.append(pd.read_csv(p, dtype={"id": str}))
+    if not frames:
+        raise ValueError("No final evaluation CSVs supplied")
+    df = pd.concat(frames, ignore_index=True)
+    keys = ["system", "bucket", "id"]
+    if df.duplicated(keys).any():
+        raise ValueError("Evaluation CSVs contain duplicate (system, bucket, id) keys; supply each final result once")
+    return df
 
 
 def _envelope(g):
@@ -73,7 +101,7 @@ def _cell(g, metrics=METRICS):
     if len(g) == 0: return "-"
     parts = []
     for m in metrics:
-        t = ci(g[m]); parts.append(f"{m}=n/a" if not np.isfinite(t[0]) else f"{m}={t[0]:.3f}{_mark(m, t[0])}")
+        t = ci(g[m]); parts.append(f"{m}=n/a" if not np.isfinite(t[0]) else f"{m}={t[0]:.3f}{_mark(m, t)}")
     if "recovery_s" in g and g.recovery_s.notna().any():
         r = pd.to_numeric(g.recovery_s, errors="coerce")
         parts.append(f"rec={r.median():.2f}s")
@@ -85,7 +113,7 @@ def main():
     ap.add_argument("--asr-ref", help="results/asr/clean.csv from scripts/asr_clean_reference.py; adds a WER column")
     ap.add_argument("--protocol", help="results_r2/tier46/anchor.json: prints the frozen split/anchor identity above the tables")
     a = ap.parse_args()
-    df = pd.concat([pd.read_csv(p, dtype={"id": str}) for p in a.csvs])
+    df = load_results(a.csvs)
     metrics = list(METRICS)
     for m in metrics: df[m] = df[m] if m in df else np.nan   # r1/r2 CSVs predate dnsmos_ovrl; they read n/a
     if a.asr_ref:
@@ -96,6 +124,12 @@ def main():
     df["snr_gain"] = df.snr_out - df.snr_in  # improvement reading; the target is judged on absolute snr_out
     df["nominal"] = (~df.clipped) & (~df.ref_dropout) & df.fault.isna() & df.snr_in.isin([0, 5, 10])
     lines = ["# Ablation matrix", ""]
+    if "h_gtcrn_iva" in set(df.system):
+        # Keep the measurements auditable, but label every table occurrence so
+        # copying a row cannot silently turn our failed integration into a paper result.
+        df["system"] = df.system.replace({"h_gtcrn_iva": "h_gtcrn_iva (unreproduced integration)"})
+        lines += ["H-GTCRN IVA: our integration of the IVA variant; we have not reproduced the authors' configuration/results. "
+                  "This diagnostic row is not presented as their result and must not support comparative superiority claims.", ""]
     if a.protocol:
         import json
         pr = json.loads(open(a.protocol, encoding="utf-8").read()); an = pr.get("anchor", {})
@@ -105,18 +139,21 @@ def main():
              "PESQ: wideband P.862.2 @16 kHz (`pesq` package). P.862 is withdrawn by ITU in favour of P.863; reported because the brief requests it.",
              "SNR_out = 10log10(||s||^2/||s_hat-s||^2) vs clean primary (distortion counts as error). SI-SDR reported separately.",
              "Targets (problem statement): SNR_out>15 dB, STOI>0.85, PESQ>2.5 - marked per bucket row and per overall nominal row.",
+             "Legend: ✓ = lower 95% bootstrap bound exceeds target; ~ = mean exceeds target but lower bound does not; ✗ = mean does not exceed target. "
+             "Intervals resample evaluation items for one checkpoint; they do not measure training-seed variability or give a joint three-target guarantee.",
              *(["WER: faster-whisper small on the enhanced output vs the SAME model's transcript of the clean reference (no human transcripts in the eval set) - supporting evidence only. English speech only (LibriSpeech); Hindi rows report n/a."] if a.asr_ref else []), "",
+             *([f"ASR reference: `{Path(a.asr_ref).as_posix()}`, sha256 `{hashlib.sha256(Path(a.asr_ref).read_bytes()).hexdigest()}`.", ""] if a.asr_ref else []),
              "## Nominal envelope (unclipped, no reference fault, no fault bucket, input SNR 0/5/10 dB)", "",
              "snr_gain = snr_out - snr_in, the improvement reading; targets are marked on absolute snr_out only.", "",
              "| system | n | " + " | ".join(metrics + ["snr_gain"]) + " |", "|---|---|" + "---|" * (len(metrics) + 1)]
     for sysname, g in df[df.nominal].groupby("system"):
         cells = []
         for m in metrics + ["snr_gain"]:
-            t = ci(g[m]); cells.append(fmt(t) + _mark(m, t[0]))
+            t = ci(g[m]); cells.append(fmt(t) + _mark(m, t))
         lines.append(f"| {sysname} | {len(g)} | " + " | ".join(cells) + " |")
     # The nominal average hides a large pass region under the 0 dB bucket. Report the declared operating envelope:
     # per noise class, the lowest input SNR from which every bucket up to +15 dB meets all three targets.
-    lines += ["", "## Operating envelope (lowest input SNR at which SNR_out>15 / STOI>0.85 / PESQ>2.5 all hold, and stay met above it)", "",
+    lines += ["", "## Operating envelope (point estimates only: lowest input SNR at which all three means exceed targets and stay above at higher tested SNRs)", "",
               "| system | " + " | ".join(classes := sorted(df[df.fault.isna()].noise_class.dropna().unique())) + " |", "|---|" + "---|" * len(classes)]
     for sysname, g in df[df.fault.isna()].groupby("system"):
         lines.append(f"| {sysname} | " + " | ".join(_envelope(g[g.noise_class == c]) for c in classes) + " |")
@@ -126,10 +163,11 @@ def main():
         lines += ["", "## Transient-present envelope (fault_burst_* buckets: +24/+36 dB bursts and overload, input SNR 0/5 dB)", "",
                   "| system | n | " + " | ".join(metrics) + " |", "|---|---|" + "---|" * len(metrics)]
         for sysname, g in burst.groupby("system"):
-            lines.append(f"| {sysname} | {len(g)} | " + " | ".join(fmt(t := ci(g[m])) + _mark(m, t[0]) for m in metrics) + " |")
+            lines.append(f"| {sysname} | {len(g)} | " + " | ".join(fmt(t := ci(g[m])) + _mark(m, t) for m in metrics) + " |")
     if df.fault.notna().any():
         # fault buckets share seeds with fault_none, so each row reads as a delta against that reference clip set
         lines += ["", "## Reliability faults (outside the nominal envelope; same speech/noise/room per seed, fault is the only variable)", "",
+                  "Fault buckets, including fault_none, use input SNR 0/5 dB; nominal uses 0/5/10 dB. Compare faults with fault_none, not with the nominal aggregate.", "",
                   "| fault | " + " | ".join(systems := sorted(df.system.unique())) + " |", "|---|" + "---|" * len(systems)]
         fd = df[df.fault.notna()]
         for fault, gf in fd.groupby("fault"):

@@ -1,0 +1,13 @@
+{
+  "controller_on": true,
+  "dsp": {
+    "blocking": true,
+    "controller": {
+      "block_margin_db": 10.0,
+      "diff_jump_max_db": 3.0
+    },
+    "limiter": true
+  },
+  "checkpoint": "runs/vaani_tier46_refiner/best.pt",
+  "checkpoint_sha256": "932b086a2842eb88f4232b087fd99f8769bd102135e6b887dd6ecf38ab5aa2f6"
+}

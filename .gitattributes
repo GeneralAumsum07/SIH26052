@@ -1,0 +1,3 @@
+# Preserve the exact ASR input bytes: the matrix records their SHA256 and must
+# reproduce across Windows/Linux regardless of core.autocrlf.
+results_r2/asr/clean.csv -text

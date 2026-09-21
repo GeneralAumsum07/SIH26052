@@ -3,6 +3,21 @@ from vaani import export
 from vaani.models.vaani_net import VaaniNet
 
 
+def test_refiner_cost_counts_full_frequency_convolution():
+    from vaani.models.residual_refiner import ResidualRefiner
+    m = ResidualRefiner().eval()
+    spec = torch.zeros(1, 257, 1, 2)
+    cost = export.layer_macs(m, (spec, spec, spec))
+    assert sum(cost.values()) == 633248
+    assert cost["c1"] == 592128
+
+
+def test_gru_cost_includes_both_directions_and_recurrent_matrices():
+    # Two time steps, batch three, two directions: each gate uses input and hidden matrices.
+    m = torch.nn.GRU(4, 5, batch_first=True, bidirectional=True)
+    assert sum(export.layer_macs(m, (torch.zeros(3, 2, 4),)).values()) == 3 * 2 * 2 * 3 * 5 * (4 + 5)
+
+
 def test_export_parity(tmp_path):
     ck = tmp_path / "m.pt"
     torch.save({"model": VaaniNet().state_dict(), "config": {"model": "vaani", "controller_on": True}, "step": 0}, ck)

@@ -10,7 +10,9 @@ __pycache__/
 .obsidian/
 
 # eval runtime state: regenerable from the test split + checkpoints; per-system CSVs and matrix.md stay tracked
-results*/asr/
+results*/asr/*
+# The clean test reference is report input, not disposable runtime state.
+!results_r2/asr/clean.csv
 results*/**/*.log
 results*/*DONE
 results*/.eval_report.lock
@@ -19,3 +21,7 @@ results*/**/spectra/
 
 # published RIR banks (GitHub release rir-banks-2026-09-21); 1.2 GB, fetched by hash in remote_setup.sh
 deploy/rir_banks/
+
+# Exported graphs and scratch checkpoints are regenerated from local run checkpoints.
+deploy/tier46/*.onnx
+deploy/tier46/*.pt
