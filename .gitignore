@@ -16,3 +16,6 @@ results*/*DONE
 results*/.eval_report.lock
 results*/*.partial*.csv
 results*/**/spectra/
+
+# published RIR banks (GitHub release rir-banks-2026-09-21); 1.2 GB, fetched by hash in remote_setup.sh
+deploy/rir_banks/
