@@ -10,7 +10,7 @@ D=data/download; mkdir -p $D/{dns,ears,gunshots,drone} data/manifests data/rirs 
 # --- tooling ------------------------------------------------------------------------------------------------
 command -v aria2c >/dev/null || { apt-get update -qq && apt-get install -y -qq aria2 tmux rsync libsndfile1 build-essential > /dev/null; }  # build-essential: pesq builds from sdist on Linux
 command -v uv >/dev/null || { curl -LsSf https://astral.sh/uv/install.sh | sh; export PATH="$HOME/.local/bin:$PATH"; }
-[ -d .venv ] || uv sync --quiet --python 3.12      # torch cu128 wheels from pyproject; driver 595 / CUDA 13.2 runs them
+[ -d .venv ] || uv sync --quiet --all-extras --python 3.12   # torch cu128 wheels from pyproject; --all-extras: without numba the NLMS runs in pure Python and the GPU idles (2026-09-21)
 uv run python -c "import torch; assert torch.cuda.is_available(); print(torch.cuda.get_device_name(0))"
 
 # --- public archives, all at once (the box has the pipe; the laptop did not) --------------------------------
@@ -38,15 +38,19 @@ until [ -f $D/GATED_OK ]; do echo "$(date +%H:%M) waiting for the laptop upload 
 
 # --- corpus -> 16 kHz flac + manifests (scan is CPU-bound; 32 cores make this minutes, not the laptop's hour)
 [ -f data/manifests/MANIFESTS_OK ] || { uv run python scripts/fetch_data.py --dns-shards \
-  $(for s in freesound_001 audioset_000 audioset_001 audioset_002 audioset_003 audioset_004 audioset_005 audioset_006; do
+  $(for s in freesound_000 freesound_001 audioset_000 audioset_001 audioset_002 audioset_003 audioset_004 audioset_005 audioset_006; do
       echo $B/datasets_fullband.noise_fullband.$s.tar.bz2; done) && touch data/manifests/MANIFESTS_OK; }
 # relabel pass (MAD shooting/shelling/footsteps -> changing, ESC-50 impulsive shortlist) is inside the scanners now;
 # run it anyway so a manifest restored from the laptop matches
 uv run python scripts/relabel_noise_class.py data/manifests/*.parquet   # positional manifests are required; bare call aborted the bootstrap
+# r3+ recipes train on the full train-clean-100; fetch_data only writes the 20 h librispeech.parquet (missed on two boxes)
+[ -f data/manifests/librispeech_100h.parquet ] || uv run python scripts/make_librispeech_100h.py
 
 # --- RIR banks: r1/r2 bank (eval render + r1/r2 configs) and the r3 armoured bank -----------------------------
-[ -f data/rirs/bank.npz ]    || uv run python scripts/make_rir_bank.py --out data/rirs/bank.npz
-[ -f data/rirs/bank_r3.npz ] || uv run python scripts/make_rir_bank.py --out data/rirs/bank_r3.npz --armoured-frac 0.2 --max-len-s 1.0
+# workers capped: a 64-process pool hit the host's pid cgroup (pids.max 7680, threads count) even with the thread caps build_bank sets
+W=$(( $(nproc) < 32 ? $(nproc) : 32 ))
+[ -f data/rirs/bank.npz ]    || uv run python scripts/make_rir_bank.py --out data/rirs/bank.npz --workers $W
+[ -f data/rirs/bank_r3.npz ] || uv run python scripts/make_rir_bank.py --out data/rirs/bank_r3.npz --armoured-frac 0.2 --max-len-s 1.0 --workers $W
 
 # --- frozen eval set: use the laptop copy if it arrived, else re-render and compare the hash -----------------
 if [ ! -f data/eval_r2/test/EVALSET_HASH ]; then
@@ -56,5 +60,5 @@ if [ ! -f data/eval_r2/test/EVALSET_HASH ]; then
 fi
 echo "eval_r2 test hash: $(cat data/eval_r2/test/EVALSET_HASH)  (laptop: eda217ab2a38)"
 
-# --- round 3 --------------------------------------------------------------------------------------------------
-bash scripts/run_round.sh 3
+# --- training: `remote_setup.sh 3` (default) runs the round-3 matrix; `remote_setup.sh tier46 [config]` runs the refiner
+if [ "${1:-3}" = tier46 ]; then bash scripts/run_tier46.sh "${2:-configs/exp/vaani_tier46_refiner.yaml}"; else bash scripts/run_round.sh "${1:-3}"; fi
