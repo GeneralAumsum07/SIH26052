@@ -101,8 +101,19 @@ def build_bank(path: Path, n: int = 5000, seed: int = 0, n_noise: int = 3, armou
     params = [draw_room_params(rng, n_noise, bool(a)) for a in arm]
     workers = workers or os.cpu_count() or 1
     if workers > 1:
-        from multiprocessing import Pool
-        with Pool(workers) as pool: sims = pool.map(_sim, [(p, max_len) for p in params], chunksize=8)
+        from multiprocessing import get_context
+        # one BLAS/OpenMP thread per worker: without this each process spawns a thread per core and a 64-worker
+        # pool on a 256-vCPU host exhausted the container's pid cgroup (2026-09-21). Spawned children read the
+        # environment at start, so the cap is set before the pool exists and restored afterwards.
+        caps = {k: "1" for k in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMBA_NUM_THREADS")}
+        saved = {k: os.environ.get(k) for k in caps}; os.environ.update(caps)
+        try:
+            with get_context("spawn").Pool(workers) as pool:
+                sims = pool.map(_sim, [(p, max_len) for p in params], chunksize=8)
+        finally:
+            for k, v in saved.items():
+                if v is None: os.environ.pop(k, None)
+                else: os.environ[k] = v
     else:
         sims = [simulate_from_params(p, max_len=max_len) for p in params]
     sp, nz, rt = [s["speech"] for s in sims], [s["noise"] for s in sims], [s["rt60"] for s in sims]
