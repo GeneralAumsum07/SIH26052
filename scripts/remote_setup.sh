@@ -29,9 +29,9 @@ EARS=https://github.com/facebookresearch/ears_dataset/releases/download/dataset
 [ -f $D/PUBLIC_OK ] || { aria2c -c -j8 -x8 -s8 -k 10M --max-tries=0 --retry-wait=10 --file-allocation=none \
   --console-log-level=warn --summary-interval=30 -i $D/public.aria2 && touch $D/PUBLIC_OK; }
 # gunshot zip: aria2c writes it cleanly here, but keep the md5 gate the laptop needed (Zenodo metadata)
-echo "6724e9085801fa4c7865f5ee312a0886  $D/gunshots/edge-collected-gunshot-audio.zip" | md5sum -c -
+[ -f $D/CLEANED ] || echo "6724e9085801fa4c7865f5ee312a0886  $D/gunshots/edge-collected-gunshot-audio.zip" | md5sum -c -
 # fetch_data.download() re-fetches anything without a .ok marker, so mark every archive aria2c finished
-for f in $D/train-clean-100.tar.gz $D/esc50/master.zip $D/gunshots/edge-collected-gunshot-audio.zip $D/drone/master.zip $D/ears/p*.zip $D/dns/*.tar.bz2; do touch "$f.ok"; done
+[ -f $D/CLEANED ] || for f in $D/train-clean-100.tar.gz $D/esc50/master.zip $D/gunshots/edge-collected-gunshot-audio.zip $D/drone/master.zip $D/ears/p*.zip $D/dns/*.tar.bz2; do touch "$f.ok"; done
 
 # --- gated inputs come from the laptop (rsync, slow uplink); wait for the marker rsync drops last -----------
 until [ -f $D/GATED_OK ]; do echo "$(date +%H:%M) waiting for the laptop upload (data/download/GATED_OK)"; sleep 60; done
@@ -47,10 +47,22 @@ uv run python scripts/relabel_noise_class.py data/manifests/*.parquet   # positi
 [ -f data/manifests/librispeech_100h.parquet ] || uv run python scripts/make_librispeech_100h.py
 
 # --- RIR banks: r1/r2 bank (eval render + r1/r2 configs) and the r3 armoured bank -----------------------------
+# A regenerated bank is never the same file: pyroomacoustics differs across machines even for the non-armoured bank
+# (laptop dafb2e84 vs box 491b85f2, 2026-09-21) and ray tracing is nondeterministic. Fetch the published copies by hash
+# (RIR_BANK_URL: a GitHub release assets base, e.g. https://github.com/<owner>/<repo>/releases/download/rir-banks-2026-09-21)
+# and fall back to generation only when no release is configured or the download fails.
+fetch_bank() {  # $1 file, $2 sha256
+  [ -n "${RIR_BANK_URL:-}" ] || return 1
+  aria2c -c -x8 -s8 -k 10M --max-tries=5 --console-log-level=warn -d data/rirs -o "$1" "$RIR_BANK_URL/$1" || return 1
+  echo "$2  data/rirs/$1" | sha256sum -c - || { rm -f "data/rirs/$1"; return 1; }
+}
 # workers capped: a 64-process pool hit the host's pid cgroup (pids.max 7680, threads count) even with the thread caps build_bank sets
 W=$(( $(nproc) < 32 ? $(nproc) : 32 ))
-[ -f data/rirs/bank.npz ]    || uv run python scripts/make_rir_bank.py --out data/rirs/bank.npz --workers $W
-[ -f data/rirs/bank_r3.npz ] || uv run python scripts/make_rir_bank.py --out data/rirs/bank_r3.npz --armoured-frac 0.2 --max-len-s 1.0 --workers $W
+[ -f data/rirs/bank.npz ]    || fetch_bank bank.npz    dafb2e84e34099ff4a92db4e0941fbceb6aa2ef85c5408c8f3f336c652e1f988 \
+  || uv run python scripts/make_rir_bank.py --out data/rirs/bank.npz --workers $W
+[ -f data/rirs/bank_r3.npz ] || fetch_bank bank_r3.npz e4e67463072e1dca14b94bef97a99bb85da34ebee7ec657a1f1dc7554df1b59f \
+  || uv run python scripts/make_rir_bank.py --out data/rirs/bank_r3.npz --armoured-frac 0.2 --max-len-s 1.0 --workers $W
+sha256sum data/rirs/bank.npz data/rirs/bank_r3.npz   # in the log for the run record; a regenerated bank shows up here as a new hash
 
 # --- frozen eval set: use the laptop copy if it arrived, else re-render and compare the hash -----------------
 if [ ! -f data/eval_r2/test/EVALSET_HASH ]; then
@@ -59,6 +71,13 @@ if [ ! -f data/eval_r2/test/EVALSET_HASH ]; then
   uv run python scripts/render_eval_sets.py --manifests $M --split test --out data/eval_r2 --faults
 fi
 echo "eval_r2 test hash: $(cat data/eval_r2/test/EVALSET_HASH)  (laptop: eda217ab2a38)"
+
+# --- extracted archives: the manifests point at data/raw, so drop everything except the stage markers ----------------
+if [ ! -f $D/CLEANED ]; then
+  uv run python scripts/check_manifests_off_download.py
+  find $D -mindepth 1 -maxdepth 1 ! -name '*_OK' ! -name public.aria2 -exec rm -rf {} +
+  touch $D/CLEANED; df -h . | tail -1
+fi
 
 # --- training: `remote_setup.sh 3` (default) runs the round-3 matrix; `remote_setup.sh tier46 [config]` runs the refiner
 if [ "${1:-3}" = tier46 ]; then bash scripts/run_tier46.sh "${2:-configs/exp/vaani_tier46_refiner.yaml}"; else bash scripts/run_round.sh "${1:-3}"; fi
