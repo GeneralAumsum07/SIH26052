@@ -18,6 +18,56 @@ COH_ALPHA = 0.9  # per-frame EMA for the coherence spectra: ~150 ms at a 16 ms h
 DF_CACHE_MAX = 4  # df_cache is always exported at this depth so the ONNX signature is fixed
 
 
+def _validate_architecture(channels, up=.02, down=.3):
+    # Grouped bidirectional GRUs split channels twice. Multiples of four preserve
+    # the encoder/decoder and recurrent residual dimensions at every width.
+    if not isinstance(channels, int) or channels < 4 or channels % 4:
+        raise ValueError("channels must be a positive multiple of four (8/16/32 for the frontier)")
+    if not 0 < up <= down <= 1:
+        raise ValueError("noise-floor rates must satisfy 0 < up <= down <= 1")
+
+
+def _noise_step(spec_t, state, up=.02, down=.3):
+    """Power-domain recursive floor; state[:,1] is an explicit initialized flag.
+
+    Seed from the first observed frame, not zero: otherwise the ratio is enormous
+    at stream start and a long quiet lead-in is implicitly assumed. This is an
+    asymmetric floor heuristic, not an unbiased noise PSD estimator.
+    """
+    power = spec_t[..., :2].float().square().sum(-1)
+    floor = state[:, 0]
+    rate = torch.where(power > floor, up, down)
+    floor = torch.where(state[:, 1] > 0, floor + rate * (power - floor), power)
+    features = torch.stack([torch.log1p(floor), torch.log1p((power / (floor + 1e-8)).clamp(max=1e4))], 1)
+    return features, torch.stack([floor, torch.ones_like(floor)], 1)
+
+
+def noise_floor_features(spec6, state=None, up=.02, down=.3):
+    """Causal two-channel (B,2,T,257) map; same update used by the streaming twin."""
+    if state is None:
+        state = spec6.new_zeros(spec6.shape[0], 2, spec6.shape[1], dtype=torch.float32)
+    frames = []
+    for t in range(spec6.shape[2]):
+        feat, state = _noise_step(spec6[:, :, t], state, up, down)
+        frames.append(feat)
+    return torch.stack(frames, 2), state
+
+
+def _decoder(channels, stream=False):
+    # Retain the original module/key layout so default checkpoints load exactly.
+    decoder = gs.StreamDecoder() if stream else Decoder()
+    if channels == 16:
+        return decoder
+    block = gs.StreamGTConvBlock if stream else GTConvBlock
+    conv = gs.ConvBlock if stream else ConvBlock
+    decoder.de_convs = nn.ModuleList([
+        block(channels, channels, (3, 3), (1, 1), (0 if stream else 2*d, 1), (d, 1), use_deconv=True)
+        for d in (5, 2, 1)
+    ] + [conv(channels, channels, (1, 5), (1, 2), (0, 2), groups=2, use_deconv=True),
+         conv(channels, 2, (1, 5), (1, 2), (0, 2), use_deconv=True, is_last=True)])
+    return decoder
+
+
 def _sig_feats(spec6):
     """(B,257,T,6) -> (B,9,T,257): per signal (mag, re, im)."""
     outs = []
@@ -56,12 +106,12 @@ FEAT_SCALE = [1 / 10.0, 1.0, 1 / 5.0, 1.0, 1.0, 1.0, *([1.0] * 8), 1 / 10.0, 1.0
 
 
 class _Encoder(nn.Module):
-    def __init__(self, blocks, film=True):
+    def __init__(self, blocks, film=True, channels=16):
         super().__init__()
         self.en_convs = nn.ModuleList(blocks)
         self.film = None
         if film:
-            self.film = nn.Linear(N_FEAT, 16)
+            self.film = nn.Linear(N_FEAT, channels)
             nn.init.zeros_(self.film.weight); nn.init.zeros_(self.film.bias)  # inert at step 0
         # dB-valued features reach +/-40 while the rest are 0..1; unscaled they wreck the pretrained
         # encoder within the first epoch. Raw features stay the deploy contract, scaling lives here.
@@ -75,19 +125,19 @@ class _Encoder(nn.Module):
         return x + self.film(f).permute(0, 2, 1)[..., None]
 
 
-def _n_in(coh):
-    return (N_SIG * 3 + (1 if coh else 0)) * 3
+def _n_in(coh, noise_floor=False):
+    return (N_SIG * 3 + int(coh) + 2 * int(noise_floor)) * 3
 
 
 class Encoder(_Encoder):
-    def __init__(self, film=True, coh=False):
+    def __init__(self, film=True, coh=False, channels=16, noise_floor=False):
         super().__init__([
-            ConvBlock(_n_in(coh), 16, (1, 5), stride=(1, 2), padding=(0, 2)),
-            ConvBlock(16, 16, (1, 5), stride=(1, 2), padding=(0, 2), groups=2),
-            GTConvBlock(16, 16, (3, 3), stride=(1, 1), padding=(0, 1), dilation=(1, 1)),
-            GTConvBlock(16, 16, (3, 3), stride=(1, 1), padding=(0, 1), dilation=(2, 1)),
-            GTConvBlock(16, 16, (3, 3), stride=(1, 1), padding=(0, 1), dilation=(5, 1)),
-        ], film)
+            ConvBlock(_n_in(coh, noise_floor), channels, (1, 5), stride=(1, 2), padding=(0, 2)),
+            ConvBlock(channels, channels, (1, 5), stride=(1, 2), padding=(0, 2), groups=2),
+            GTConvBlock(channels, channels, (3, 3), stride=(1, 1), padding=(0, 1), dilation=(1, 1)),
+            GTConvBlock(channels, channels, (3, 3), stride=(1, 1), padding=(0, 1), dilation=(2, 1)),
+            GTConvBlock(channels, channels, (3, 3), stride=(1, 1), padding=(0, 1), dilation=(5, 1)),
+        ], film, channels)
 
     def forward(self, x, feats):
         en_outs = []
@@ -103,10 +153,10 @@ class DeepFilterHead(nn.Module):
     """Taps 1..K-1 of a per-bin complex FIR over past frames, from the decoder's last hidden map.
     Plain tanh, no BatchNorm: zero weights give exactly zero taps, so a CRM warm start is preserved
     at step 0 (a BN on an all-zero channel would divide its gradient by sqrt(eps))."""
-    def __init__(self, order):
+    def __init__(self, order, channels=16):
         super().__init__()
         self.order = order
-        self.conv = nn.ConvTranspose2d(16, 2 * (order - 1), (1, 5), stride=(1, 2), padding=(0, 2))
+        self.conv = nn.ConvTranspose2d(channels, 2 * (order - 1), (1, 5), stride=(1, 2), padding=(0, 2))
         nn.init.zeros_(self.conv.weight); nn.init.zeros_(self.conv.bias)
 
     def forward(self, h):
@@ -124,15 +174,19 @@ def _apply_taps(mask_fn, taps, past):
 class VaaniNet(nn.Module):
     """forward(spec6 (B,257,T,6), feats (B,T,18)) -> enhanced primary (B,257,T,2)."""
 
-    def __init__(self, df_order: int = 1, film: bool = True, coh: bool = False):
+    def __init__(self, df_order: int = 1, film: bool = True, coh: bool = False,
+                 channels: int = 16, noise_floor: bool = False, noise_floor_up=.02, noise_floor_down=.3):
         super().__init__()
         assert 1 <= df_order <= DF_CACHE_MAX, df_order
+        _validate_architecture(channels, noise_floor_up, noise_floor_down)
+        self.channels, self.use_noise_floor = channels, noise_floor
+        self.noise_floor_up, self.noise_floor_down = noise_floor_up, noise_floor_down
         self.df_order, self.use_coh = df_order, coh
         self.erb = ERB(65, 64); self.sfe = SFE(3, 1)
-        self.encoder = Encoder(film, coh)
-        self.dpgrnn1 = DPGRNN(16, 33, 16); self.dpgrnn2 = DPGRNN(16, 33, 16)
-        self.decoder = Decoder(); self.mask = Mask()
-        self.df = DeepFilterHead(df_order) if df_order > 1 else None
+        self.encoder = Encoder(film, coh, channels, noise_floor)
+        self.dpgrnn1 = DPGRNN(channels, 33, channels); self.dpgrnn2 = DPGRNN(channels, 33, channels)
+        self.decoder = _decoder(channels); self.mask = Mask()
+        self.df = DeepFilterHead(df_order, channels) if df_order > 1 else None
 
     def _decode(self, feat, en_outs):
         """Decoder.forward, but also hands back the last block's input for the deep-filter head."""
@@ -146,7 +200,11 @@ class VaaniNet(nn.Module):
     def forward(self, spec6, feats):
         prim = spec6[..., :2]
         coh = coherence_map(spec6)[0] if self.use_coh else None
-        feat = self.erb.bm(_cat_coh(_sig_feats(spec6), coh))   # (B,9|10,T,129)
+        feat = _cat_coh(_sig_feats(spec6), coh)
+        if self.use_noise_floor:
+            floor, _ = noise_floor_features(spec6, up=self.noise_floor_up, down=self.noise_floor_down)
+            feat = torch.cat([feat, floor], 1)
+        feat = self.erb.bm(feat)
         feat = self.sfe(feat)                                    # (B,27|30,T,129)
         feat, en_outs = self.encoder(feat, feats)
         feat = self.dpgrnn1(feat); feat = self.dpgrnn2(feat)
@@ -168,6 +226,12 @@ class VaaniNet(nn.Module):
         """Load a checkpoint of a possibly narrower architecture: first-conv input slices it lacks stay zero,
         FiLM weights are dropped when film is off, deep-filter taps keep their zero init."""
         own = self.state_dict(); first = "encoder.en_convs.0.conv.weight"
+        if sd[first].shape[0] != self.channels:
+            raise ValueError("Width changes require scratch initialization; warm_start only widens input features")
+        source_extra = sd[first].shape[1] // 3 - 9
+        source_coh, source_floor = bool(source_extra % 2), source_extra >= 2
+        if source_extra not in (0, 1, 2, 3) or (source_coh and not self.use_coh) or (source_floor and not self.use_noise_floor):
+            raise ValueError("Warm start cannot remove existing spectral features")
         for k, v in sd.items():
             if k == "encoder.feat_scale" or (k.startswith("encoder.film") and self.encoder.film is None):
                 continue
@@ -176,7 +240,13 @@ class VaaniNet(nn.Module):
             if own[k].shape == v.shape:
                 own[k] = v
             elif k == first and own[k].shape[1] > v.shape[1]:
-                new = torch.zeros_like(own[k]); new[:, :v.shape[1]] = v; own[k] = new
+                new = torch.zeros_like(own[k]); new[:, :27] = v[:, :27]
+                if source_coh:
+                    new[:, 27:30] = v[:, 27:30]
+                if source_floor:
+                    start = 27 + 3 * int(self.use_coh)
+                    new[:, start:start+6] = v[:, 27+3*int(source_coh):]
+                own[k] = new
             else:
                 raise KeyError(f"shape mismatch for {k!r}: {tuple(v.shape)} -> {tuple(own[k].shape)}")
         self.load_state_dict(own)
@@ -186,6 +256,8 @@ class VaaniNet(nn.Module):
     def from_pretrained_gtcrn(cls, ckpt_path, **model_cfg):
         """Copy every GTCRN weight; first conv gets primary slice, rest stays zero."""
         v = cls(**model_cfg)
+        if v.channels != 16:
+            raise ValueError("The pretrained GTCRN has channels=16; other widths require scratch initialization")
         sd = torch.load(ckpt_path, map_location="cpu", weights_only=True)["model"]
         own = v.state_dict()
         first = "encoder.en_convs.0.conv.weight"
@@ -206,14 +278,14 @@ class VaaniNet(nn.Module):
 
 
 class StreamEncoder(_Encoder):
-    def __init__(self, film=True, coh=False):
+    def __init__(self, film=True, coh=False, channels=16, noise_floor=False):
         super().__init__([
-            gs.ConvBlock(_n_in(coh), 16, (1, 5), stride=(1, 2), padding=(0, 2)),
-            gs.ConvBlock(16, 16, (1, 5), stride=(1, 2), padding=(0, 2), groups=2),
-            gs.StreamGTConvBlock(16, 16, (3, 3), stride=(1, 1), padding=(0, 1), dilation=(1, 1)),
-            gs.StreamGTConvBlock(16, 16, (3, 3), stride=(1, 1), padding=(0, 1), dilation=(2, 1)),
-            gs.StreamGTConvBlock(16, 16, (3, 3), stride=(1, 1), padding=(0, 1), dilation=(5, 1)),
-        ], film)
+            gs.ConvBlock(_n_in(coh, noise_floor), channels, (1, 5), stride=(1, 2), padding=(0, 2)),
+            gs.ConvBlock(channels, channels, (1, 5), stride=(1, 2), padding=(0, 2), groups=2),
+            gs.StreamGTConvBlock(channels, channels, (3, 3), stride=(1, 1), padding=(0, 1), dilation=(1, 1)),
+            gs.StreamGTConvBlock(channels, channels, (3, 3), stride=(1, 1), padding=(0, 1), dilation=(2, 1)),
+            gs.StreamGTConvBlock(channels, channels, (3, 3), stride=(1, 1), padding=(0, 1), dilation=(5, 1)),
+        ], film, channels)
 
     def forward(self, x, feats, conv_cache, tra_cache):
         en_outs = []
@@ -229,14 +301,19 @@ class StreamVaaniNet(nn.Module):
     """Frame-by-frame twin; load weights via convert_to_stream(stream, batch). Caches as StreamGTCRN plus
     df_cache (1,257,DF_CACHE_MAX-1,2): past primary spectra, newest first, and coh_cache (1,4,257)."""
 
-    def __init__(self, df_order: int = 1, film: bool = True, coh: bool = False):
+    def __init__(self, df_order: int = 1, film: bool = True, coh: bool = False,
+                 channels: int = 16, noise_floor: bool = False, noise_floor_up=.02, noise_floor_down=.3):
         super().__init__()
+        assert 1 <= df_order <= DF_CACHE_MAX, df_order
+        _validate_architecture(channels, noise_floor_up, noise_floor_down)
+        self.channels, self.use_noise_floor = channels, noise_floor
+        self.noise_floor_up, self.noise_floor_down = noise_floor_up, noise_floor_down
         self.df_order, self.use_coh = df_order, coh
         self.erb = gs.ERB(65, 64); self.sfe = gs.SFE(3, 1)
-        self.encoder = StreamEncoder(film, coh)
-        self.dpgrnn1 = gs.DPGRNN(16, 33, 16); self.dpgrnn2 = gs.DPGRNN(16, 33, 16)
-        self.decoder = gs.StreamDecoder(); self.mask = gs.Mask()
-        self.df = DeepFilterHead(df_order) if df_order > 1 else None
+        self.encoder = StreamEncoder(film, coh, channels, noise_floor)
+        self.dpgrnn1 = gs.DPGRNN(channels, 33, channels); self.dpgrnn2 = gs.DPGRNN(channels, 33, channels)
+        self.decoder = _decoder(channels, stream=True); self.mask = gs.Mask()
+        self.df = DeepFilterHead(df_order, channels) if df_order > 1 else None
 
     def _decode(self, x, en_outs, conv_cache, tra_cache):
         d = self.decoder.de_convs
@@ -247,13 +324,19 @@ class StreamVaaniNet(nn.Module):
         h = x + en_outs[0]
         return d[4](h), h, conv_cache, tra_cache
 
-    def forward(self, spec6, feats, conv_cache, tra_cache, inter_cache, df_cache, coh_cache):
+    def forward(self, spec6, feats, conv_cache, tra_cache, inter_cache, df_cache, coh_cache, noise_cache=None):
         prim = spec6[..., :2]
         if self.use_coh:
             msc, coh_cache = _coh_step(spec6[:, :, 0], coh_cache); coh = msc[:, None, None, :]
         else:
             coh = None
-        feat = self.sfe(self.erb.bm(_cat_coh(_sig_feats(spec6), coh)))  # ERB/SFE act per frame, so streaming is exact here
+        feat = _cat_coh(_sig_feats(spec6), coh)
+        if self.use_noise_floor:
+            if noise_cache is None:
+                raise ValueError("noise_floor model requires its per-stream noise_cache")
+            floor, noise_cache = _noise_step(spec6[:, :, 0], noise_cache, self.noise_floor_up, self.noise_floor_down)
+            feat = torch.cat([feat, floor[:, :, None]], 1)
+        feat = self.sfe(self.erb.bm(feat))
         feat, en_outs, conv_cache[0], tra_cache[0] = self.encoder(feat, feats, conv_cache[0], tra_cache[0])
         feat, inter_cache[0] = self.dpgrnn1(feat, inter_cache[0])
         feat, inter_cache[1] = self.dpgrnn2(feat, inter_cache[1])
@@ -268,11 +351,16 @@ class StreamVaaniNet(nn.Module):
             out = out + 0.0 * feats[:, 0, 0, None, None, None]  # keeps `feats` in the traced graph: the ONNX signature must not depend on model_cfg
         # shift the newest primary frame in regardless of df_order so the cache contract does not depend on it
         df_cache = torch.cat([prim, df_cache[:, :, :-1]], dim=2)
-        return out.permute(0, 3, 2, 1), conv_cache, tra_cache, inter_cache, df_cache, coh_cache
+        outputs = (out.permute(0, 3, 2, 1), conv_cache, tra_cache, inter_cache, df_cache, coh_cache)
+        return (*outputs, noise_cache) if self.use_noise_floor else outputs
 
 
-def init_caches(device="cpu"):
-    conv_cache, tra_cache, inter_cache = gs.init_caches(device)
+def init_caches(device="cpu", channels=16, noise_floor=False):
+    _validate_architecture(channels)
+    conv_cache = torch.zeros(2, 1, channels, 16, 33, device=device)
+    tra_cache = torch.zeros(2, 3, 1, 1, channels, device=device)
+    inter_cache = torch.zeros(2, 1, 33, channels, device=device)
     df_cache = torch.zeros(1, 257, DF_CACHE_MAX - 1, 2, device=device)
     coh_cache = torch.zeros(1, 4, 257, device=device)
-    return conv_cache, tra_cache, inter_cache, df_cache, coh_cache
+    caches = (conv_cache, tra_cache, inter_cache, df_cache, coh_cache)
+    return (*caches, torch.zeros(1, 2, 257, device=device)) if noise_floor else caches

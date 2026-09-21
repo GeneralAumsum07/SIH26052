@@ -6,6 +6,23 @@ import torch, torch.nn as nn
 from vaani.dsp import stft
 
 
+def absolute_snr(y_p, y_t):
+    return 10 * torch.log10((y_t ** 2).sum(-1) / (((y_p - y_t) ** 2).sum(-1) + 1e-8) + 1e-8)
+
+
+def snr_clamp_fraction(y_p, y_t, snr_max_db=30.):
+    """Fraction of samples whose SNR term has saturated (other loss terms still act)."""
+    with torch.no_grad():
+        return (absolute_snr(y_p, y_t) >= snr_max_db).float().mean()
+
+
+def build_loss(name="hybrid", config=None):
+    if name not in {"hybrid", "speech_preservation"}:
+        raise ValueError(f"unknown loss {name!r}")
+    cls = SpeechPreservationLoss if name == "speech_preservation" else HybridLoss
+    return cls(**(config or {}))
+
+
 def _compress(spec, p=0.3):
     re, im = spec[..., 0], spec[..., 1]
     mag = torch.sqrt(re ** 2 + im ** 2 + 1e-12)
@@ -18,11 +35,13 @@ class HybridLoss(nn.Module):
     def __init__(self, w_complex: float = 30.0, w_mag: float = 70.0, p: float = 0.3, w_snr: float = 0.0, snr_max_db: float = 30.0):
         super().__init__()
         self.w_complex, self.w_mag, self.p, self.w_snr, self.snr_max_db = w_complex, w_mag, p, w_snr, snr_max_db
+        self.last_snr_clamp_fraction = torch.tensor(0.)
 
     def snr_term(self, y_p, y_t):
         """-mean(min(SNR_dB, snr_max)): the target is absolute SNR and SI-SNR is scale-blind. The clamp keeps
         clean-bucket items (already near-perfect) from dominating the gradient."""
-        snr = 10 * torch.log10((y_t ** 2).sum(-1) / (((y_p - y_t) ** 2).sum(-1) + 1e-8) + 1e-8)
+        snr = absolute_snr(y_p, y_t)
+        self.last_snr_clamp_fraction = (snr.detach() >= self.snr_max_db).float().mean()
         return -snr.clamp(max=self.snr_max_db).mean()
 
     def forward(self, pred, true, frame_weight=None, is_clean=None):

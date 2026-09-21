@@ -89,7 +89,7 @@ def _load_batch_model(ckpt_path):
     if model_kind == "vaani":
         v = VaaniNet(**mc).eval()
     elif model_kind == cascade.MODEL_NAME:
-        v = cascade.FrozenCascade(mc).eval()
+        v = cascade.FrozenCascade.from_config(ck["config"]).eval()
     else:
         raise NotImplementedError(f"export supports config['model'] in ('vaani', 'vaani_cascade'), got {model_kind!r}")
     v.load_state_dict(ck["model"])
@@ -98,13 +98,16 @@ def _load_batch_model(ckpt_path):
 
 def _stream_twin(v, mc):
     """Streaming module + its cache tuple + ONNX names; the cascade appends refine_cache to the existing signature."""
+    in_names, out_names = list(IN_NAMES), list(OUT_NAMES)
+    if mc.get("noise_floor", False):
+        in_names += ["noise_cache"]; out_names += ["noise_cache_out"]
     if isinstance(v, cascade.FrozenCascade):
-        s = cascade.StreamCascade(mc).eval()
+        s = cascade.StreamCascade(mc, v.refiner_cfg).eval()
         convert_to_stream(s.first, v.first); s.refiner.load_state_dict(v.refiner.state_dict())
-        return s, cascade.init_cascade_caches(), IN_NAMES + ["refine_cache"], OUT_NAMES + ["refine_cache_out"]
+        return s, cascade.init_cascade_caches(first_model_cfg=mc, refiner_cfg=v.refiner_cfg), in_names + ["refine_cache"], out_names + ["refine_cache_out"]
     s = StreamVaaniNet(**mc).eval()
     convert_to_stream(s, v)  # load_state_dict fails: stream conv wrappers nest keys one level deeper
-    return s, init_caches(), IN_NAMES, OUT_NAMES
+    return s, init_caches(channels=mc.get("channels", 16), noise_floor=mc.get("noise_floor", False)), in_names, out_names
 
 
 def export(ckpt_path, out_path):

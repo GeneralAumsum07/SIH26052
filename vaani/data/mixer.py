@@ -18,6 +18,9 @@ SR = 16000
 @dataclass
 class MixConfig:
     snr_range: tuple[float, float] = (-10.0, 15.0)
+    snr_sampling: str = "uniform"
+    snr_bins: tuple[float, ...] = (-10., -5., 0., 5., 15.)
+    snr_weights: tuple[float, ...] = (.4, .3, .2, .1)
     p_room: float = 0.6
     p_clean: float = 0.05
     p_clip: float = 0.10
@@ -32,6 +35,26 @@ class MixConfig:
     impulse_room: bool = False                     # room path: impulse arrives through a noise RIR, not a 2-tap decorrelator
     overload_softclip: bool = False                # a burst past full scale saturates the ADC instead of scaling the speech down
     speech_rms_db: tuple[float, float] | None = None  # recorder gain: speech-active RMS in dBFS; None = corpus level as stored
+
+
+def sample_snr(rng, cfg: MixConfig):
+    """Default keeps precisely the old RNG draw; opt-in recipes alter training only."""
+    lo, hi = cfg.snr_range
+    if not np.isfinite([lo, hi]).all() or lo > hi:
+        raise ValueError("invalid snr_range")
+    if cfg.snr_sampling == "uniform":
+        return float(rng.uniform(lo, hi))
+    if cfg.snr_sampling == "triangular_low":
+        return float(rng.triangular(lo, lo, hi)) if lo < hi else float(lo)
+    if cfg.snr_sampling != "stratified":
+        raise ValueError("snr_sampling must be uniform, triangular_low or stratified")
+    bins, weights = np.asarray(cfg.snr_bins, float), np.asarray(cfg.snr_weights, float)
+    if bins.ndim != 1 or len(bins) < 2 or not np.isfinite(bins).all() or not (np.diff(bins) > 0).all() or bins[0] != lo or bins[-1] != hi:
+        raise ValueError("snr_bins must increase and span snr_range exactly")
+    if weights.shape != (len(bins)-1,) or not np.isfinite(weights).all() or (weights < 0).any() or weights.sum() <= 0:
+        raise ValueError("snr_weights must be nonnegative with positive sum, one per interval")
+    i = int(rng.choice(len(weights), p=weights / weights.sum()))
+    return float(rng.uniform(bins[i], bins[i+1]))
 
 
 def softclip(x: np.ndarray, knee: float = 0.7) -> np.ndarray:
@@ -126,7 +149,7 @@ def mix(rng, speech, noises, impulse, impulse_onsets_s, bank, cfg: MixConfig, no
         return s2.astype(np.float32), clean, meta
 
     # --- scale noise to target SNR on the primary, speech-active region ---
-    snr = float(rng.uniform(*cfg.snr_range))
+    snr = sample_snr(rng, cfg)
     ps = speech_active_power(clean); pn = (noise2[0] ** 2).mean() + 1e-12
     noise2 *= np.sqrt(ps / (pn * 10 ** (snr / 10)))
     meta["snr_db"] = snr  # target SNR the noise was scaled to hit; later augmentations deliberately perturb it, not recomputed

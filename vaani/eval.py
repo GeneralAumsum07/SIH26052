@@ -19,6 +19,14 @@ from vaani.train import build_model
 def enhance_fn(spec: str, device=None):
     """`ckpt:<path>` runs a checkpoint; `post:<yaml>` runs its `base_checkpoint` then `vaani.dsp.postfilter` on the output
     spectrum before the one iSTFT (Tier 4.6); anything else is a baseline name."""
+    if spec.startswith("conditional:"):
+        import yaml
+        cfg = yaml.safe_load(open(spec[len("conditional:"):], encoding="utf-8"))
+        spec_fn, _ = _ckpt_spectrum_fn(cfg["base_checkpoint"], device, conditional_cfg=cfg.get("conditional", {}))
+        def conditional_audio(mix):
+            return stft.istft(spec_fn(mix), length=mix.shape[1])[0].cpu().numpy()
+        conditional_audio.conditional_runtime = spec_fn.conditional_runtime
+        return conditional_audio
     if spec.startswith("post:"):
         import yaml
         from vaani.dsp.postfilter import ResidualPostFilter
@@ -46,12 +54,18 @@ def enhance_fn(spec: str, device=None):
     return f
 
 
-def _ckpt_spectrum_fn(path, device=None):
+def _ckpt_spectrum_fn(path, device=None, conditional_cfg=None):
     """The checkpoint's full output spectrum (mask + deep-filter taps), still on `device`; iSTFT is the caller's."""
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     ck = torch.load(path, map_location="cpu", weights_only=True); cfg = ck["config"]
     m = cascade.FrozenCascade.from_config(cfg) if cfg["model"] == cascade.MODEL_NAME else build_model(cfg["model"], model_cfg=cfg.get("model_cfg"))
     m = m.to(device); m.load_state_dict(ck["model"]); m.eval()
+    runtime = None
+    if conditional_cfg is not None:
+        if cfg["model"] != cascade.MODEL_NAME:
+            raise ValueError("conditional refinement requires a cascade checkpoint")
+        from vaani.models.conditional_refiner import ConditionalRefinerRuntime
+        runtime = ConditionalRefinerRuntime(m, **conditional_cfg)
 
     @torch.no_grad()
     def spec_of(mix):
@@ -63,7 +77,10 @@ def _ckpt_spectrum_fn(path, device=None):
         x = torch.from_numpy(r["mix"])[None].to(device)   # limited when the checkpoint trained with the limiter
         spec6 = torch.cat([stft.stft(x[:, 0]), stft.stft(x[:, 1]),
                             stft.stft(torch.from_numpy(r["n_hat"])[None].to(device))], -1)
-        return m(spec6, torch.from_numpy(r["features"])[None].to(device))
+        feats = torch.from_numpy(r["features"])[None].to(device)
+        return runtime(spec6, feats, torch.from_numpy(r["reliability"]).to(device)) if runtime is not None else m(spec6, feats)
+    if runtime is not None:
+        spec_of.conditional_runtime = runtime
     return spec_of, cfg
 
 

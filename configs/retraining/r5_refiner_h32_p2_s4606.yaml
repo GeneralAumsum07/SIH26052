@@ -1,0 +1,29 @@
+name: r5_refiner_h32_p2_s4606
+model: vaani_cascade
+base_checkpoint: runs/vaani_full_r4_ctl/best.pt
+seed: 4606
+epochs: 32
+batch_size: 32
+num_workers: 6
+amp: true
+resume: true
+early_screen_stop: false
+refiner_cfg:
+  hidden: 32
+  past: 2
+  scale: 0.25
+optim:
+  lr: 0.001
+  warmup: 200
+  clip: 1.0
+  weight_decay: 0.0001
+loss_cfg:
+  p: 0.5
+  snr_max_db: 30
+  w_complex: 50
+  w_mag: 50
+  w_snr: 0.2
+val:
+  eval_root: data/eval_r2
+  split: val
+base_checkpoint_sha256: 8c67be30eb0187d23537f777be9a9f58c9d679d7290aad448d075b471b669e40

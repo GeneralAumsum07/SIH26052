@@ -1,0 +1,1657 @@
+[
+  {
+    "config": "configs/retraining\\r5_continue128.yaml",
+    "status": "ready",
+    "name": "r5_continue128",
+    "model": "vaani",
+    "checkpoints": {
+      "init_from": "8c67be30eb0187d23537f777be9a9f58c9d679d7290aad448d075b471b669e40"
+    },
+    "schedule": {
+      "kind": "cosine",
+      "total_steps": 80000,
+      "warmup_steps": 200
+    },
+    "total_parameters": 50249,
+    "trainable_parameters": 25673,
+    "matrix_macs_per_frame": 686112,
+    "matrix_mmacs_per_second": 42.882,
+    "cache_shapes": {
+      "conv_cache": [
+        2,
+        1,
+        16,
+        16,
+        33
+      ],
+      "tra_cache": [
+        2,
+        3,
+        1,
+        1,
+        16
+      ],
+      "inter_cache": [
+        2,
+        1,
+        33,
+        16
+      ],
+      "df_cache": [
+        1,
+        257,
+        3,
+        2
+      ],
+      "coh_cache": [
+        1,
+        4,
+        257
+      ]
+    },
+    "existing_run": false,
+    "checked_files": true,
+    "training_launched": false
+  },
+  {
+    "config": "configs/retraining\\r5_noise_floor.yaml",
+    "status": "ready",
+    "name": "r5_noise_floor",
+    "model": "vaani",
+    "checkpoints": {
+      "init_from": "8c67be30eb0187d23537f777be9a9f58c9d679d7290aad448d075b471b669e40"
+    },
+    "schedule": {
+      "kind": "cosine",
+      "total_steps": 80000,
+      "warmup_steps": 200
+    },
+    "total_parameters": 50729,
+    "trainable_parameters": 26153,
+    "matrix_macs_per_frame": 741888,
+    "matrix_mmacs_per_second": 46.368,
+    "cache_shapes": {
+      "conv_cache": [
+        2,
+        1,
+        16,
+        16,
+        33
+      ],
+      "tra_cache": [
+        2,
+        3,
+        1,
+        1,
+        16
+      ],
+      "inter_cache": [
+        2,
+        1,
+        33,
+        16
+      ],
+      "df_cache": [
+        1,
+        257,
+        3,
+        2
+      ],
+      "coh_cache": [
+        1,
+        4,
+        257
+      ],
+      "noise_cache": [
+        1,
+        2,
+        257
+      ]
+    },
+    "existing_run": false,
+    "checked_files": true,
+    "training_launched": false
+  },
+  {
+    "config": "configs/retraining\\r5_refiner_h16_p2_s4606.yaml",
+    "status": "ready",
+    "name": "r5_refiner_h16_p2_s4606",
+    "model": "vaani_cascade",
+    "checkpoints": {
+      "base_checkpoint": "8c67be30eb0187d23537f777be9a9f58c9d679d7290aad448d075b471b669e40"
+    },
+    "schedule": {
+      "kind": "cosine",
+      "total_steps": 20000,
+      "warmup_steps": 200
+    },
+    "total_parameters": 52747,
+    "trainable_parameters": 2498,
+    "matrix_macs_per_frame": 1319360,
+    "matrix_mmacs_per_second": 82.46,
+    "cache_shapes": {
+      "conv_cache": [
+        2,
+        1,
+        16,
+        16,
+        33
+      ],
+      "tra_cache": [
+        2,
+        3,
+        1,
+        1,
+        16
+      ],
+      "inter_cache": [
+        2,
+        1,
+        33,
+        16
+      ],
+      "df_cache": [
+        1,
+        257,
+        3,
+        2
+      ],
+      "coh_cache": [
+        1,
+        4,
+        257
+      ],
+      "refine_cache": [
+        1,
+        16,
+        2,
+        257
+      ]
+    },
+    "existing_run": false,
+    "checked_files": true,
+    "training_launched": false
+  },
+  {
+    "config": "configs/retraining\\r5_refiner_h16_p2_s4607.yaml",
+    "status": "ready",
+    "name": "r5_refiner_h16_p2_s4607",
+    "model": "vaani_cascade",
+    "checkpoints": {
+      "base_checkpoint": "8c67be30eb0187d23537f777be9a9f58c9d679d7290aad448d075b471b669e40"
+    },
+    "schedule": {
+      "kind": "cosine",
+      "total_steps": 20000,
+      "warmup_steps": 200
+    },
+    "total_parameters": 52747,
+    "trainable_parameters": 2498,
+    "matrix_macs_per_frame": 1319360,
+    "matrix_mmacs_per_second": 82.46,
+    "cache_shapes": {
+      "conv_cache": [
+        2,
+        1,
+        16,
+        16,
+        33
+      ],
+      "tra_cache": [
+        2,
+        3,
+        1,
+        1,
+        16
+      ],
+      "inter_cache": [
+        2,
+        1,
+        33,
+        16
+      ],
+      "df_cache": [
+        1,
+        257,
+        3,
+        2
+      ],
+      "coh_cache": [
+        1,
+        4,
+        257
+      ],
+      "refine_cache": [
+        1,
+        16,
+        2,
+        257
+      ]
+    },
+    "existing_run": false,
+    "checked_files": true,
+    "training_launched": false
+  },
+  {
+    "config": "configs/retraining\\r5_refiner_h16_p4_s4606.yaml",
+    "status": "ready",
+    "name": "r5_refiner_h16_p4_s4606",
+    "model": "vaani_cascade",
+    "checkpoints": {
+      "base_checkpoint": "8c67be30eb0187d23537f777be9a9f58c9d679d7290aad448d075b471b669e40"
+    },
+    "schedule": {
+      "kind": "cosine",
+      "total_steps": 20000,
+      "warmup_steps": 200
+    },
+    "total_parameters": 54283,
+    "trainable_parameters": 4034,
+    "matrix_macs_per_frame": 1714112,
+    "matrix_mmacs_per_second": 107.132,
+    "cache_shapes": {
+      "conv_cache": [
+        2,
+        1,
+        16,
+        16,
+        33
+      ],
+      "tra_cache": [
+        2,
+        3,
+        1,
+        1,
+        16
+      ],
+      "inter_cache": [
+        2,
+        1,
+        33,
+        16
+      ],
+      "df_cache": [
+        1,
+        257,
+        3,
+        2
+      ],
+      "coh_cache": [
+        1,
+        4,
+        257
+      ],
+      "refine_cache": [
+        1,
+        16,
+        4,
+        257
+      ]
+    },
+    "existing_run": false,
+    "checked_files": true,
+    "training_launched": false
+  },
+  {
+    "config": "configs/retraining\\r5_refiner_h16_p4_s4607.yaml",
+    "status": "ready",
+    "name": "r5_refiner_h16_p4_s4607",
+    "model": "vaani_cascade",
+    "checkpoints": {
+      "base_checkpoint": "8c67be30eb0187d23537f777be9a9f58c9d679d7290aad448d075b471b669e40"
+    },
+    "schedule": {
+      "kind": "cosine",
+      "total_steps": 20000,
+      "warmup_steps": 200
+    },
+    "total_parameters": 54283,
+    "trainable_parameters": 4034,
+    "matrix_macs_per_frame": 1714112,
+    "matrix_mmacs_per_second": 107.132,
+    "cache_shapes": {
+      "conv_cache": [
+        2,
+        1,
+        16,
+        16,
+        33
+      ],
+      "tra_cache": [
+        2,
+        3,
+        1,
+        1,
+        16
+      ],
+      "inter_cache": [
+        2,
+        1,
+        33,
+        16
+      ],
+      "df_cache": [
+        1,
+        257,
+        3,
+        2
+      ],
+      "coh_cache": [
+        1,
+        4,
+        257
+      ],
+      "refine_cache": [
+        1,
+        16,
+        4,
+        257
+      ]
+    },
+    "existing_run": false,
+    "checked_files": true,
+    "training_launched": false
+  },
+  {
+    "config": "configs/retraining\\r5_refiner_h24_p2_s4606.yaml",
+    "status": "ready",
+    "name": "r5_refiner_h24_p2_s4606",
+    "model": "vaani_cascade",
+    "checkpoints": {
+      "base_checkpoint": "8c67be30eb0187d23537f777be9a9f58c9d679d7290aad448d075b471b669e40"
+    },
+    "schedule": {
+      "kind": "cosine",
+      "total_steps": 20000,
+      "warmup_steps": 200
+    },
+    "total_parameters": 55723,
+    "trainable_parameters": 5474,
+    "matrix_macs_per_frame": 2080080,
+    "matrix_mmacs_per_second": 130.005,
+    "cache_shapes": {
+      "conv_cache": [
+        2,
+        1,
+        16,
+        16,
+        33
+      ],
+      "tra_cache": [
+        2,
+        3,
+        1,
+        1,
+        16
+      ],
+      "inter_cache": [
+        2,
+        1,
+        33,
+        16
+      ],
+      "df_cache": [
+        1,
+        257,
+        3,
+        2
+      ],
+      "coh_cache": [
+        1,
+        4,
+        257
+      ],
+      "refine_cache": [
+        1,
+        24,
+        2,
+        257
+      ]
+    },
+    "existing_run": false,
+    "checked_files": true,
+    "training_launched": false
+  },
+  {
+    "config": "configs/retraining\\r5_refiner_h24_p2_s4607.yaml",
+    "status": "ready",
+    "name": "r5_refiner_h24_p2_s4607",
+    "model": "vaani_cascade",
+    "checkpoints": {
+      "base_checkpoint": "8c67be30eb0187d23537f777be9a9f58c9d679d7290aad448d075b471b669e40"
+    },
+    "schedule": {
+      "kind": "cosine",
+      "total_steps": 20000,
+      "warmup_steps": 200
+    },
+    "total_parameters": 55723,
+    "trainable_parameters": 5474,
+    "matrix_macs_per_frame": 2080080,
+    "matrix_mmacs_per_second": 130.005,
+    "cache_shapes": {
+      "conv_cache": [
+        2,
+        1,
+        16,
+        16,
+        33
+      ],
+      "tra_cache": [
+        2,
+        3,
+        1,
+        1,
+        16
+      ],
+      "inter_cache": [
+        2,
+        1,
+        33,
+        16
+      ],
+      "df_cache": [
+        1,
+        257,
+        3,
+        2
+      ],
+      "coh_cache": [
+        1,
+        4,
+        257
+      ],
+      "refine_cache": [
+        1,
+        24,
+        2,
+        257
+      ]
+    },
+    "existing_run": false,
+    "checked_files": true,
+    "training_launched": false
+  },
+  {
+    "config": "configs/retraining\\r5_refiner_h24_p4_s4606.yaml",
+    "status": "ready",
+    "name": "r5_refiner_h24_p4_s4606",
+    "model": "vaani_cascade",
+    "checkpoints": {
+      "base_checkpoint": "8c67be30eb0187d23537f777be9a9f58c9d679d7290aad448d075b471b669e40"
+    },
+    "schedule": {
+      "kind": "cosine",
+      "total_steps": 20000,
+      "warmup_steps": 200
+    },
+    "total_parameters": 59179,
+    "trainable_parameters": 8930,
+    "matrix_macs_per_frame": 2968272,
+    "matrix_mmacs_per_second": 185.517,
+    "cache_shapes": {
+      "conv_cache": [
+        2,
+        1,
+        16,
+        16,
+        33
+      ],
+      "tra_cache": [
+        2,
+        3,
+        1,
+        1,
+        16
+      ],
+      "inter_cache": [
+        2,
+        1,
+        33,
+        16
+      ],
+      "df_cache": [
+        1,
+        257,
+        3,
+        2
+      ],
+      "coh_cache": [
+        1,
+        4,
+        257
+      ],
+      "refine_cache": [
+        1,
+        24,
+        4,
+        257
+      ]
+    },
+    "existing_run": false,
+    "checked_files": true,
+    "training_launched": false
+  },
+  {
+    "config": "configs/retraining\\r5_refiner_h24_p4_s4607.yaml",
+    "status": "ready",
+    "name": "r5_refiner_h24_p4_s4607",
+    "model": "vaani_cascade",
+    "checkpoints": {
+      "base_checkpoint": "8c67be30eb0187d23537f777be9a9f58c9d679d7290aad448d075b471b669e40"
+    },
+    "schedule": {
+      "kind": "cosine",
+      "total_steps": 20000,
+      "warmup_steps": 200
+    },
+    "total_parameters": 59179,
+    "trainable_parameters": 8930,
+    "matrix_macs_per_frame": 2968272,
+    "matrix_mmacs_per_second": 185.517,
+    "cache_shapes": {
+      "conv_cache": [
+        2,
+        1,
+        16,
+        16,
+        33
+      ],
+      "tra_cache": [
+        2,
+        3,
+        1,
+        1,
+        16
+      ],
+      "inter_cache": [
+        2,
+        1,
+        33,
+        16
+      ],
+      "df_cache": [
+        1,
+        257,
+        3,
+        2
+      ],
+      "coh_cache": [
+        1,
+        4,
+        257
+      ],
+      "refine_cache": [
+        1,
+        24,
+        4,
+        257
+      ]
+    },
+    "existing_run": false,
+    "checked_files": true,
+    "training_launched": false
+  },
+  {
+    "config": "configs/retraining\\r5_refiner_h32_p2_s4606.yaml",
+    "status": "ready",
+    "name": "r5_refiner_h32_p2_s4606",
+    "model": "vaani_cascade",
+    "checkpoints": {
+      "base_checkpoint": "8c67be30eb0187d23537f777be9a9f58c9d679d7290aad448d075b471b669e40"
+    },
+    "schedule": {
+      "kind": "cosine",
+      "total_steps": 20000,
+      "warmup_steps": 200
+    },
+    "total_parameters": 59851,
+    "trainable_parameters": 9602,
+    "matrix_macs_per_frame": 3136864,
+    "matrix_mmacs_per_second": 196.054,
+    "cache_shapes": {
+      "conv_cache": [
+        2,
+        1,
+        16,
+        16,
+        33
+      ],
+      "tra_cache": [
+        2,
+        3,
+        1,
+        1,
+        16
+      ],
+      "inter_cache": [
+        2,
+        1,
+        33,
+        16
+      ],
+      "df_cache": [
+        1,
+        257,
+        3,
+        2
+      ],
+      "coh_cache": [
+        1,
+        4,
+        257
+      ],
+      "refine_cache": [
+        1,
+        32,
+        2,
+        257
+      ]
+    },
+    "existing_run": false,
+    "checked_files": true,
+    "training_launched": false
+  },
+  {
+    "config": "configs/retraining\\r5_refiner_h32_p2_s4607.yaml",
+    "status": "ready",
+    "name": "r5_refiner_h32_p2_s4607",
+    "model": "vaani_cascade",
+    "checkpoints": {
+      "base_checkpoint": "8c67be30eb0187d23537f777be9a9f58c9d679d7290aad448d075b471b669e40"
+    },
+    "schedule": {
+      "kind": "cosine",
+      "total_steps": 20000,
+      "warmup_steps": 200
+    },
+    "total_parameters": 59851,
+    "trainable_parameters": 9602,
+    "matrix_macs_per_frame": 3136864,
+    "matrix_mmacs_per_second": 196.054,
+    "cache_shapes": {
+      "conv_cache": [
+        2,
+        1,
+        16,
+        16,
+        33
+      ],
+      "tra_cache": [
+        2,
+        3,
+        1,
+        1,
+        16
+      ],
+      "inter_cache": [
+        2,
+        1,
+        33,
+        16
+      ],
+      "df_cache": [
+        1,
+        257,
+        3,
+        2
+      ],
+      "coh_cache": [
+        1,
+        4,
+        257
+      ],
+      "refine_cache": [
+        1,
+        32,
+        2,
+        257
+      ]
+    },
+    "existing_run": false,
+    "checked_files": true,
+    "training_launched": false
+  },
+  {
+    "config": "configs/retraining\\r5_refiner_h32_p4_s4606.yaml",
+    "status": "ready",
+    "name": "r5_refiner_h32_p4_s4606",
+    "model": "vaani_cascade",
+    "checkpoints": {
+      "base_checkpoint": "8c67be30eb0187d23537f777be9a9f58c9d679d7290aad448d075b471b669e40"
+    },
+    "schedule": {
+      "kind": "cosine",
+      "total_steps": 20000,
+      "warmup_steps": 200
+    },
+    "total_parameters": 65995,
+    "trainable_parameters": 15746,
+    "matrix_macs_per_frame": 4715872,
+    "matrix_mmacs_per_second": 294.742,
+    "cache_shapes": {
+      "conv_cache": [
+        2,
+        1,
+        16,
+        16,
+        33
+      ],
+      "tra_cache": [
+        2,
+        3,
+        1,
+        1,
+        16
+      ],
+      "inter_cache": [
+        2,
+        1,
+        33,
+        16
+      ],
+      "df_cache": [
+        1,
+        257,
+        3,
+        2
+      ],
+      "coh_cache": [
+        1,
+        4,
+        257
+      ],
+      "refine_cache": [
+        1,
+        32,
+        4,
+        257
+      ]
+    },
+    "existing_run": false,
+    "checked_files": true,
+    "training_launched": false
+  },
+  {
+    "config": "configs/retraining\\r5_refiner_h32_p4_s4607.yaml",
+    "status": "ready",
+    "name": "r5_refiner_h32_p4_s4607",
+    "model": "vaani_cascade",
+    "checkpoints": {
+      "base_checkpoint": "8c67be30eb0187d23537f777be9a9f58c9d679d7290aad448d075b471b669e40"
+    },
+    "schedule": {
+      "kind": "cosine",
+      "total_steps": 20000,
+      "warmup_steps": 200
+    },
+    "total_parameters": 65995,
+    "trainable_parameters": 15746,
+    "matrix_macs_per_frame": 4715872,
+    "matrix_mmacs_per_second": 294.742,
+    "cache_shapes": {
+      "conv_cache": [
+        2,
+        1,
+        16,
+        16,
+        33
+      ],
+      "tra_cache": [
+        2,
+        3,
+        1,
+        1,
+        16
+      ],
+      "inter_cache": [
+        2,
+        1,
+        33,
+        16
+      ],
+      "df_cache": [
+        1,
+        257,
+        3,
+        2
+      ],
+      "coh_cache": [
+        1,
+        4,
+        257
+      ],
+      "refine_cache": [
+        1,
+        32,
+        4,
+        257
+      ]
+    },
+    "existing_run": false,
+    "checked_files": true,
+    "training_launched": false
+  },
+  {
+    "config": "configs/retraining\\r5_refiner_h48_p2_s4606.yaml",
+    "status": "ready",
+    "name": "r5_refiner_h48_p2_s4606",
+    "model": "vaani_cascade",
+    "checkpoints": {
+      "base_checkpoint": "8c67be30eb0187d23537f777be9a9f58c9d679d7290aad448d075b471b669e40"
+    },
+    "schedule": {
+      "kind": "cosine",
+      "total_steps": 20000,
+      "warmup_steps": 200
+    },
+    "total_parameters": 71563,
+    "trainable_parameters": 21314,
+    "matrix_macs_per_frame": 6138624,
+    "matrix_mmacs_per_second": 383.664,
+    "cache_shapes": {
+      "conv_cache": [
+        2,
+        1,
+        16,
+        16,
+        33
+      ],
+      "tra_cache": [
+        2,
+        3,
+        1,
+        1,
+        16
+      ],
+      "inter_cache": [
+        2,
+        1,
+        33,
+        16
+      ],
+      "df_cache": [
+        1,
+        257,
+        3,
+        2
+      ],
+      "coh_cache": [
+        1,
+        4,
+        257
+      ],
+      "refine_cache": [
+        1,
+        48,
+        2,
+        257
+      ]
+    },
+    "existing_run": false,
+    "checked_files": true,
+    "training_launched": false
+  },
+  {
+    "config": "configs/retraining\\r5_refiner_h48_p2_s4607.yaml",
+    "status": "ready",
+    "name": "r5_refiner_h48_p2_s4607",
+    "model": "vaani_cascade",
+    "checkpoints": {
+      "base_checkpoint": "8c67be30eb0187d23537f777be9a9f58c9d679d7290aad448d075b471b669e40"
+    },
+    "schedule": {
+      "kind": "cosine",
+      "total_steps": 20000,
+      "warmup_steps": 200
+    },
+    "total_parameters": 71563,
+    "trainable_parameters": 21314,
+    "matrix_macs_per_frame": 6138624,
+    "matrix_mmacs_per_second": 383.664,
+    "cache_shapes": {
+      "conv_cache": [
+        2,
+        1,
+        16,
+        16,
+        33
+      ],
+      "tra_cache": [
+        2,
+        3,
+        1,
+        1,
+        16
+      ],
+      "inter_cache": [
+        2,
+        1,
+        33,
+        16
+      ],
+      "df_cache": [
+        1,
+        257,
+        3,
+        2
+      ],
+      "coh_cache": [
+        1,
+        4,
+        257
+      ],
+      "refine_cache": [
+        1,
+        48,
+        2,
+        257
+      ]
+    },
+    "existing_run": false,
+    "checked_files": true,
+    "training_launched": false
+  },
+  {
+    "config": "configs/retraining\\r5_refiner_h48_p4_s4606.yaml",
+    "status": "ready",
+    "name": "r5_refiner_h48_p4_s4606",
+    "model": "vaani_cascade",
+    "checkpoints": {
+      "base_checkpoint": "8c67be30eb0187d23537f777be9a9f58c9d679d7290aad448d075b471b669e40"
+    },
+    "schedule": {
+      "kind": "cosine",
+      "total_steps": 20000,
+      "warmup_steps": 200
+    },
+    "total_parameters": 85387,
+    "trainable_parameters": 35138,
+    "matrix_macs_per_frame": 9691392,
+    "matrix_mmacs_per_second": 605.712,
+    "cache_shapes": {
+      "conv_cache": [
+        2,
+        1,
+        16,
+        16,
+        33
+      ],
+      "tra_cache": [
+        2,
+        3,
+        1,
+        1,
+        16
+      ],
+      "inter_cache": [
+        2,
+        1,
+        33,
+        16
+      ],
+      "df_cache": [
+        1,
+        257,
+        3,
+        2
+      ],
+      "coh_cache": [
+        1,
+        4,
+        257
+      ],
+      "refine_cache": [
+        1,
+        48,
+        4,
+        257
+      ]
+    },
+    "existing_run": false,
+    "checked_files": true,
+    "training_launched": false
+  },
+  {
+    "config": "configs/retraining\\r5_refiner_h48_p4_s4607.yaml",
+    "status": "ready",
+    "name": "r5_refiner_h48_p4_s4607",
+    "model": "vaani_cascade",
+    "checkpoints": {
+      "base_checkpoint": "8c67be30eb0187d23537f777be9a9f58c9d679d7290aad448d075b471b669e40"
+    },
+    "schedule": {
+      "kind": "cosine",
+      "total_steps": 20000,
+      "warmup_steps": 200
+    },
+    "total_parameters": 85387,
+    "trainable_parameters": 35138,
+    "matrix_macs_per_frame": 9691392,
+    "matrix_mmacs_per_second": 605.712,
+    "cache_shapes": {
+      "conv_cache": [
+        2,
+        1,
+        16,
+        16,
+        33
+      ],
+      "tra_cache": [
+        2,
+        3,
+        1,
+        1,
+        16
+      ],
+      "inter_cache": [
+        2,
+        1,
+        33,
+        16
+      ],
+      "df_cache": [
+        1,
+        257,
+        3,
+        2
+      ],
+      "coh_cache": [
+        1,
+        4,
+        257
+      ],
+      "refine_cache": [
+        1,
+        48,
+        4,
+        257
+      ]
+    },
+    "existing_run": false,
+    "checked_files": true,
+    "training_launched": false
+  },
+  {
+    "config": "configs/retraining\\r5_snr_cap20.yaml",
+    "status": "ready",
+    "name": "r5_snr_cap20",
+    "model": "vaani",
+    "checkpoints": {
+      "init_from": "8c67be30eb0187d23537f777be9a9f58c9d679d7290aad448d075b471b669e40"
+    },
+    "schedule": {
+      "kind": "cosine",
+      "total_steps": 80000,
+      "warmup_steps": 200
+    },
+    "total_parameters": 50249,
+    "trainable_parameters": 25673,
+    "matrix_macs_per_frame": 686112,
+    "matrix_mmacs_per_second": 42.882,
+    "cache_shapes": {
+      "conv_cache": [
+        2,
+        1,
+        16,
+        16,
+        33
+      ],
+      "tra_cache": [
+        2,
+        3,
+        1,
+        1,
+        16
+      ],
+      "inter_cache": [
+        2,
+        1,
+        33,
+        16
+      ],
+      "df_cache": [
+        1,
+        257,
+        3,
+        2
+      ],
+      "coh_cache": [
+        1,
+        4,
+        257
+      ]
+    },
+    "existing_run": false,
+    "checked_files": true,
+    "training_launched": false
+  },
+  {
+    "config": "configs/retraining\\r5_snr_stratified.yaml",
+    "status": "ready",
+    "name": "r5_snr_stratified",
+    "model": "vaani",
+    "checkpoints": {
+      "init_from": "8c67be30eb0187d23537f777be9a9f58c9d679d7290aad448d075b471b669e40"
+    },
+    "schedule": {
+      "kind": "cosine",
+      "total_steps": 80000,
+      "warmup_steps": 200
+    },
+    "total_parameters": 50249,
+    "trainable_parameters": 25673,
+    "matrix_macs_per_frame": 686112,
+    "matrix_mmacs_per_second": 42.882,
+    "cache_shapes": {
+      "conv_cache": [
+        2,
+        1,
+        16,
+        16,
+        33
+      ],
+      "tra_cache": [
+        2,
+        3,
+        1,
+        1,
+        16
+      ],
+      "inter_cache": [
+        2,
+        1,
+        33,
+        16
+      ],
+      "df_cache": [
+        1,
+        257,
+        3,
+        2
+      ],
+      "coh_cache": [
+        1,
+        4,
+        257
+      ]
+    },
+    "existing_run": false,
+    "checked_files": true,
+    "training_launched": false
+  },
+  {
+    "config": "configs/retraining\\r5_snr_triangular_low.yaml",
+    "status": "ready",
+    "name": "r5_snr_triangular_low",
+    "model": "vaani",
+    "checkpoints": {
+      "init_from": "8c67be30eb0187d23537f777be9a9f58c9d679d7290aad448d075b471b669e40"
+    },
+    "schedule": {
+      "kind": "cosine",
+      "total_steps": 80000,
+      "warmup_steps": 200
+    },
+    "total_parameters": 50249,
+    "trainable_parameters": 25673,
+    "matrix_macs_per_frame": 686112,
+    "matrix_mmacs_per_second": 42.882,
+    "cache_shapes": {
+      "conv_cache": [
+        2,
+        1,
+        16,
+        16,
+        33
+      ],
+      "tra_cache": [
+        2,
+        3,
+        1,
+        1,
+        16
+      ],
+      "inter_cache": [
+        2,
+        1,
+        33,
+        16
+      ],
+      "df_cache": [
+        1,
+        257,
+        3,
+        2
+      ],
+      "coh_cache": [
+        1,
+        4,
+        257
+      ]
+    },
+    "existing_run": false,
+    "checked_files": true,
+    "training_launched": false
+  },
+  {
+    "config": "configs/retraining\\r5_width16_s0.yaml",
+    "status": "ready",
+    "name": "r5_width16_s0",
+    "model": "vaani",
+    "checkpoints": {},
+    "schedule": {
+      "kind": "cosine",
+      "total_steps": 80000,
+      "warmup_steps": 200
+    },
+    "total_parameters": 50249,
+    "trainable_parameters": 25673,
+    "matrix_macs_per_frame": 686112,
+    "matrix_mmacs_per_second": 42.882,
+    "cache_shapes": {
+      "conv_cache": [
+        2,
+        1,
+        16,
+        16,
+        33
+      ],
+      "tra_cache": [
+        2,
+        3,
+        1,
+        1,
+        16
+      ],
+      "inter_cache": [
+        2,
+        1,
+        33,
+        16
+      ],
+      "df_cache": [
+        1,
+        257,
+        3,
+        2
+      ],
+      "coh_cache": [
+        1,
+        4,
+        257
+      ]
+    },
+    "existing_run": false,
+    "checked_files": true,
+    "training_launched": false
+  },
+  {
+    "config": "configs/retraining\\r5_width16_s1.yaml",
+    "status": "ready",
+    "name": "r5_width16_s1",
+    "model": "vaani",
+    "checkpoints": {},
+    "schedule": {
+      "kind": "cosine",
+      "total_steps": 80000,
+      "warmup_steps": 200
+    },
+    "total_parameters": 50249,
+    "trainable_parameters": 25673,
+    "matrix_macs_per_frame": 686112,
+    "matrix_mmacs_per_second": 42.882,
+    "cache_shapes": {
+      "conv_cache": [
+        2,
+        1,
+        16,
+        16,
+        33
+      ],
+      "tra_cache": [
+        2,
+        3,
+        1,
+        1,
+        16
+      ],
+      "inter_cache": [
+        2,
+        1,
+        33,
+        16
+      ],
+      "df_cache": [
+        1,
+        257,
+        3,
+        2
+      ],
+      "coh_cache": [
+        1,
+        4,
+        257
+      ]
+    },
+    "existing_run": false,
+    "checked_files": true,
+    "training_launched": false
+  },
+  {
+    "config": "configs/retraining\\r5_width32_s0.yaml",
+    "status": "ready",
+    "name": "r5_width32_s0",
+    "model": "vaani",
+    "checkpoints": {},
+    "schedule": {
+      "kind": "cosine",
+      "total_steps": 80000,
+      "warmup_steps": 200
+    },
+    "total_parameters": 107385,
+    "trainable_parameters": 82809,
+    "matrix_macs_per_frame": 1723200,
+    "matrix_mmacs_per_second": 107.7,
+    "cache_shapes": {
+      "conv_cache": [
+        2,
+        1,
+        32,
+        16,
+        33
+      ],
+      "tra_cache": [
+        2,
+        3,
+        1,
+        1,
+        32
+      ],
+      "inter_cache": [
+        2,
+        1,
+        33,
+        32
+      ],
+      "df_cache": [
+        1,
+        257,
+        3,
+        2
+      ],
+      "coh_cache": [
+        1,
+        4,
+        257
+      ]
+    },
+    "existing_run": false,
+    "checked_files": true,
+    "training_launched": false
+  },
+  {
+    "config": "configs/retraining\\r5_width32_s1.yaml",
+    "status": "ready",
+    "name": "r5_width32_s1",
+    "model": "vaani",
+    "checkpoints": {},
+    "schedule": {
+      "kind": "cosine",
+      "total_steps": 80000,
+      "warmup_steps": 200
+    },
+    "total_parameters": 107385,
+    "trainable_parameters": 82809,
+    "matrix_macs_per_frame": 1723200,
+    "matrix_mmacs_per_second": 107.7,
+    "cache_shapes": {
+      "conv_cache": [
+        2,
+        1,
+        32,
+        16,
+        33
+      ],
+      "tra_cache": [
+        2,
+        3,
+        1,
+        1,
+        32
+      ],
+      "inter_cache": [
+        2,
+        1,
+        33,
+        32
+      ],
+      "df_cache": [
+        1,
+        257,
+        3,
+        2
+      ],
+      "coh_cache": [
+        1,
+        4,
+        257
+      ]
+    },
+    "existing_run": false,
+    "checked_files": true,
+    "training_launched": false
+  },
+  {
+    "config": "configs/retraining\\r5_width8_s0.yaml",
+    "status": "ready",
+    "name": "r5_width8_s0",
+    "model": "vaani",
+    "checkpoints": {},
+    "schedule": {
+      "kind": "cosine",
+      "total_steps": 80000,
+      "warmup_steps": 200
+    },
+    "total_parameters": 33489,
+    "trainable_parameters": 8913,
+    "matrix_macs_per_frame": 372912,
+    "matrix_mmacs_per_second": 23.307,
+    "cache_shapes": {
+      "conv_cache": [
+        2,
+        1,
+        8,
+        16,
+        33
+      ],
+      "tra_cache": [
+        2,
+        3,
+        1,
+        1,
+        8
+      ],
+      "inter_cache": [
+        2,
+        1,
+        33,
+        8
+      ],
+      "df_cache": [
+        1,
+        257,
+        3,
+        2
+      ],
+      "coh_cache": [
+        1,
+        4,
+        257
+      ]
+    },
+    "existing_run": false,
+    "checked_files": true,
+    "training_launched": false
+  },
+  {
+    "config": "configs/retraining\\r5_width8_s1.yaml",
+    "status": "ready",
+    "name": "r5_width8_s1",
+    "model": "vaani",
+    "checkpoints": {},
+    "schedule": {
+      "kind": "cosine",
+      "total_steps": 80000,
+      "warmup_steps": 200
+    },
+    "total_parameters": 33489,
+    "trainable_parameters": 8913,
+    "matrix_macs_per_frame": 372912,
+    "matrix_mmacs_per_second": 23.307,
+    "cache_shapes": {
+      "conv_cache": [
+        2,
+        1,
+        8,
+        16,
+        33
+      ],
+      "tra_cache": [
+        2,
+        3,
+        1,
+        1,
+        8
+      ],
+      "inter_cache": [
+        2,
+        1,
+        33,
+        8
+      ],
+      "df_cache": [
+        1,
+        257,
+        3,
+        2
+      ],
+      "coh_cache": [
+        1,
+        4,
+        257
+      ]
+    },
+    "existing_run": false,
+    "checked_files": true,
+    "training_launched": false
+  },
+  {
+    "config": "configs/retraining\\r5_wsnr08.yaml",
+    "status": "ready",
+    "name": "r5_wsnr08",
+    "model": "vaani",
+    "checkpoints": {
+      "init_from": "8c67be30eb0187d23537f777be9a9f58c9d679d7290aad448d075b471b669e40"
+    },
+    "schedule": {
+      "kind": "cosine",
+      "total_steps": 80000,
+      "warmup_steps": 200
+    },
+    "total_parameters": 50249,
+    "trainable_parameters": 25673,
+    "matrix_macs_per_frame": 686112,
+    "matrix_mmacs_per_second": 42.882,
+    "cache_shapes": {
+      "conv_cache": [
+        2,
+        1,
+        16,
+        16,
+        33
+      ],
+      "tra_cache": [
+        2,
+        3,
+        1,
+        1,
+        16
+      ],
+      "inter_cache": [
+        2,
+        1,
+        33,
+        16
+      ],
+      "df_cache": [
+        1,
+        257,
+        3,
+        2
+      ],
+      "coh_cache": [
+        1,
+        4,
+        257
+      ]
+    },
+    "existing_run": false,
+    "checked_files": true,
+    "training_launched": false
+  },
+  {
+    "config": "configs/retraining\\r5_wsnr12.yaml",
+    "status": "ready",
+    "name": "r5_wsnr12",
+    "model": "vaani",
+    "checkpoints": {
+      "init_from": "8c67be30eb0187d23537f777be9a9f58c9d679d7290aad448d075b471b669e40"
+    },
+    "schedule": {
+      "kind": "cosine",
+      "total_steps": 80000,
+      "warmup_steps": 200
+    },
+    "total_parameters": 50249,
+    "trainable_parameters": 25673,
+    "matrix_macs_per_frame": 686112,
+    "matrix_mmacs_per_second": 42.882,
+    "cache_shapes": {
+      "conv_cache": [
+        2,
+        1,
+        16,
+        16,
+        33
+      ],
+      "tra_cache": [
+        2,
+        3,
+        1,
+        1,
+        16
+      ],
+      "inter_cache": [
+        2,
+        1,
+        33,
+        16
+      ],
+      "df_cache": [
+        1,
+        257,
+        3,
+        2
+      ],
+      "coh_cache": [
+        1,
+        4,
+        257
+      ]
+    },
+    "existing_run": false,
+    "checked_files": true,
+    "training_launched": false
+  }
+]

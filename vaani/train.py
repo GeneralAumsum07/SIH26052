@@ -22,6 +22,7 @@ from vaani.data.mixer import MixConfig
 from vaani.dsp import stft
 from vaani.models.gtcrn import GTCRN
 from vaani.models.vaani_net import VaaniNet
+from vaani.training_controls import cosine_lr_multiplier, make_schedule_config, validate_resume_schedule, should_stop_for_patience, verify_checkpoint_hash
 
 SR = 16000
 ROOT = Path(__file__).resolve().parents[1]  # repo root, so configs work from any cwd
@@ -115,6 +116,16 @@ def _save(state, path):
 
 @torch.no_grad()
 def validate(model, dl, cfg, device):
+    if cfg.get("val", {}).get("eval_root"):
+        # A shared frozen validation screen makes sampling/loss variants
+        # comparable; the old per-run dynamic screen remains the default.
+        from vaani.train_refiner import screen_items, score_items
+        if not hasattr(dl, "_frozen_screen"):
+            dl._frozen_screen = screen_items(cfg["val"]["eval_root"], cfg["val"].get("split", "val"))
+        ds, indices = dl._frozen_screen
+        values = score_items(model, ds, indices, cfg, device).mean(0)
+        dl._last_val_metrics = dict(zip(("snr_out", "stoi", "pesq_wb"), map(float, values)))
+        return float(values[1])
     model.eval(); scores = []
     for batch in dl:
         inputs, target, _, _ = prepare_batch(batch, cfg["model"], device)
@@ -127,6 +138,7 @@ def validate(model, dl, cfg, device):
 
 def main(config_path):
     cfg = yaml.safe_load(open(config_path))
+    verify_checkpoint_hash(_abs(cfg.get("init_from")), cfg.get("init_sha256"))
     torch.manual_seed(cfg["seed"]); np.random.seed(cfg["seed"])
     device = torch.device(cfg.get("device", "cuda"))
     run_dir = Path(cfg.get("runs_dir", "runs")) / cfg["name"]; run_dir.mkdir(parents=True, exist_ok=True)
@@ -154,43 +166,60 @@ def main(config_path):
     total = cfg["max_steps"] if cfg.get("max_steps") else cfg["epochs"] * len(dl)
     warm = cfg["optim"].get("warmup", 500)
     # float(): a numpy scalar in the scheduler state would break weights_only resume
-    sched = torch.optim.lr_scheduler.LambdaLR(
-        opt, lambda s: float(min(1.0, (s + 1) / warm) * 0.5 * (1 + np.cos(np.pi * min(s, total) / total))))
+    schedule = make_schedule_config(cfg["epochs"], len(dl), warm, cfg.get("max_steps"))
+    sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: cosine_lr_multiplier(s, warm, total))
     sp = cfg["loss"] == "speech_preservation"
     lk = cfg.get("loss_cfg", {})  # w_complex / w_mag / p / w_snr; absent = upstream loss verbatim
     loss_fn = losses.SpeechPreservationLoss(**lk) if sp else losses.HybridLoss(**lk)
     burst_w = loss_fn.burst_weight if sp else 1.0
     use_amp = bool(cfg.get("amp", True)) and device.type == "cuda"
 
-    step, best, start_epoch = 0, -1.0, 0
+    step, best, start_epoch, history = 0, -1.0, 0, []
     last = run_dir / "last.pt"
     if cfg.get("resume", True) and last.exists():
         ck = torch.load(last, map_location="cpu", weights_only=True)
+        old = ck.get("config", {})
+        # Resuming restores optimizer time; changing the budget or recipe here
+        # would silently change the experiment. A new run/init_from is a restart.
+        for key in ("model", "model_cfg", "data", "loss", "loss_cfg", "optim", "batch_size", "seed", "dsp", "controller_on", "val"):
+            if old.get(key) != cfg.get(key):
+                raise RuntimeError(f"Resume configuration changed: {key}; start a new run")
+        saved_schedule = ck.get("schedule") or make_schedule_config(old["epochs"], len(dl), old["optim"].get("warmup", 500), old.get("max_steps"))
+        validate_resume_schedule(saved_schedule, schedule)
         model.load_state_dict(ck["model"]); step, best = ck["step"], ck.get("best", best)
+        history = ck.get("history", [])
         start_epoch = ck.get("epoch", -1) + 1
         if "optim" in ck:
             opt.load_state_dict(ck["optim"]); sched.load_state_dict(ck["sched"])
         print(f"resumed {last} at step {step}, epoch {start_epoch}")
 
-    evalset_hash = ROOT / "data/eval/val/EVALSET_HASH"
+    vc = cfg.get("val", {})
+    evalset_hash = _abs(vc.get("eval_root", "data/eval")) / vc.get("split", "val") / "EVALSET_HASH"
     run_info = dict(name=cfg["name"], config=cfg, git_sha=_git_hash(),
                     config_hash=hashlib.sha1(json.dumps(cfg, sort_keys=True).encode()).hexdigest()[:12],
                     manifest_hash=manifests.content_hash(d["manifests"]),
                     evalset_hash=evalset_hash.read_text().strip() if evalset_hash.exists() else "none",
                     init_from=str(_abs(cfg.get("init_from"))) if cfg.get("init_from") else None,
                     params=n_params, seed=cfg["seed"], torch=torch.__version__, cuda=torch.version.cuda,
-                    amp=use_amp, start=t_start, best_metric="stoi_dynamic_val", best_val_stoi=best,
+                    amp=use_amp, start=t_start, best_metric="stoi_frozen_val_screen" if vc.get("eval_root") else "stoi_dynamic_val", best_val_stoi=best,
                     steps=step, wall_s=0.0, skipped_steps=0)
+    run_info.update(schedule=schedule, history=history)
     json.dump(run_info, open(run_dir / "run.json", "w"), indent=2)
 
     bad, skipped = 0, 0
     for epoch in range(start_epoch, cfg["epochs"]):
+        stop_cfg = cfg.get("early_stopping") or {}
+        if should_stop_for_patience(history, stop_cfg.get("patience"), stop_cfg.get("min_delta", 0.)):
+            break
         sampler.set_epoch(epoch)
+        clamp_sum, clamp_batches = 0., 0
         for batch in dl:
             inputs, target, fw, is_clean = prepare_batch(batch, cfg["model"], device, burst_w)
             with torch.autocast("cuda", dtype=torch.bfloat16, enabled=use_amp):
                 pred = model(*inputs)
             loss = loss_fn(pred.float(), target, fw, is_clean)  # loss/iSTFT stay fp32
+            if loss_fn.w_snr:
+                clamp_sum += float(loss_fn.last_snr_clamp_fraction); clamp_batches += 1
             if not torch.isfinite(loss):
                 bad += 1; skipped += 1
                 if bad >= MAX_BAD_STEPS:
@@ -205,10 +234,15 @@ def main(config_path):
             if cfg.get("max_steps") and step >= cfg["max_steps"]:
                 break
         v = validate(model, vdl, cfg, device); tb.add_scalar("val/stoi", v, step)
+        history.append(dict(epoch=epoch, step=step, val_stoi=v, lr=sched.get_last_lr()[0],
+                            snr_clamp_fraction=clamp_sum / max(clamp_batches, 1), val_metrics=getattr(vdl, "_last_val_metrics", {"stoi": v})))
+        tb.add_scalar("train/snr_clamp_fraction", history[-1]["snr_clamp_fraction"], step)
         if v > best:
             best = v; _save({"model": model.state_dict(), "config": cfg, "step": step}, run_dir / "best.pt")
         _save({"model": model.state_dict(), "config": cfg, "step": step, "epoch": epoch, "best": best,
-               "optim": opt.state_dict(), "sched": sched.state_dict()}, last)
+               "optim": opt.state_dict(), "sched": sched.state_dict(), "schedule": schedule, "history": history}, last)
+        run_info.update(history=history, best_val_stoi=best, steps=step)
+        json.dump(run_info, open(run_dir / "run.json", "w"), indent=2)
         print(f"epoch {epoch} step {step} val_stoi {v:.4f} best {best:.4f} skipped {skipped}")
         if cfg.get("max_steps") and step >= cfg["max_steps"]:
             break

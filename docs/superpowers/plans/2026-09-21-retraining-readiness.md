@@ -18,47 +18,47 @@ Always-on ONNX remains supported and explicit. Selection/sweeps default to val.
 
 ## Task 1: Architecture and integration (primary agent)
 
-- [ ] Add configurable first-stage width with matching streaming caches and
+- [x] Add configurable first-stage width with matching streaming caches and
   strict same-width warm start; widened feature inputs are zero-initialized.
-- [ ] Add causal floor features with batch/stream parity and no future leakage.
-- [ ] Parameterize refiner and checkpoint config, export, cache shapes and training
+- [x] Add causal floor features with batch/stream parity and no future leakage.
+- [x] Parameterize refiner and checkpoint config, export, cache shapes and training
   construction; preserve old checkpoints with absent refiner config.
-- [ ] Implement conditional host runtime with fresh hidden history on skipped
+- [x] Implement conditional host runtime with fresh hidden history on skipped
   frames, optional residual blend, activation/cost counters, and evaluation path.
-- [ ] Test default compatibility, nondefault streaming/ONNX parity, gradients,
+- [x] Test default compatibility, nondefault streaming/ONNX parity, gradients,
   causality, invalid configurations, and conditional cache transitions.
-- [ ] Commit architecture and related tests without attribution.
+- [x] Commit architecture and related tests without attribution.
 
 ## Task 2: Training controls (independent subtask)
 
-- [ ] Add deterministic opt-in uniform/low-triangular/stratified SNR sampling;
+- [x] Add deterministic opt-in uniform/low-triangular/stratified SNR sampling;
   preserve the exact RNG draw for the legacy uniform default.
-- [ ] Make full-budget cosine schedule explicit and resume-safe; persist epoch
+- [x] Make full-budget cosine schedule explicit and resume-safe; persist epoch
   validation history and optional patience stopping without claiming convergence.
-- [ ] Log SNR-clamp binding fraction and allow refiner loss configuration.
-- [ ] Test controls with isolated functions/synthetic tensors only; no trainer launch.
-- [ ] Commit training control changes after integration review.
+- [x] Log SNR-clamp binding fraction and allow refiner loss configuration.
+- [x] Test controls with isolated functions/synthetic tensors only; no trainer launch.
+- [x] Commit training control changes after integration review.
 
 ## Task 3: Oracle diagnostic (independent subtask)
 
-- [ ] Extend per-bucket oracle analysis to raw, chosen trained system, IRM,
+- [x] Extend per-bucket oracle analysis to raw, chosen trained system, IRM,
   IAM, oracle phase with system magnitude, and unrestricted oracle complex mask.
-- [ ] Keep restricted ERB projection labelled diagnostic, not a universal ceiling.
-- [ ] Emit item-level CSV and aggregate output; default val, explicit test opt-in,
+- [x] Keep restricted ERB projection labelled diagnostic, not a universal ceiling.
+- [x] Emit item-level CSV and aggregate output; default val, explicit test opt-in,
   no silently truncated sample count, robust zero bins and identity tests.
-- [ ] Commit diagnostic code/tests after review.
+- [x] Commit diagnostic code/tests after review.
 
 ## Task 4: Experiment pack and verification
 
-- [ ] Generate standalone YAMLs for 128-epoch continuation/control, floor input,
+- [x] Generate standalone YAMLs for 128-epoch continuation/control, floor input,
   SNR strata, w_snr 0.8/1.2, width 0.5/1/2 and refiner 16/24/32/48 x past 2/4 x
   two seeds. Width candidates start from scratch with a matched scratch control.
-- [ ] Add a dry-run/preflight entry point that checks config, dependencies, hashes,
+- [x] Add a dry-run/preflight entry point that checks config, dependencies, hashes,
   model shapes and matrix MAC costs without training or touching run state.
-- [ ] Add conditional threshold sweep and parameter/MAC quality frontier reporting.
-- [ ] Document exact tomorrow commands and experiment ordering, unresolved empirical
+- [x] Add conditional threshold sweep and parameter/MAC quality frontier reporting.
+- [x] Document exact tomorrow commands and experiment ordering, unresolved empirical
   questions, checkpoint paths and no-training verification results.
-- [ ] Run focused tests and one final independent review, fix findings, commit.
+- [x] Run focused tests and final local integration review, fix findings, commit. Independent agent review could not complete because of usage limits.
 
 ## Rulings
 

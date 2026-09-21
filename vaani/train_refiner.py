@@ -18,6 +18,7 @@ from vaani.data.mixer import MixConfig
 from vaani.dsp import pipeline, stft
 from vaani.models.cascade import FrozenCascade
 from vaani.train import _save, prepare_batch
+from vaani.training_controls import cosine_lr_multiplier, verify_checkpoint_hash
 
 LOSS_CFG = dict(w_complex=50, w_mag=50, p=0.5, w_snr=0.2, snr_max_db=30)
 STOI_TOL, PESQ_W, EARLY_EPOCH, EARLY_SNR, EARLY_PESQ = 0.003, 5.0, 2, 0.1, 0.01
@@ -48,10 +49,14 @@ def build_train_data(first_cfg, seed, batch_size, num_workers, split="train"):
 
 def screen_items(eval_root, split):
     """First SCREEN_PER_BUCKET items of each bucket in sorted order: deterministic, small, every bucket represented."""
+    if split != "val":
+        raise ValueError("model selection must use val, never test")
     ds = RenderedDataset(Path(eval_root) / split); per = {}
     for i, p in enumerate(ds.items):
         per.setdefault(p.parent.name, [])
         if len(per[p.parent.name]) < SCREEN_PER_BUCKET: per[p.parent.name].append(i)
+    if not per:
+        raise ValueError(f"No validation items in {eval_root}/{split}")
     return ds, [i for b in sorted(per) for i in per[b]]
 
 
@@ -92,7 +97,7 @@ def score_items(model, ds, idx, first_cfg, device):
     """Per-item (snr_out, stoi, pesq_wb) through the anchor's DSP pipeline, exactly as vaani.eval runs a checkpoint.
     The DSP front end does not depend on the model, so it is computed once per (dataset, idx) and reused every
     epoch; the model forward runs here on `device`; PESQ/STOI fan out to the pool. Same numbers as the serial loop."""
-    key = (id(ds), tuple(idx))
+    key = (ds, tuple(idx), _cfg_hash({"dsp": first_cfg.get("dsp"), "controller_on": first_cfg["controller_on"]}))
     if key not in _screen_cache:
         items = [ds[i] for i in idx]
         _screen_cache[key] = _screen_pool().map(_dsp_item, [(it["mix"].numpy(), it["clean"].numpy(), first_cfg["controller_on"],
@@ -123,9 +128,10 @@ def should_stop_early(history):
 
 def main(config_path, max_steps=None):
     cfg = yaml.safe_load(open(config_path)); torch.manual_seed(cfg["seed"]); np.random.seed(cfg["seed"])
+    verify_checkpoint_hash(cfg["base_checkpoint"], cfg.get("base_checkpoint_sha256"))
     device = torch.device(cfg.get("device", "cuda" if torch.cuda.is_available() else "cpu"))
     run_dir = Path(cfg.get("runs_dir", "runs")) / cfg["name"]; run_dir.mkdir(parents=True, exist_ok=True)
-    model, ccfg = FrozenCascade.from_first_stage(cfg["base_checkpoint"]); model.to(device).train()
+    model, ccfg = FrozenCascade.from_first_stage(cfg["base_checkpoint"], refiner_cfg=cfg.get("refiner_cfg")); model.to(device).train()
     first_cfg = ccfg["first_stage"]["config"]; anchor_sha = ccfg["first_stage"]["sha256"]
     ccfg["refiner_train"] = cfg   # the cascade checkpoint records how its refiner was trained
     ds, sampler, dl = build_train_data(first_cfg, cfg["seed"], cfg["batch_size"], cfg.get("num_workers", 6))
@@ -133,8 +139,8 @@ def main(config_path, max_steps=None):
     assert all(n.startswith("refiner.") for n, p in model.named_parameters() if p.requires_grad)
     o = cfg["optim"]; opt = torch.optim.AdamW(params, lr=o["lr"], weight_decay=o.get("weight_decay", 1e-4))
     total = max_steps or cfg["epochs"] * len(dl); warm = o.get("warmup", 200)
-    sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: float(min(1.0, (s + 1) / warm) * 0.5 * (1 + np.cos(np.pi * min(s, total) / total))))
-    loss_fn = losses.HybridLoss(**LOSS_CFG)
+    sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: cosine_lr_multiplier(s, warm, total))
+    loss_fn = losses.build_loss("hybrid", {**LOSS_CFG, **cfg.get("loss_cfg", {})})
     use_amp = bool(cfg.get("amp", True)) and device.type == "cuda"
 
     vds, vidx = screen_items(cfg["val"]["eval_root"], cfg["val"]["split"])
@@ -145,14 +151,19 @@ def main(config_path, max_steps=None):
         ck = torch.load(last, map_location="cpu", weights_only=True)
         if ck.get("anchor_sha256") != anchor_sha or ck.get("train_cfg_hash") != _cfg_hash(cfg):
             raise RuntimeError(f"{last} was trained against another anchor or config; refusing to resume")
+        if ck.get("schedule_total_steps", total) != total:
+            raise RuntimeError("Refiner resume changed its schedule budget; start a new run")
         model.load_state_dict(ck["model"]); opt.load_state_dict(ck["optim"]); sched.load_state_dict(ck["sched"])
         step, start_epoch, history = ck["step"], ck["epoch"] + 1, [tuple(h) for h in ck["history"]]
         print(f"resumed {last} at step {step}, epoch {start_epoch}")
 
     t0 = time.time(); info = dict(name=cfg["name"], config=cfg, anchor_sha256=anchor_sha, start=t0, screen_items=len(vidx),
                                   anchor_screen=anchor_scores.mean(0).tolist(), params=sum(p.numel() for p in params))
+    clamp_history = ck.get("clamp_history", []) if cfg.get("resume", True) and last.exists() else []
+    bad_steps = 0
     for epoch in range(start_epoch, cfg["epochs"]):
         sampler.set_epoch(epoch); done = False
+        clamp_sum, clamp_batches = 0., 0
         for batch in dl:
             (spec6, feats), target, _, is_clean = prepare_batch(batch, "vaani", device)
             with torch.autocast("cuda", dtype=torch.bfloat16, enabled=use_amp):
@@ -160,24 +171,32 @@ def main(config_path, max_steps=None):
             z = z.float(); loss = loss_fn(z, target)
             if is_clean.any():   # clean items are supervised to the clean target, never to the noisy input
                 loss = loss + (z[is_clean] - target[is_clean]).abs().mean()
-            if not torch.isfinite(loss): continue
+            if not torch.isfinite(loss):
+                bad_steps += 1
+                if bad_steps >= 20:
+                    raise RuntimeError("20 consecutive non-finite refiner losses")
+                continue
+            bad_steps = 0
+            clamp_sum += float(loss_fn.last_snr_clamp_fraction); clamp_batches += 1
             opt.zero_grad(set_to_none=True); loss.backward()
             torch.nn.utils.clip_grad_norm_(params, o.get("clip", 1.0)); opt.step(); sched.step(); step += 1
             if max_steps and step >= max_steps: done = True; break
         s = score_items(model, vds, vidx, first_cfg, device) - anchor_scores
         history.append((epoch, float(s[:, 0].mean()), float(s[:, 1].mean()), float(s[:, 2].mean())))
+        clamp_history.append(dict(epoch=epoch, snr_clamp_fraction=clamp_sum / max(clamp_batches, 1)))
         print(f"epoch {epoch} step {step} dSNR {history[-1][1]:+.3f} dSTOI {history[-1][2]:+.4f} dPESQ {history[-1][3]:+.3f}")
         _save({"model": model.state_dict(), "config": ccfg, "step": step, "epoch": epoch, "history": history,
-               "anchor_sha256": anchor_sha, "train_cfg_hash": _cfg_hash(cfg), "optim": opt.state_dict(), "sched": sched.state_dict()}, last)
+               "anchor_sha256": anchor_sha, "train_cfg_hash": _cfg_hash(cfg), "optim": opt.state_dict(), "sched": sched.state_dict(),
+               "schedule_total_steps": total, "clamp_history": clamp_history}, last)
         _save({"model": model.state_dict(), "config": ccfg, "step": step, "epoch": epoch, "anchor_sha256": anchor_sha}, run_dir / f"epoch{epoch:02d}.pt")
         if select_epoch(history) == epoch:
             _save({"model": model.state_dict(), "config": ccfg, "step": step, "epoch": epoch, "anchor_sha256": anchor_sha}, run_dir / "best.pt")
         if done: break
-        if len(history) == EARLY_EPOCH and should_stop_early(history):
+        if cfg.get("early_screen_stop", True) and len(history) == EARLY_EPOCH and should_stop_early(history):
             print(f"stopping after {EARLY_EPOCH} epochs: no eligible epoch reached +{EARLY_SNR} dB or +{EARLY_PESQ} PESQ on the screen"); break
     sel = select_epoch(history)
     info.update(end=time.time(), wall_s=time.time() - t0, steps=step, history=history, selected_epoch=sel,
-                stopped_early=len(history) < cfg["epochs"] and not max_steps)
+                stopped_early=len(history) < cfg["epochs"] and not max_steps, clamp_history=clamp_history)
     json.dump(info, open(run_dir / "run.json", "w"), indent=2)
     if sel is None: print("no epoch met the STOI condition; best.pt not written")
     return info

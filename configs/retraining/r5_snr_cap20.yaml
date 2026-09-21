@@ -1,0 +1,73 @@
+amp: true
+batch_size: 32
+controller_on: true
+data:
+  bank: data/rirs/bank_r3.npz
+  crop_s: 4.0
+  epoch_len: 20000
+  manifests:
+  - data/manifests/librispeech_100h.parquet
+  - data/manifests/ears.parquet
+  - data/manifests/cv_hi.parquet
+  - data/manifests/esc50.parquet
+  - data/manifests/dns_datasets_fullband.noise_fullband.freesound_000.tar.parquet
+  - data/manifests/mad.parquet
+  - data/manifests/gunshots.parquet
+  - data/manifests/drone.parquet
+  - data/manifests/noisex92.parquet
+  mix:
+    impulse_kinds:
+    - blast
+    - blast
+    - burst
+    - click_train
+    impulse_peak_db:
+    - 15
+    - 45
+    impulse_room: true
+    overload_softclip: true
+    speech_rms_db:
+    - -32
+    - -18
+device: cuda
+dsp:
+  blocking: true
+  controller:
+    block_margin_db: 10.0
+    diff_jump_max_db: 3.0
+  limiter: true
+epochs: 128
+init_from: runs/vaani_full_r4_ctl/best.pt
+loss: hybrid
+loss_cfg:
+  p: 0.5
+  snr_max_db: 20.0
+  w_complex: 50
+  w_mag: 50
+  w_snr: 0.2
+model: vaani
+model_cfg:
+  coh: true
+  df_order: 3
+  film: false
+  channels: 16
+  noise_floor: false
+name: r5_snr_cap20
+num_workers: 6
+optim:
+  clip: 5.0
+  lr: 0.00025
+  lr_new: 0.0005
+  warmup: 200
+  lr_df: 0.0025
+  clip_df: 1.0
+seed: 0
+val:
+  eval_root: data/eval_r2
+  split: val
+  dynamic_items: 200
+resume: true
+early_stopping:
+  patience: null
+  min_delta: 0.0
+init_sha256: 8c67be30eb0187d23537f777be9a9f58c9d679d7290aad448d075b471b669e40

@@ -144,3 +144,18 @@ uv run pytest tests/test_golden_vectors.py -q
 
 ## Not covered here
 Output crossfade/bypass on low reliability, overrun handling, and radio interfacing are the DSP/embedded leads' responsibility.
+
+## Opt-in retraining architectures
+
+The trained Tier 4.6 artifact above retains its original contract. New checkpoints
+may set `model_cfg.channels`, `model_cfg.noise_floor`, and `refiner_cfg.hidden/past/scale`.
+Widths change convolution/recurrent cache shapes; floor-enabled models append
+`noise_cache` (1,2,257: power floor and initialized flag) after `coh_cache`, before
+the cascade's final `refine_cache` (1,hidden,past,257). Zero every cache at a new
+stream. Read the exported named dimensions rather than reusing legacy allocations.
+
+The conditional refiner is a separate Python host runtime that advances c0 history
+on skipped frames and conditionally computes c1/c2. ONNX export is always-on.
+Its MAC activation estimates do not establish target-device latency or clean-speech
+transparency. See [retraining preparation](../docs/retraining-ready.md) for the
+validation sweep and new-checkpoint workflow.

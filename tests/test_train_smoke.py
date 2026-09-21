@@ -1,4 +1,5 @@
 import json, time
+import pytest
 import numpy as np, soundfile as sf, torch, yaml
 from pathlib import Path
 from vaani.data import manifests
@@ -46,10 +47,12 @@ def test_two_steps_each_model(tmp_path):
         assert info["steps"] == 2 and info["wall_s"] > 0 and np.isfinite(info["best_val_stoi"])
         assert info["best_metric"] == "stoi_dynamic_val" and Path(info["init_from"]).is_absolute()
         assert not (rd / "last.tmp").exists()
-    # resume: a second main() on the same run_dir continues from step 2 into epoch 1
-    cfg.update(max_steps=3, epochs=2); yaml.safe_dump(cfg, open(cp, "w")); train.main(str(cp))
+    # A longer cosine budget is a new experiment, not a resume of optimizer time.
+    cfg.update(max_steps=3, epochs=2); yaml.safe_dump(cfg, open(cp, "w"))
+    with pytest.raises(RuntimeError, match="changed cosine schedule"):
+        train.main(str(cp))
     ck = torch.load(rd / "last.pt", weights_only=True)
-    assert ck["step"] == 3 and "optim" in ck and "sched" in ck
+    assert ck["step"] == 2 and "optim" in ck and "sched" in ck
     print(f"smoke wall {time.time() - t0:.1f}s on {device}")
 
 
