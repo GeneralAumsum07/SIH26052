@@ -1,0 +1,54 @@
+{
+ "kind": "refiner",
+ "split": "val",
+ "cache_key": "0246aed2d5d57039",
+ "anchor_sha256": "8c67be30eb0187d23537f777be9a9f58c9d679d7290aad448d075b471b669e40",
+ "selected": "refiner",
+ "settings": {
+  "refiner": {
+   "setting": {
+    "cascade": "runs/vaani_tier46_refiner/best.pt"
+   },
+   "gates": {
+    "utility": true,
+    "paired_uncertainty": true,
+    "intelligibility": true,
+    "per_bucket": true,
+    "severe_burst": true,
+    "recovery": true
+   },
+   "nominal": {
+    "d_snr_out": {
+     "mean": 0.99218383001547,
+     "lo": 0.9265828225861215,
+     "hi": 1.0604505102748214
+    },
+    "d_stoi": {
+     "mean": 0.0099726706500506,
+     "lo": 0.00938757005451257,
+     "hi": 0.010607078097593257
+    },
+    "d_pesq_wb": {
+     "mean": 0.15323417847508164,
+     "lo": 0.14121993852126616,
+     "hi": 0.165491047799976
+    },
+    "candidate_means": {
+     "snr_out": 15.178279707072427,
+     "stoi": 0.9269392351865893,
+     "pesq_wb": 2.5235892275357363
+    },
+    "targets_met": true
+   },
+   "aggregates": {
+    "severe_d_snr_out": 0.6513136940925174,
+    "burst_d_snr_out": NaN
+   },
+   "recovery": {
+    "unrecovered_anchor": 19,
+    "unrecovered_candidate": 16,
+    "median_delta_s": 0.0
+   }
+  }
+ }
+}

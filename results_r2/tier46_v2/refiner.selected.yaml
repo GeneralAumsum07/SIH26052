@@ -1,0 +1,7 @@
+cascade_checkpoint: runs/vaani_tier46_refiner/best.pt
+eval_system: cascade:runs/vaani_tier46_refiner/best.pt
+provenance:
+  screen: results_r2/tier46_v2/refiner_screen/summary.json
+  anchor_sha256: 8c67be30eb0187d23537f777be9a9f58c9d679d7290aad448d075b471b669e40
+  cache_key: 0246aed2d5d57039
+  selected: refiner
