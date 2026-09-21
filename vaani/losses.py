@@ -1,7 +1,26 @@
 """Upstream GTCRN HybridLoss (kept exact so fine-tuned baselines are
 apples-to-apples) plus the speech-preservation variant for `vaani_full_sp`.
 The spectral balance, compression exponent and an optional absolute-SNR term
-are config fields (`loss_cfg`) for the r3 round; defaults reproduce upstream."""
+are config fields (`loss_cfg`) for the r3 round; defaults reproduce upstream.
+
+Against the problem statement's "SI-SNR, L1/L2 loss, and perceptual loss", the
+three terms map as:
+
+- **SI-SNR** -- the scale-invariant term in `HybridLoss.forward`, plus the optional
+  absolute-SNR term `w_snr` (SI-SNR is scale-blind and the target is absolute).
+- **L2** -- `wmse` on the compressed complex parts and on the compressed magnitude.
+  **L1** -- `clean_l1` to the clean target in `SpeechPreservationLoss`.
+- **Perceptual** -- the `mag ** p` compressed-magnitude term in `_compress`. Power-law
+  magnitude compression is a perceptual weighting, not merely a numerical convenience:
+  it approximates the compressive loudness response of human hearing, which is why it
+  is the standard spectral loss in the DNS Challenge baselines and in GTCRN. Choosing
+  `p` chooses how strongly quiet spectral detail is weighted relative to loud;
+  round-3-and-later configs set `p: 0.5` against the upstream default of 0.3, which
+  weights quiet detail more heavily. It is an explicitly perceptual objective and
+  should be described as one, but note what it is not: it is a psychoacoustic
+  magnitude weighting, not a PESQ or PMSQE surrogate, so it does not optimise a
+  perceptual *metric* directly.
+"""
 import torch, torch.nn as nn
 from vaani.dsp import stft
 

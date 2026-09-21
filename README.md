@@ -45,6 +45,18 @@ scripts/fetch_cadre.sh     # Box shared links from the Cadre download page (log 
 scripts/fetch_demand.sh    # Zenodo 1227121; SCAFE only exists at 48 kHz and is resampled at scan time
 ```
 
+**Artillery and gunshot transients are synthesised, deliberately.** The public
+artillery recordings we could obtain are YouTube-sourced: `scripts/crest_audit.py`
+measures MAD's `shelling` class at 12.3 dB event crest against 13 dB for ordinary
+speech, so after loudness normalisation and lossy coding the transient is simply
+gone, and `MAD_CLASS_MAP` labels it `changing` rather than `impulsive`. Impulsive
+material is therefore generated from the Friedlander blast wave,
+p(t) = P0(1 - t/T)e^(-t/T), oversampled at 192 kHz with a ground reflection and a
+distance-dependent low-pass (`vaani/data/blast.py`); it measures ~26.5 dB event
+crest against 15.2 dB for the previous synthetic burst. Every impulse corpus must
+pass the crest gate before an adapter is written for it. See
+[requirements traceability §3.1](docs/requirements-traceability.md).
+
 Manifests split by source recording (speaker / recording group), drop
 byte-identical files so nothing appears in two splits, and store posix paths so
 a manifest built on Windows loads on Linux.
@@ -71,6 +83,32 @@ dumps and run markers are ignored. Val STOI printed during training is **not**
 comparable across seeds or across runs with different noise pools (val is
 rendered from the run's own pool); only the test-split matrix is.
 
+### Loss
+
+`HybridLoss` (`vaani/losses.py`) combines SI-SNR (plus an absolute-SNR term, since
+SI-SNR is scale-blind and the target is absolute), L2 on the complex parts and the
+magnitude, L1 to the clean target in the speech-preservation variant, and a
+**perceptually weighted compressed-magnitude term**: both target and estimate are
+compressed by `mag ** p` before the spectral MSE. Power-law magnitude compression
+approximates the compressive loudness response of human hearing, which is why it is
+the standard spectral loss in the DNS Challenge baselines and in GTCRN; `p = 0.5`
+here against the upstream default of 0.3 weights quiet spectral detail more heavily.
+It is a perceptual weighting, not a PESQ or PMSQE surrogate.
+
+### Optimization (ONNX, INT8, pruning)
+
+```bash
+scripts/run_optimization.sh          # ~1.5 h: quantize, prune, evaluate each on the frozen split
+```
+
+Writes `results_r2/optim/optimization.md`. Both INT8 dynamic quantization and global
+magnitude pruning were implemented, measured and **rejected on the evidence**: at
+52,747 parameters the graph's bytes are mostly node protobuf rather than weights, so
+INT8 makes the file larger (+19.7 %) and slower (x1.45), and there is too little
+learned capacity for pruning to give up. `vaani.eval --system onnx:<graph>@<ckpt>`
+scores an exported graph directly, so an optimized export is measured in SNR/STOI/PESQ
+rather than only in bytes.
+
 ### Comparators
 
 - `gtcrn_pretrained` / `gtcrn_finetuned` - the parent architecture.
@@ -81,6 +119,11 @@ rendered from the run's own pool); only the test-split matrix is.
   `scripts/dfn_worker.py` loads it once per eval process.
 
 ### Where things stand
+
+[Requirements traceability](docs/requirements-traceability.md) maps every clause of
+SIH26052 to the file and measurement that answers it, including the two clauses that
+are not met (board deployment and a microphone prototype) and the two that are met
+with negative results (quantization, pruning).
 
 The [matrix](results_r2/matrix.md) separates point estimates from interval-supported
 passes. The selected cascade's operating envelope, based on means, starts at
@@ -107,6 +150,8 @@ grounds to remove components from an already-trained checkpoint. See the
 - `vaani/data/` - manifests, sources (one `scan_*` per corpus), mixer, impulse synthesis, datasets
 - `vaani/models/` - VaaniNet, the GTCRN baseline, comparator wrappers
 - `vaani/eval.py`, `vaani/report.py`, `vaani/metrics.py` - bucketed metrics with bootstrap CIs
+- `vaani/export.py`, `vaani/quantize.py`, `vaani/prune.py` - streaming ONNX export, INT8 dynamic
+  quantization and magnitude pruning, each with its own measurement report
 - `configs/exp/` - one yaml per ablation run; `configs/data/` - corpus URLs, licences, splits
 - `scripts/` - fetchers, round runner, diagnostics (`ceiling_analysis.py`, `mask_phase_probe.py`, `diag_*.py`)
 - `docs/superpowers/` - design spec and implementation plans
