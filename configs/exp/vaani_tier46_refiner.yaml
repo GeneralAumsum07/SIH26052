@@ -3,7 +3,7 @@ model: vaani_cascade
 # anchor v2 (r4_ctl): frozen by scripts/tier46_protocol.py, see results_r2/tier46_v2/ANCHOR_SELECTION.md
 base_checkpoint: runs/tier46_anchor_v2/best.pt
 seed: 4606
-epochs: 8
+epochs: 32          # raised from the plan's 8 before launch (2026-09-21 10:50 IST): cosine length is fixed at start and a run cannot be extended; cost is GPU time only
 batch_size: 32
 num_workers: 6
 amp: true
