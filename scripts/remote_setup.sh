@@ -43,6 +43,12 @@ echo "rir bank workers: $W (nproc $(nproc), pids.max $(cat /sys/fs/cgroup/pids.m
 BANK_PID=$!
 wait_banks() { wait "$BANK_PID" || { echo "bank stage failed; see data/rirs/bank_fetch.log"; tail -20 data/rirs/bank_fetch.log; exit 1; }; }
 
+# DNS noise shards. Default is ONLY what the recipes actually name: every r5/r6 config lists exactly
+# `dns_...freesound_000...parquet`. Downloading all nine cost ~250 GB of transfer and disk for eight
+# shards nothing trains on - and the container disk here is 200 GB, so it did not merely waste time,
+# it would have run the box out of space mid-scan. Override with DNS_SHARDS to pull more deliberately.
+DNS_SHARDS="${DNS_SHARDS:-freesound_000}"
+
 # --- public archives, all at once (the box has the pipe; the laptop did not) --------------------------------
 B=https://dns4public.blob.core.windows.net/dns4archive/datasets_fullband/noise_fullband
 EARS=https://github.com/facebookresearch/ears_dataset/releases/download/dataset
@@ -53,7 +59,7 @@ EARS=https://github.com/facebookresearch/ears_dataset/releases/download/dataset
   echo "https://github.com/saraalemadi/DroneAudioDataset/archive/master.zip"; echo "  dir=$D/drone"; echo "  out=master.zip"
   for i in $(seq -f %03g 1 20); do echo "$EARS/p$i.zip"; echo "  dir=$D/ears"; echo "  out=p$i.zip"; done
   # freesound_002/003 do not exist on the blob (404, 2026-09-20)
-  for s in freesound_000 freesound_001 audioset_000 audioset_001 audioset_002 audioset_003 audioset_004 audioset_005 audioset_006; do
+  for s in $DNS_SHARDS; do
     echo "$B/datasets_fullband.noise_fullband.$s.tar.bz2"; echo "  dir=$D/dns"; echo "  out=datasets_fullband.noise_fullband.$s.tar.bz2"; done
 } > $D/public.aria2
 [ -f $D/PUBLIC_OK ] || { aria2c -c -j8 -x8 -s8 -k 10M --max-tries=0 --retry-wait=10 --file-allocation=none \
@@ -97,8 +103,7 @@ until [ -f $D/GATED_OK ]; do echo "$(date +%H:%M) waiting for the laptop upload 
 
 # --- corpus -> 16 kHz flac + manifests (scan is CPU-bound; 32 cores make this minutes, not the laptop's hour)
 [ -f data/manifests/MANIFESTS_OK ] || { uv run python scripts/fetch_data.py --dns-shards \
-  $(for s in freesound_000 freesound_001 audioset_000 audioset_001 audioset_002 audioset_003 audioset_004 audioset_005 audioset_006; do
-      echo $B/datasets_fullband.noise_fullband.$s.tar.bz2; done) && touch data/manifests/MANIFESTS_OK; }
+  $(for s in $DNS_SHARDS; do echo $B/datasets_fullband.noise_fullband.$s.tar.bz2; done) && touch data/manifests/MANIFESTS_OK; }
 # relabel pass (MAD shooting/shelling/footsteps -> changing, ESC-50 impulsive shortlist) is inside the scanners now;
 # run it anyway so a manifest restored from the laptop matches
 uv run python scripts/relabel_noise_class.py data/manifests/*.parquet   # positional manifests are required; bare call aborted the bootstrap
