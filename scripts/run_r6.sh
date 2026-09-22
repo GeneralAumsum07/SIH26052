@@ -21,8 +21,15 @@ mkdir -p "$OUT"
 
 # --- preconditions: fail before spending anything -------------------------------------------------
 [ -f "$PROTOCOL" ] || { echo "missing $PROTOCOL: the protocol must be registered before scoring"; exit 1; }
-git ls-files --error-unmatch "$PROTOCOL" >/dev/null 2>&1 || {
+# git ls-files reads the INDEX, so `git add` alone would satisfy it. Registration means the protocol
+# is in history BEFORE the results exist, so ask history, and record the commit so the ordering is auditable.
+PROTOCOL_COMMIT="$(git log -1 --format=%H -- "$PROTOCOL")"
+[ -n "$PROTOCOL_COMMIT" ] || {
   echo "$PROTOCOL is not committed. Registration only means something if its commit precedes the results."; exit 1; }
+git diff --quiet HEAD -- "$PROTOCOL" || {
+  echo "$PROTOCOL has uncommitted edits. Commit them before scoring, or the registered text is not the text used."; exit 1; }
+printf '%s\n' "$PROTOCOL_COMMIT" > "$OUT/PROTOCOL_COMMIT"
+echo "protocol registered at $PROTOCOL_COMMIT ($(git log -1 --format=%cI "$PROTOCOL_COMMIT"))"
 [ -f data/eval_r2/test/EVALSET_HASH ] || { echo "data/eval_r2 missing: the comparison baseline is required"; exit 1; }
 
 echo "== scan the new corpora into manifests =="
