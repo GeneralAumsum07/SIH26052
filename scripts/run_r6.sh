@@ -43,7 +43,14 @@ if [ "${SKIP_TESTS:-0}" != 1 ]; then
 fi
 
 echo "== scan the new corpora into manifests =="
-uv run python scripts/fetch_data.py --config configs/data/round1.yaml 2>&1 | tail -5
+# A full rescan re-reads and re-hashes every clip of every source and the scanners are sequential, so it
+# costs about an hour of wall clock with both GPUs idle. On a box whose bootstrap already built the
+# manifests there is nothing for it to find. RESCAN=0 skips it; the default is unchanged.
+if [ "${RESCAN:-1}" = 1 ]; then
+  uv run python scripts/fetch_data.py --config configs/data/round1.yaml 2>&1 | tail -5
+else
+  echo "skip rescan (RESCAN=0); manifests present: $(ls data/manifests/*.parquet | wc -l)"
+fi
 
 echo "== crest audit: do not take a corpus's label on trust (MAD taught that at 13 dB) =="
 # crest_audit takes paths and prints a table; the converted 16 kHz FLACs are what training reads

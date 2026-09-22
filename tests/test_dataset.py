@@ -99,7 +99,9 @@ def test_corpus_impulse_onset_comes_from_waveform(tmp_path, monkeypatch):
     sf.write(tmp_path / "n2.flac", imp, 16000)  # n2 is the "impulsive" row of the tiny manifest
     ds = dataset.DynamicMixDataset([m], "train", None, mixer.MixConfig(p_room=0.0, p_clean=0.0), crop_s=2.0, epoch_len=40)
     # crop from the file start so the bang is always at 0.5 s inside the impulse clip
-    monkeypatch.setattr(dataset, "_load", lambda path, n, rng: sf.read(path, dtype="float32")[0][:n])
+    # _load takes the packed-corpus reader as a fourth argument; accept and ignore it here
+    monkeypatch.setattr(dataset, "_load",
+                        lambda path, n, rng, pack=None: sf.read(path, dtype="float32")[0][:n])
     real_mix = dataset.mix
     starts = {}
     def spy(rng, s, noises, imp, onsets, bank, cfg):
