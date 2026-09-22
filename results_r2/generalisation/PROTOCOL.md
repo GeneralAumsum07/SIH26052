@@ -54,10 +54,38 @@ vehicle class a sensible `group_id`.
 
 **Set:** `data/eval_gen/test`, content-hashed exactly as `eval_r2`, carrying its own `EVALSET_HASH`.
 
-**Grid:** `stationary_{−10, −5, 0, 5, 10, 15}` dB, 40 items per bucket, 240 items total.
+**Grid:** `stationary_{−10, −5, 0, 5, 10, 15}` and `changing_{−10, −5, 0, 5, 10, 15}` dB,
+40 items per bucket, 480 items total, plus the `clean_inf` bucket that `render_eval_sets` always
+writes (40 items, no noise at all, so corpus-independent and reported separately as a sanity check
+that the system does not damage clean speech).
 
-Only the stationary class. `eval_r2`'s impulsive buckets draw from training impulse corpora, so
-including them here would silently contaminate the set and destroy the only property it has.
+Impulse-free buckets only. The property this set exists to protect is that nothing in it comes from a
+training corpus, and in `render_eval_sets.CLASSES` both `stationary` and `changing` map to
+`impulse=None`: they draw continuous noise from the manifest and nothing else, which here means only
+vehicle_interior. It is the impulse-bearing buckets that would contaminate it - `recorded_*` draw
+their impulses from the training corpora outright, and the synthetic bursts come from the same
+generator training uses.
+
+**Amendment 2026-09-22, before any result was scored.** The grid originally read "only the stationary
+class", on the reasoning above - which separates impulse-bearing from impulse-free buckets, and says
+nothing about `stationary` versus `changing`. Two things forced the correction.
+
+First, the set could not be rendered at all: `assign()` splits 80/10/10 by group hash, and on this
+corpus's eight groups it drew 5/1/2 and put the single stationary class into `train`, leaving the
+test split with no stationary noise (`ValueError: no noise rows for bucket 'stationary'`). That is
+fixed at source rather than worked around - a corpus that never enters a training recipe has nothing
+to protect against, so `scan_vehicle_interior` now marks every row `test` and the corpus is held out
+whole.
+
+Second, even once rendered, a stationary-only grid rests on one vehicle class: 240 items of 6 s drawn
+from class04's 1731 s is near-exhaustive and heavily correlated, so the bootstrap CI below would read
+tighter than the evidence supports. The `changing` buckets carry seven groups. Measured on 5 s windows
+inside each concatenated class, six of the eight are genuinely non-stationary (class01 0 % stationary
+windows, class02 1 %, class03 15 %, class04 98 %), so `changing` reflects the corpus's real character
+rather than a labelling artefact of the concatenation.
+
+Both grids are rendered and both are reported. The stationary grid stands exactly as registered; the
+changing grid is the better-powered measurement.
 
 **Nominal envelope**, for comparability with `results_r2/matrix.md`: unclipped, no reference fault,
 input SNR 0/5/10 dB.

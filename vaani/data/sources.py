@@ -393,6 +393,13 @@ def scan_vehicle_interior(root: Path, out: Path) -> list[dict]:
             dst.parent.mkdir(parents=True, exist_ok=True); sf.write(dst, x, SR, subtype="PCM_16")
         dur = sf.info(dst).duration
         x, _ = sf.read(dst, dtype="float32")
-        rows.append(_row(f"vehicle_interior:{cls.name}", "vehicle_interior", "noise", f"vehicle-{cls.name}", "",
-                         dst, dur, VEHICLE_LICENCE, stationarity_class(x, SR)))
+        r = _row(f"vehicle_interior:{cls.name}", "vehicle_interior", "noise", f"vehicle-{cls.name}", "",
+                 dst, dur, VEHICLE_LICENCE, stationarity_class(x, SR))
+        # assign() splits 80/10/10 by group hash so a corpus that IS trained on cannot leak into eval.
+        # This corpus never enters a training recipe (see results_r2/generalisation/PROTOCOL.md, enforced
+        # by scripts/check_heldout.py), so there is nothing to protect against and the split only throws
+        # material away: on eight groups it drew 5/1/2 and put the one stationary class into "train",
+        # leaving the test split with no stationary noise at all. A held-out corpus is held out whole.
+        r["split"] = "test"
+        rows.append(r)
     return rows

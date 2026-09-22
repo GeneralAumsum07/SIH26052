@@ -143,13 +143,14 @@ def guard_frozen(a):
 
 def main(a):
     guard_frozen(a)   # before the manifests are read: a guard that fires after minutes of work is not a guard
+    classes = CLASSES if not a.classes else {k: CLASSES[k] for k in a.classes}
     df = pd.concat([manifests.read(p) for p in a.manifests]); df = df[df.split == a.split]
     speech, noise = df[df.kind == "speech"], df[df.kind == "noise"]
     bank = RirBank(a.bank) if Path(a.bank).exists() else None
     root = Path(a.out) / a.split; n = int(a.clip_s * SR)
     impd = noise[noise.noise_class == "impulsive"]
 
-    for cls, (cont_cls, impulse) in CLASSES.items():
+    for cls, (cont_cls, impulse) in classes.items():
         pool = noise[noise.noise_class == cont_cls]
         if pool.empty or (impulse == "corpus" and impd.empty):
             # silently substituting a different noise class would make the bucket's
@@ -201,6 +202,10 @@ if __name__ == "__main__":
     ap.add_argument("--clip-s", type=float, default=6.0)
     ap.add_argument("--seed", type=int, default=1234)
     ap.add_argument("--faults", action="store_true", help="also render the reliability-fault buckets")
+    ap.add_argument("--classes", nargs="+", choices=sorted(CLASSES), default=None,
+                    help="render only these bucket classes (default: all). A held-out set built from one "
+                         "corpus may legitimately have no rows of some class, and the impulse-bearing "
+                         "buckets draw from training corpora, which a generalisation set must not do.")
     ap.add_argument("--force", action="store_true",
                     help="overwrite an already-frozen eval set (one carrying EVALSET_HASH); invalidates every result that cites its hash")
     main(ap.parse_args())
