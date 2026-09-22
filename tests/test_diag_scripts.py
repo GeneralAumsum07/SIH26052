@@ -28,10 +28,18 @@ def vaani_ckpt(tmp_path):
     return str(ck)
 
 
-def test_ceiling_analysis_runs(monkeypatch, capsys, evalroot):
+def test_ceiling_analysis_runs(monkeypatch, capsys, evalroot, tmp_path):
+    import json
     from scripts import ceiling_analysis
-    out = _run(monkeypatch, capsys, ceiling_analysis, ["--eval-root", evalroot, "--per-bucket", "1"])
-    assert "architecture ceiling" in out and "stationary_0" in out
+    # The fixture renders a `test` split only; ceiling_analysis defaults to `val` behind an explicit guard.
+    # Output paths are overridden so a smoke test cannot overwrite the committed results/ artefacts.
+    items, agg = tmp_path / "items.csv", tmp_path / "aggregate.json"
+    out = _run(monkeypatch, capsys, ceiling_analysis,
+               ["--eval-root", evalroot, "--split", "test", "--allow-test", "--per-bucket", "1",
+                "--items-out", str(items), "--aggregate-out", str(agg)])
+    assert json.loads(out)["aggregate_out"] == str(agg)
+    assert any(b["bucket"] == "stationary_0" for b in json.loads(agg.read_text(encoding="utf-8"))["aggregates"])
+    assert items.exists()
 
 
 def test_diag_controller_runs(monkeypatch, capsys, evalroot):
