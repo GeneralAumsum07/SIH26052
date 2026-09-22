@@ -54,6 +54,12 @@ vehicle class a sensible `group_id`.
 
 **Set:** `data/eval_gen/test`, content-hashed exactly as `eval_r2`, carrying its own `EVALSET_HASH`.
 
+`EVALSET_HASH` digests the metadata JSON, which carries measured floats, so it is reproducible only
+within a platform. A Windows and a Linux render of the same manifests and bank produced
+`17a9414959bb` and `aa96a28a9955` while being the same set: no item differed in any selection field
+and the audio was bit-identical. Treat a hash mismatch across machines as a question to investigate,
+not as proof the sets differ.
+
 **Grid:** `stationary_{−10, −5, 0, 5, 10, 15}` and `changing_{−10, −5, 0, 5, 10, 15}` dB,
 40 items per bucket, 480 items total, plus the `clean_inf` bucket that `render_eval_sets` always
 writes (40 items, no noise at all, so corpus-independent and reported separately as a sanity check

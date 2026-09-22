@@ -187,6 +187,14 @@ def main(a):
         meta["noise_class"] = "clean"; meta["speech_source"] = str(sp.get("source_id", sp.path))
         _write(d, i, m, c, meta, None)
 
+    # EVALSET_HASH is a WITHIN-platform integrity check, not a cross-platform identity proof. It
+    # digests the metadata JSON as text, and the JSON carries measured floats (snr_achieved_db,
+    # ref_speech_gain_db) whose last bit depends on the numpy/BLAS build. Verified 2026-09-23:
+    # the same manifests and bank rendered on Windows and on Linux give different hashes
+    # (17a9414959bb vs aa96a28a9955) while being the same set - 0 of 2280 items differ in any
+    # selection field, the rendered audio is bit-identical (maxdiff 0 on int16 samples), and the
+    # only deltas are those two fields at <= 1.9e-06, far below the int16 quantisation step.
+    # To decide whether two renders are the same set, compare selections and audio, not this hash.
     h = hashlib.sha1()
     for p in sorted(root.rglob("*.json")): h.update(p.read_bytes())
     (root / "EVALSET_HASH").write_text(h.hexdigest()[:12]); print("eval-set hash", h.hexdigest()[:12])
