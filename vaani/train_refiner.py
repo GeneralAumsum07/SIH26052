@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np, torch, yaml
 from torch.utils.data import DataLoader
 
-from vaani import losses, metrics
+from vaani import losses, metrics, runtime
 from vaani.data.dataset import DynamicMixDataset, EpochSampler, RenderedDataset, collate
 from vaani.data.mixer import MixConfig
 from vaani.dsp import pipeline, stft
@@ -41,10 +41,18 @@ def build_train_data(first_cfg, seed, batch_size, num_workers, split="train"):
     """The anchor's exact data recipe. `split` is exposed only so a test can prove it is 'train'."""
     assert split == "train", "the refiner trains on train sources only"
     d = first_cfg["data"]
+    # pack_root as vaani.train passes it: without it this trainer decodes FLAC per item and ignores the
+    # packed int16 memmap the bootstrap built. The pack is verified bit-identical to the FLACs, so this
+    # is a speed difference only - but the refiner reads the same corpus as its backbone, and there is
+    # no reason for the second stage to read it the slow way.
     ds = DynamicMixDataset(d["manifests"], split, d.get("bank"), MixConfig(**d.get("mix", {})), d.get("crop_s", 4.0),
-                           d.get("epoch_len", 20000), seed, with_dsp=True, controller_on=first_cfg["controller_on"], dsp_cfg=first_cfg.get("dsp"))
+                           d.get("epoch_len", 20000), seed, with_dsp=True, controller_on=first_cfg["controller_on"],
+                           dsp_cfg=first_cfg.get("dsp"), pack_root=d.get("pack", "data/pack"))
     sampler = EpochSampler(len(ds))
-    return ds, sampler, DataLoader(ds, batch_size, sampler=sampler, collate_fn=collate, num_workers=num_workers, persistent_workers=num_workers > 0)
+    # num_workers may be "auto" - vaani.train resolves it through runtime, and this trainer has to do
+    # the same or a config that works for the backbone dies here with a TypeError comparing str to int.
+    nw = runtime.resolve_workers(num_workers)
+    return ds, sampler, DataLoader(ds, batch_size, sampler=sampler, collate_fn=collate, num_workers=nw, persistent_workers=nw > 0)
 
 
 def screen_items(eval_root, split):
