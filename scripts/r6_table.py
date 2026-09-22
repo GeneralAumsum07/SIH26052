@@ -43,16 +43,19 @@ def cell(series, m):
 
 
 def envelope(df):
-    """PROTOCOL's nominal envelope: the six noise classes at 0/5/10 dB, with the reliability-fault
-    buckets excluded.
+    """The nominal envelope exactly as vaani/report.py defines it, so these rows can be read beside
+    results/matrix.md rather than merely resembling it:
 
-    The fault_* buckets are deliberately adversarial - hard clipping, a -12 dB reference, an obstructed
-    reference - and averaging them into a headline number is meaningless. Filtering on the `clipped`
-    and `ref_dropout` columns is NOT enough: those flag per-item conditions, while the reference-gain
-    and reference-obstruction faults are carried by the bucket alone. Doing it that way pulled tier46's
-    eval_r2 envelope down from 14.66 dB to 12.72 dB, which is a statement about fault buckets, not
-    about the system."""
-    return df[(~df.bucket.astype(str).str.startswith("fault_")) & df.snr_in.isin([0, 5, 10])]
+        df["nominal"] = (~clipped) & (~ref_dropout) & fault.isna() & snr_in.isin([0, 5, 10])
+
+    All four conditions, not a subset. Filtering only on clipped/ref_dropout leaves the reference-gain
+    and reference-obstruction fault buckets in (they degrade the reference without setting
+    ref_dropout) and reads 1.9 dB low. Filtering only on the fault bucket leaves the soft-clipped items
+    in (overload_softclip is on in the mix config) and reads about 1.2 dB low. On eval_r2 the correct
+    filter gives n=617, which is the n printed in matrix.md; the two wrong ones give 1097 and 720."""
+    fault = df.fault if "fault" in df else pd.Series(np.nan, index=df.index)
+    return df[(~df.clipped.astype(bool)) & (~df.ref_dropout.astype(bool))
+              & fault.isna() & df.snr_in.isin([0, 5, 10])]
 
 
 def system_name(path):
