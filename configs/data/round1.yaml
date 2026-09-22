@@ -56,6 +56,19 @@ sources:
     extract_to: data/raw/demand
   noisex92:
     # NOISEX-92 (D7, plan addendum 2026-09-20). Provenance: DRA Malvern 1992, mirrored by SPIB (spib.linse.ufsc.br,
-    # .mat) and speechdnn/Noises (GitHub, .wav). The GitHub copies of leopard/m109/machinegun are 8 kHz/8-bit - those
-    # three come from the SPIB .mat files instead. Redistribution terms unclear: cite Varga & Steeneken 1993, do not ship.
+    # .mat) and speechdnn/Noises (GitHub, .wav). All fifteen files are the SPIB originals at 19.98 kHz/16-bit; the
+    # 8 kHz/8-bit mirror copies sit beside them as .bak and the scanner refuses them, including after an upsample.
+    # Redistribution terms unclear: cite Varga & Steeneken 1993, do not ship.
     dir: data/download/noisex92
+  wham:
+    # WHAM! noise (Wichern et al., Interspeech 2019, CC BY-NC 4.0): ~82 h of two-channel bar/cafe/park noise from a
+    # binaural tripod rig, 16 kHz. Only the tr split is scanned; tt is reserved as a held-out generalisation set.
+    # Binaural spacing ~17 cm puts its diffuse-field coherence null near 1.0 kHz against our rig's 1.44 kHz: the
+    # geometry mismatch is the experiment, not a defect. NC licence - see docs/licences.md before claiming transfer.
+    dir: data/download/wham_noise
+  vehicle_interior:
+    # Vehicle Interior Sound Dataset (Zenodo 5606504, CC BY 4.0): 5980 clips of 3-5 s across eight vehicle classes,
+    # 48 kHz, no human voices. Held-out generalisation material only - never add this to a training recipe.
+    # Clips are concatenated per class because they are shorter than the evaluation crop and the renderer pads
+    # speech but not noise.
+    dir: data/download/vehicle_interior

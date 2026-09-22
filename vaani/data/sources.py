@@ -281,6 +281,30 @@ NOISEX_CLASS = {"white": "stationary", "pink": "stationary", "volvo": "stationar
 NOISEX_LICENCE = "NOISEX-92 (DRA Malvern 1992, via SPIB; redistribution terms unclear - cite Varga & Steeneken 1993)"
 
 
+def brickwall_ratio(x: np.ndarray, sr: int, cutoff: float = 4000.0, width: float = 500.0) -> float:
+    """Mean power just below `cutoff` over mean power just above it.
+
+    Resampling from 8 kHz leaves a cliff at 4 kHz that survives upsampling into a higher-rate
+    container, so a samplerate check alone cannot catch a laundered mirror copy.
+
+    Measured 2026-09-22 on the corpus itself, all fifteen files over a 30 s probe resampled to 16 kHz:
+    genuine SPIB originals span 0.14-3.27 (widest: babble), and the three real 8 kHz mirror copies
+    upsampled back to 16 kHz read 9.8-11.9. The separation is about 3x, not orders of magnitude --
+    resample_poly's anti-imaging filter has a finite transition band, so the cliff is steep rather than
+    vertical. BRICKWALL_MAX sits between the two populations in log space.
+
+    Treat this as a tripwire, not a proof: it catches the specific failure that already happened to this
+    corpus once, and a more aggressive resampler with a wider transition band could slip under it."""
+    X = np.abs(np.fft.rfft(x * np.hanning(len(x)))) ** 2
+    fr = np.fft.rfftfreq(len(x), 1 / sr)
+    below = X[(fr >= cutoff - width) & (fr < cutoff)].mean()
+    above = X[(fr >= cutoff) & (fr < cutoff + width)].mean()
+    return float(below / max(above, 1e-30))
+
+
+BRICKWALL_MAX = 6.0   # between genuine (max 3.27) and laundered (min 9.8); see brickwall_ratio for the measurement
+
+
 def scan_noisex92(root: Path, out: Path) -> list[dict]:
     """<root>/<name>.wav, 19.98 kHz 16-bit, one 235 s take per class. One row and one group per file: a take must
     not straddle splits, so each class lands whole in whichever split its hash says."""
@@ -290,8 +314,85 @@ def scan_noisex92(root: Path, out: Path) -> list[dict]:
             continue
         info = sf.info(f)
         assert info.samplerate >= 16000 and info.subtype == "PCM_16", f"{f.name}: {info.samplerate} Hz {info.subtype} is a lossy mirror copy"
+        probe, psr = sf.read(f, dtype="float32", frames=int(info.samplerate * 30), always_2d=True)
+        r = brickwall_ratio(probe.mean(axis=1), psr)
+        assert r < BRICKWALL_MAX, (f"{f.name}: spectral cliff at 4 kHz (ratio {r:.0f}) - this is an 8 kHz mirror "
+                                   f"copy upsampled into a 16-bit container, not the SPIB original")
         dst = out / "noisex92" / (f.stem + ".flac")
         dur = to_flac16k(f, dst) if not dst.exists() else sf.info(dst).duration
         rows.append(_row(f"noisex92:{f.stem}", "noisex92", "noise", f"noisex92-{f.stem}", "", dst, dur,
                          NOISEX_LICENCE, NOISEX_CLASS[f.stem]))
+    return rows
+
+
+WHAM_LICENCE = "CC BY-NC 4.0"
+# Binaural rig (~17 cm) puts WHAM!'s diffuse-field coherence null near 343/(2*0.17) = 1009 Hz, against
+# our 12 cm rig's 1441 Hz. Deliberately not a geometry match: this corpus tests inter-channel realism,
+# not our exact spacing, and the mismatch is the experiment rather than a defect. See the r6 protocol.
+WHAM_SPACING_M = 0.17
+
+
+def scan_wham(root: Path, out: Path, split: str = "tr") -> list[dict]:
+    """WHAM! noise (Wichern et al., Interspeech 2019, CC BY-NC 4.0): <root>/{tr,cv,tt}/*.wav, 16 kHz stereo,
+    ~82 h of restaurants/cafes/bars/parks from a binaural tripod rig. Kept stereo for the same reason as
+    DEMAND: the mixer preserves an (n, 2) noise row's inter-channel relation instead of spatialising it.
+
+    Only `tr` is scanned by default. `tt` is deliberately left unscanned so it stays available as an
+    unseen-corpus held-out set; scanning it here would put it in a manifest and make that claim false.
+
+    group_id is the recording session, not the clip, so assign() cannot split one session across train
+    and test. WHAM! encodes the session in the filename stem (`<session>_<utt>.wav`)."""
+    if split == "tt":
+        raise ValueError("wham tt is reserved as a held-out generalisation set; scanning it into a manifest would spend it")
+    rows = []
+    for f in sorted((root / split).glob("*.wav")):
+        info = sf.info(f)
+        assert info.channels == 2, f"{f.name}: {info.channels} channels; the two-mic relation is the point of this corpus"
+        dst = out / "wham" / split / (f.stem + ".flac")
+        if not dst.exists():
+            x, sr = sf.read(f, dtype="float32", always_2d=True)
+            if sr != SR:   # the 48 kHz variant exists; accept it rather than failing a whole download
+                g = np.gcd(sr, SR); x = resample_poly(x, SR // g, sr // g, axis=0).astype(np.float32)
+            dst.parent.mkdir(parents=True, exist_ok=True); sf.write(dst, x, SR, subtype="PCM_16")
+        x, _ = sf.read(dst, dtype="float32", always_2d=True)
+        session = f.stem.split("_")[0]
+        rows.append(_row(f"wham:{split}:{f.stem}", "wham", "noise", f"wham-{session}", "", dst, len(x) / SR,
+                         WHAM_LICENCE, stationarity_class(x[:, 0], SR)))
+    return rows
+
+
+VEHICLE_LICENCE = "CC BY 4.0"
+
+
+def scan_vehicle_interior(root: Path, out: Path) -> list[dict]:
+    """Vehicle Interior Sound Dataset (Zenodo 5606504, CC BY 4.0): <root>/<class>/*.wav, 48 kHz, 5980 clips
+    of 3-5 s across eight vehicle classes, no human voices.
+
+    Clips are shorter than the evaluation crop and render_bucket_item pads speech but not noise, so a 3 s
+    clip would reach mix() short. Every clip in a class is concatenated into one long file per class, which
+    removes the short-clip problem and gives a group_id -- the vehicle class -- that split assignment can
+    use honestly.
+
+    Intended as held-out generalisation material, not training data: civilian road vehicles on asphalt,
+    which is stationary vehicular noise of a completely different provenance from anything in the recipe."""
+    rows = []
+    for cls in sorted(p for p in root.iterdir() if p.is_dir()):
+        files = sorted(cls.glob("*.wav"))
+        if not files:
+            continue
+        dst = out / "vehicle_interior" / (cls.name + ".flac")
+        if not dst.exists():
+            chunks = []
+            for f in files:
+                x, sr = sf.read(f, dtype="float32", always_2d=True)
+                x = x.mean(axis=1)
+                if sr != SR:
+                    g = np.gcd(sr, SR); x = resample_poly(x, SR // g, sr // g).astype(np.float32)
+                chunks.append(x)
+            x = np.concatenate(chunks)
+            dst.parent.mkdir(parents=True, exist_ok=True); sf.write(dst, x, SR, subtype="PCM_16")
+        dur = sf.info(dst).duration
+        x, _ = sf.read(dst, dtype="float32")
+        rows.append(_row(f"vehicle_interior:{cls.name}", "vehicle_interior", "noise", f"vehicle-{cls.name}", "",
+                         dst, dur, VEHICLE_LICENCE, stationarity_class(x, SR)))
     return rows

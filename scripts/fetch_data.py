@@ -140,9 +140,20 @@ def main():
 
     nx = cfg["sources"].get("noisex92")
     if nx and Path(nx["dir"]).exists():
-        # D7: 15 files fetched by hand (12 wavs from the speechdnn mirror, leopard/m109/machinegun from SPIB .mat);
-        # no downloader - the mirror's copies of those three are 8 kHz/8-bit and the scan refuses them
+        # D7: 15 files fetched by hand, no downloader. All fifteen are now the SPIB originals at 19.98 kHz/16-bit,
+        # verified 2026-09-22 by spectral measurement; the 8 kHz/8-bit mirror copies are kept beside them as .bak.
+        # scan_noisex92 refuses both an 8 kHz container and one laundered by upsampling (see brickwall_ratio).
         manifests.write(sources.scan_noisex92(Path(nx["dir"]), raw), mdir / "noisex92.parquet")
+
+    wh = cfg["sources"].get("wham")
+    if wh and (Path(wh["dir"]) / "tr").exists():
+        # tr only: tt stays unscanned so it remains available as an unseen-corpus held-out set
+        manifests.write(sources.scan_wham(Path(wh["dir"]), raw), mdir / "wham.parquet")
+
+    vi = cfg["sources"].get("vehicle_interior")
+    if vi and Path(vi["dir"]).exists():
+        # generalisation corpus: never added to a training recipe, see results_r2/generalisation/PROTOCOL.md
+        manifests.write(sources.scan_vehicle_interior(Path(vi["dir"]), raw), mdir / "vehicle_interior.parquet")
 
     for url in a.dns_shards:
         tar = Path("data/download/dns") / Path(url).name
