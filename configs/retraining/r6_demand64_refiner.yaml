@@ -1,0 +1,22 @@
+# Second stage for the r6 r6_demand64 backbone: the 2,498-param ResidualRefiner on a frozen base.
+# The backbone is frozen by FrozenCascade (requires_grad_(False), never leaves eval), so this is a
+# separate stage by construction - the refiner cannot be trained jointly with the base it refines.
+# The data recipe is NOT set here: scripts/retraining.py and train_refiner take it from the base
+# checkpoint's own config, so this arm trains on exactly the corpus its backbone did.
+# seed/epochs/optim are held identical to vaani_tier46_refiner so only the backbone differs.
+name: r6_demand64_refiner
+model: vaani_cascade
+base_checkpoint: runs/r6_demand64/best.pt
+seed: 4606
+epochs: 32
+batch_size: 32
+num_workers: auto
+amp: true
+optim:
+  lr: 0.001
+  warmup: 200
+  clip: 1.0
+  weight_decay: 0.0001
+val:
+  eval_root: data/eval_r2
+  split: val
