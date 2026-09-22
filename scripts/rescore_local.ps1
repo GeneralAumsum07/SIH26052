@@ -14,6 +14,11 @@
 #   uv run powershell -File scripts/rescore_local.ps1        (or just: .\scripts\rescore_local.ps1)
 
 $ErrorActionPreference = 'Continue'
+# vaani.eval runs the model on CPU in parallel worker processes on purpose - see _init() in
+# vaani/eval.py: "the tiny model on CPU (no 8x CUDA contexts) and one torch thread so 8 workers
+# don't oversubscribe". A 50k-param model plus PESQ, STOI and DNSMOS is CPU work, so --workers is
+# the throughput knob and an idle GPU is expected, not a fault.
+$Workers = [Math]::Max(4, [int]$env:NUMBER_OF_PROCESSORS - 4)
 $EvalRoot = 'data/eval_r2_relabel'
 $OutDir   = 'results_r2/r6_local'
 $Expected = 2281           # 2280 items + header
@@ -27,7 +32,7 @@ $all   = Get-ChildItem results_r2/runs -Directory | ForEach-Object { $_.Name }
 $queue = @($First | Where-Object { $all -contains $_ }) +
          @($all   | Where-Object { $OnTheBox -notcontains $_ -and $First -notcontains $_ })
 
-Write-Host "$($queue.Count) systems queued. ~25-40 min each."
+Write-Host "$($queue.Count) systems queued, $Workers workers."
 $i = 0
 foreach ($n in $queue) {
     $i++
@@ -42,7 +47,7 @@ foreach ($n in $queue) {
     }
     Write-Host "[$i/$($queue.Count)] $n  started $(Get-Date -Format 'HH:mm')"
     uv run python -m vaani.eval --system "ckpt:$ck" --split test --eval-root $EvalRoot `
-        --workers 4 --dnsmos --out $out
+        --workers $Workers --dnsmos --out $out
     Write-Host "[$i/$($queue.Count)] $n  done $(Get-Date -Format 'HH:mm')  rc=$LASTEXITCODE"
 }
 Write-Host "queue finished $(Get-Date -Format 'HH:mm')"
