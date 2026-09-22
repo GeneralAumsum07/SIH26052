@@ -43,7 +43,16 @@ def cell(series, m):
 
 
 def envelope(df):
-    return df[(~df.clipped.astype(bool)) & (~df.ref_dropout.astype(bool)) & df.snr_in.isin([0, 5, 10])]
+    """PROTOCOL's nominal envelope: the six noise classes at 0/5/10 dB, with the reliability-fault
+    buckets excluded.
+
+    The fault_* buckets are deliberately adversarial - hard clipping, a -12 dB reference, an obstructed
+    reference - and averaging them into a headline number is meaningless. Filtering on the `clipped`
+    and `ref_dropout` columns is NOT enough: those flag per-item conditions, while the reference-gain
+    and reference-obstruction faults are carried by the bucket alone. Doing it that way pulled tier46's
+    eval_r2 envelope down from 14.66 dB to 12.72 dB, which is a statement about fault buckets, not
+    about the system."""
+    return df[(~df.bucket.astype(str).str.startswith("fault_")) & df.snr_in.isin([0, 5, 10])]
 
 
 def system_name(path):
