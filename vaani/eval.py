@@ -3,6 +3,7 @@ import argparse, csv
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
+import os
 from multiprocessing import Pool
 from pathlib import Path
 
@@ -182,7 +183,21 @@ def main():
         w = csv.DictWriter(fh, fieldnames=cols); w.writeheader()
         # imap keeps CSV order deterministic; results stream back so ASR overlaps the workers' DSP/PESQ
         if a.workers == 0: _init(a.system, root, a.split, a.dnsmos)
-        pool_cm = Pool(a.workers, initializer=_init, initargs=(a.system, root, a.split, a.dnsmos)) if a.workers else nullcontext()
+        # One BLAS/OpenMP thread per worker. _init caps torch and vaani/dnsmos.py caps onnxruntime,
+        # but numpy's BLAS has its own pool and reads the environment at import, so it has to be set
+        # here, before the workers exist - the same reason rirs.build_bank sets it around its pool.
+        # Without it N workers each start a thread per core and spend their time contending: the
+        # symptom is a run that starts fast and settles back to its single-worker rate.
+        _caps = {k: "1" for k in ("OMP_NUM_THREADS", "MKL_NUM_THREADS",
+                                  "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS")}
+        _saved = {k: os.environ.get(k) for k in _caps}
+        os.environ.update(_caps)
+        try:
+            pool_cm = Pool(a.workers, initializer=_init, initargs=(a.system, root, a.split, a.dnsmos)) if a.workers else nullcontext()
+        finally:
+            for _k, _v in _saved.items():
+                if _v is None: os.environ.pop(_k, None)
+                else: os.environ[_k] = _v
         with pool_cm as pool, ThreadPoolExecutor(a.asr_threads) as tp:
             stream = pool.imap(_work, range(n)) if pool else map(_work, range(n))
             def transcribe(item):
