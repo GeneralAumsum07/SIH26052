@@ -64,6 +64,23 @@ nvidia-smi dmon -s u -d 5
 Sustained GPU utilisation **above ~60 %** means this box is not dataloader-bound and the
 shared-stream plan needs rethinking. Below ~35 % is the expectation.
 
+## 2b. Why the test suite runs on the box
+
+35 of the 57 test files import torch, and this is the first environment that has the right one.
+The dev laptop's venv is Windows-side; the Linux VM the desktop agent works in cannot install
+torch at all (its egress proxy allows PyPI but blocks `download.pytorch.org`, and the PyPI wheel
+is a CUDA build that will not import without several GB of nvidia packages). Installing a
+mismatched torch there would produce failures that are not real on the box, which is worse than
+not running them.
+
+So `run_r6.sh` runs `pytest` as a **precondition**, before the scan and before any GPU time.
+`SKIP_TESTS=1` bypasses it; don't, unless the failure is already understood.
+
+What this means in practice: the first time `tests/test_pack.py`, `tests/test_train_multi.py` and
+the two shared-stream tests in `tests/test_r6_arms.py` execute is on the box, ~60 s in. They are
+cheap and they guard the two changes most able to corrupt a run silently — the packed data path
+and the shared-stream guard.
+
 ## 3. The session
 
 ```bash

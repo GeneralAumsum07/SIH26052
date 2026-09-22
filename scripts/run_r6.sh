@@ -32,6 +32,16 @@ printf '%s\n' "$PROTOCOL_COMMIT" > "$OUT/PROTOCOL_COMMIT"
 echo "protocol registered at $PROTOCOL_COMMIT ($(git log -1 --format=%cI "$PROTOCOL_COMMIT"))"
 [ -f data/eval_r2/test/EVALSET_HASH ] || { echo "data/eval_r2 missing: the comparison baseline is required"; exit 1; }
 
+# The whole test suite runs here, not on a laptop: 35 of the test files need torch, and the only
+# environment with the right torch is this box after `uv sync`. Training changes that break a test
+# are far cheaper to find in this 60 s than in a 4 h run, so this is a precondition, not a courtesy.
+if [ "${SKIP_TESTS:-0}" != 1 ]; then
+  echo "== test suite (the first place torch-dependent tests can run) =="
+  uv run pytest -q -x --timeout=300 > "$OUT/pytest.log" 2>&1 || {
+    echo "tests failed; see $OUT/pytest.log" >&2; tail -30 "$OUT/pytest.log" >&2; exit 1; }
+  tail -1 "$OUT/pytest.log"
+fi
+
 echo "== scan the new corpora into manifests =="
 uv run python scripts/fetch_data.py --config configs/data/round1.yaml 2>&1 | tail -5
 
