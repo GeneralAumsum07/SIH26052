@@ -130,7 +130,19 @@ def _write(d, i, m, c, meta, twin):
         sf.write(d / f"{i:04d}.twin.mix.wav", twin.T, SR, subtype="FLOAT")
 
 
+def guard_frozen(a):
+    """Refuse to re-render over a frozen eval set. Every published number is relative to a specific
+    EVALSET_HASH, so overwriting one silently invalidates the whole results tree; its presence is the
+    marker that a set was completed and scored. A partially written set has no hash and may be resumed."""
+    stamp = Path(a.out) / a.split / "EVALSET_HASH"
+    if stamp.exists() and not getattr(a, "force", False):
+        raise SystemExit(f"{stamp} exists: {stamp.parent} is a frozen eval set and results reference its hash "
+                         f"({stamp.read_text().strip()}). Render a new set to a different --out, or pass --force "
+                         f"to overwrite it deliberately.")
+
+
 def main(a):
+    guard_frozen(a)   # before the manifests are read: a guard that fires after minutes of work is not a guard
     df = pd.concat([manifests.read(p) for p in a.manifests]); df = df[df.split == a.split]
     speech, noise = df[df.kind == "speech"], df[df.kind == "noise"]
     bank = RirBank(a.bank) if Path(a.bank).exists() else None
@@ -189,4 +201,6 @@ if __name__ == "__main__":
     ap.add_argument("--clip-s", type=float, default=6.0)
     ap.add_argument("--seed", type=int, default=1234)
     ap.add_argument("--faults", action="store_true", help="also render the reliability-fault buckets")
+    ap.add_argument("--force", action="store_true",
+                    help="overwrite an already-frozen eval set (one carrying EVALSET_HASH); invalidates every result that cites its hash")
     main(ap.parse_args())
