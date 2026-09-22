@@ -43,8 +43,11 @@
       "Log": 1,
       "Relu": 2
     },
-    "ms_per_frame_mean": 0.907718589721695,
-    "ms_per_frame_p99": 1.2124379992746979,
+    "nodes": 1756,
+    "initializers": 171,
+    "initializer_bytes": 210108,
+    "ms_per_frame_mean": 0.906350480829879,
+    "ms_per_frame_p99": 1.1524399986956266,
     "max_abs_err_vs_torch": 1.5050172805786133e-06
   },
   "int8": {
@@ -93,13 +96,16 @@
       "Log": 1,
       "Relu": 2
     },
-    "ms_per_frame_mean": 1.3176113782381622,
-    "ms_per_frame_p99": 1.6032470011123219,
+    "nodes": 1906,
+    "initializers": 247,
+    "initializer_bytes": 157133,
+    "ms_per_frame_mean": 1.3185482370877604,
+    "ms_per_frame_p99": 1.626008999228361,
     "max_abs_err_vs_torch": 0.0761864185333252
   },
   "size_ratio": 1.1967345063938188,
   "size_reduction_percent": -19.673450639381883,
-  "latency_ratio": 1.4515637259804712,
+  "latency_ratio": 1.45478847860318,
   "quantizable_float_ops_remaining": {
     "MatMul": 1
   },

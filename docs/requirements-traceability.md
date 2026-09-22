@@ -120,24 +120,49 @@ Both are named by the statement and neither needs hardware, so both were impleme
 rather than deferred. Both came back negative, and the numbers are more useful than the words would
 have been. Full tables in [`results_r2/optim/optimization.md`](../results_r2/optim/optimization.md).
 
-**INT8 dynamic quantization makes this model larger and slower.** On the trained cascade the graph
-goes 474,599 → 567,969 bytes (**+19.7 %**) and latency 0.908 → 1.318 ms per frame (**×1.45**).
-Per-channel weight scales do not rescue it (+20.1 %, ×1.43).
+**INT8 dynamic quantization makes this model larger, slower and worse.** On the trained cascade the
+graph goes 474,599 -> 567,969 bytes (**+19.7 %**) and latency 0.906 -> 1.319 ms per frame (**x1.46**).
+Per-channel weight scales do not rescue it (+20.1 %, x1.45). These latencies are best-of-5
+interleaved repeats on a synthetic stream, which is why the FP32 figure reads lower than the
+0.999 ms single-run deployment measurement in `deploy/CONTRACT.md` quoted against clause 11;
+the ratio is the claim here, not the absolute. It also costs quality: paired per-clip
+against the same checkpoint, SNR_out **-1.18 dB** [-1.27, -1.10] and PESQ **-0.166** [-0.176, -0.156],
+which moves PESQ from 2.548 to 2.382 and takes the system below the statement's 2.5 target. So there
+is no trade to weigh -- the compressed model is worse on every axis the clause cares about.
 
 The reason is structural and worth knowing before anyone tries again on a model this size: the FP32
-graph's weights account for only **210 KB of its 474 KB** — the rest is node protobuf. Quantization
+graph's weights account for only **210 KB of its 474 KB** -- the rest is node protobuf. Quantization
 cut weight bytes to 157 KB but added 150 nodes, and the node overhead exceeded the weight saving.
 The latency result has the same shape: ORT's dynamic path has no integer kernel for `GRU`, which is
 most of this model's recurrence, so the 29 inserted `DynamicQuantizeLinear` nodes are pure added
 work on top of an unchanged float recurrence. Quantization pays on models whose weights dominate
 their graph; at 52,747 parameters this one is the opposite case.
 
-**Pruning has almost nothing to remove.** Of 52,747 parameters, only **21,952** are learned weights
-in prunable layer types — the ERB analysis and synthesis matrices are 24,576 more, but they are a
-fixed signal transform, not capacity, and are excluded from every sparsity level. Quality falls off
-sharply and well before any useful saving; the sweep table records where. Structured pruning, which
-would actually shrink the dense matrices, has little to work with at 16 channels and GRU hidden 16,
-and the ONNX cache shapes in `deploy/CONTRACT.md` are keyed to those widths, so it is a re-export
+The FP32 ONNX row is the control for all of this. It reproduces the PyTorch checkpoint to +-0.000 on
+every metric, so the INT8 deltas are attributable to quantization and not to export.
+
+**Pruning has almost nothing to remove, and removing it costs more than it saves.** Of 52,747
+parameters, only **21,952** are learned weights in prunable layer types -- the ERB analysis and
+synthesis matrices are 24,576 more, but they are a fixed signal transform, not capacity, and are
+excluded from every sparsity level. Measured falloff, paired per clip against the unpruned
+checkpoint:
+
+| level | weights zeroed | d SNR_out (dB) | d PESQ | still meets targets |
+|---|---:|---:|---:|---|
+| p10 | 2,195 | -0.13 | -0.019 | yes (STOI, and SNR/PESQ at the mean) |
+| p20 | 4,390 | -0.74 | -0.070 | no (PESQ 2.478) |
+| p30 | 6,586 | -2.17 | -0.401 | no (PESQ 2.147) |
+| p40 | 8,781 | -8.38 | -0.732 | no (STOI 0.832 also fails) |
+| p50 | 10,976 | -14.71 | -1.359 | no (SNR_out 0.44 dB; the model is destroyed) |
+
+Every delta's 95 % interval excludes zero, so even p10's -0.13 dB is a real loss rather than noise.
+The collapse between p30 and p50 is not graceful degradation; it is the model failing.
+
+The decisive point is that none of this buys anything. Zeroed weights in a dense graph still occupy
+their bytes and still get multiplied -- unstructured sparsity needs sparse kernels ORT's CPU provider
+does not apply here, so p10 costs 0.13 dB for a 0 % saving in size or latency. Structured pruning,
+which would actually shrink the dense matrices, has little to work with at 16 channels and GRU hidden
+16, and the ONNX cache shapes in `deploy/CONTRACT.md` are keyed to those widths, so it is a re-export
 and a contract change rather than a tuning knob.
 
 Neither result is a failure to implement the clause. Both are the clause answered with a number.
