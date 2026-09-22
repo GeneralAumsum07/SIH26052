@@ -2,6 +2,7 @@
 from pathlib import Path
 
 import os
+import uuid
 import numpy as np
 import pyroomacoustics as pra
 
@@ -132,8 +133,18 @@ class RirBank:
         if not all(f.exists() for f in parts.values()):
             z = np.load(path)
             for k, f in parts.items():
-                tmp = f.with_suffix(".tmp.npy")
-                np.save(tmp, z[k]); os.replace(tmp, f)
+                # The temp name must be unique per writer. It used to be a fixed ".tmp.npy", so two
+                # trainers starting together on a fresh box wrote the same temp file and one's
+                # os.replace pulled it out from under the other - leaving a truncated .npy behind and
+                # a later mmap failing with "length is greater than file size". run_r6.sh's
+                # ARMS_PARALLEL starts arms concurrently by design, so this was reachable in normal use.
+                # uuid rather than the pid: threads in one process race just as happily.
+                tmp = f.with_suffix(f".{uuid.uuid4().hex}.tmp.npy")
+                try:
+                    np.save(tmp, z[k]); os.replace(tmp, f)   # replace is atomic within a directory
+                finally:
+                    if tmp.exists():
+                        tmp.unlink()
         self.speech, self.noise, self.rt60 = (np.load(parts[k], mmap_mode="r") for k in self.KEYS)
 
     def __len__(self):
