@@ -127,10 +127,20 @@ def test_each_arm_is_trained_before_it_is_scored(tmp_path):
 
 
 def test_the_arms_are_trained_as_separate_runs(tmp_path):
+    """The invariant is not a call count - it is that no training invocation ever mixes configs
+    whose DATA differs. The control may share an invocation with the epoch sweep, because those
+    four differ only in their epoch budget; a corpus arm may share with nothing, because sharing a
+    batch stream would feed it the control's data and void the comparison."""
     _sandbox(tmp_path)
     _run(tmp_path)
     trains = [c for c in _calls(tmp_path) if "vaani.train" in c]
-    assert len(trains) == 3, "control plus two arms, never bundled"
+    assert trains, "nothing was trained"
+    for arm in ("r6_demand64", "r6_wham64"):
+        owning = [c for c in trains if arm in c]
+        assert len(owning) == 1, f"{arm} trained {len(owning)} times"
+        others = {a for a in ("r6_ctl64", "r6_demand64", "r6_wham64", "r6_e32", "r6_e128", "r6_e256")
+                  if a != arm and a in owning[0]}
+        assert not others, f"{arm} was bundled with {others}"
 
 
 def test_finished_work_is_not_repeated(tmp_path):

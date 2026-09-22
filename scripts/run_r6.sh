@@ -90,6 +90,18 @@ eval_system () {  # $1 = system spec, $2 = basename, $3 = eval root
     --workers "$WORKERS" --dnsmos --out "$OUT/$2.csv" > "$OUT/eval_$2.log" 2>&1
 }
 
+# The epoch sweep and the control are ONE shared-stream run: r6_ctl64 is the 64-epoch point, so
+# 32/64/128/256 cost 256 epochs of dataloading instead of 480, the budgets are compared pairwise,
+# and the corpus arms get their control for free. SWEEP=0 skips it and trains the control alone.
+SWEEP="${SWEEP:-1}"
+if [ "$SWEEP" = 1 ] && [ ! -f runs/r6_ctl64/best.pt ]; then
+  echo "== epoch sweep + control on one shared batch stream =="
+  uv run python -m vaani.train_multi \
+    configs/retraining/r6_e32.yaml configs/retraining/r6_ctl64.yaml \
+    configs/retraining/r6_e128.yaml configs/retraining/r6_e256.yaml \
+    > "$OUT/train_sweep.log" 2>&1
+fi
+
 ARMS="r6_ctl64 r6_demand64"
 [ -f data/manifests/wham.parquet ] && ARMS="$ARMS r6_wham64" || echo "skip r6_wham64 (wham not downloaded)"
 if [ "$ARMS_PARALLEL" -gt 1 ]; then
@@ -102,7 +114,7 @@ else
 fi
 
 echo "== score every arm on eval_r2, and on the generalisation set =="
-for n in r6_ctl64 r6_demand64 r6_wham64; do
+for n in r6_ctl64 r6_demand64 r6_wham64 r6_e32 r6_e128 r6_e256; do
   [ -f "runs/$n/best.pt" ] || continue
   eval_system "ckpt:runs/$n/best.pt" "$n" data/eval_r2
   if [ -f "$GEN/test/EVALSET_HASH" ]; then eval_system "ckpt:runs/$n/best.pt" "${n}_gen" "$GEN"; fi
