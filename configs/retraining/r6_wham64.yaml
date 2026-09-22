@@ -47,7 +47,6 @@ early_stopping:
   min_delta: 0.0
   patience: null
 epochs: 64
-init_sha256: 8c67be30eb0187d23537f777be9a9f58c9d679d7290aad448d075b471b669e40
 loss: hybrid
 loss_cfg:
   p: 0.5
@@ -63,7 +62,7 @@ model_cfg:
   film: false
   noise_floor: false
 name: r6_wham64
-num_workers: 6
+num_workers: auto
 optim:
   clip: 5.0
   clip_df: 1.0

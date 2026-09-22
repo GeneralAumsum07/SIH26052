@@ -1,6 +1,8 @@
-# r6 control: fresh 64 epochs on the unmodified recipe manifests. This is the shared control for
-# BOTH corpus arms below - same budget, same seed, same box, same day - so no separate control run
-# is needed and the comparisons are paired. Registered in results_r2/generalisation/PROTOCOL.md.
+# Epoch-scaling sweep, point 128. Fresh run, cosine annealed to zero over its OWN budget, so the
+# points are comparable rather than snapshots of one long run at a high learning rate.
+# Data config is byte-identical to r6_ctl64 (the 64-epoch point), so all four train on ONE shared
+# batch stream via vaani.train_multi: 256 epochs of dataloading instead of 480, and the comparison
+# between budgets is paired. See scripts/run_r6.sh and the box plan.
 amp: true
 batch_size: 32
 controller_on: true
@@ -42,7 +44,7 @@ dsp:
 early_stopping:
   min_delta: 0.0
   patience: null
-epochs: 64
+epochs: 128
 loss: hybrid
 loss_cfg:
   p: 0.5
@@ -57,7 +59,7 @@ model_cfg:
   df_order: 3
   film: false
   noise_floor: false
-name: r6_ctl64
+name: r6_e128
 num_workers: auto
 optim:
   clip: 5.0

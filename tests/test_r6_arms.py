@@ -44,3 +44,36 @@ def test_the_generalisation_corpus_never_enters_a_training_recipe():
         node = cfg.get("data", cfg)
         mans = node.get("manifests", []) if isinstance(node, dict) else []
         assert not any("vehicle_interior" in str(m) for m in mans), f"{p} trains on the held-out corpus"
+
+
+SWEEP = [f"configs/retraining/r6_e{e}.yaml" for e in (32, 128, 256)]
+
+
+@pytest.mark.parametrize("cfg", [CTL, *ARMS, *SWEEP])
+def test_a_fresh_run_declares_no_checkpoint_hash(cfg):
+    """`verify_checkpoint_hash` raises when a hash is declared and no init_from is set, so a stale
+    init_sha256 on a fresh recipe kills the run on its first line. All three arms shipped that way."""
+    c = load(cfg)
+    if c.get("init_from") is None:
+        assert "init_sha256" not in c, f"{cfg}: init_sha256 without init_from aborts training at startup"
+
+
+@pytest.mark.parametrize("cfg", [CTL, *ARMS, *SWEEP])
+def test_workers_follow_the_box(cfg):
+    """A constant baked into a config wastes most of a 64-core box; "auto" sizes from the machine."""
+    assert load(cfg).get("num_workers") == "auto"
+
+
+def test_the_epoch_sweep_shares_one_batch_stream_with_the_control():
+    """r6_ctl64 IS the 64-epoch point, so the four budgets train on 256 epochs of dataloading
+    rather than 480, and the budget comparison is paired."""
+    from vaani.train_multi import stream_signature
+    cfgs = [load(p) for p in (SWEEP[0], CTL, SWEEP[1], SWEEP[2])]
+    assert [c["epochs"] for c in cfgs] == [32, 64, 128, 256]
+    assert all(stream_signature(c) == stream_signature(cfgs[0]) for c in cfgs)
+
+
+def test_a_corpus_arm_never_shares_a_stream_with_the_sweep():
+    from vaani.train_multi import assert_shared
+    with pytest.raises(SystemExit):
+        assert_shared([load(CTL), load("configs/retraining/r6_wham64.yaml")])
