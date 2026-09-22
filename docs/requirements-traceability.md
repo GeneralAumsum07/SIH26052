@@ -185,3 +185,20 @@ Two things that are true and worth saying precisely:
   not a path to supporting them.
 
 This is a procurement gap, not an engineering one.
+
+### 3.6 Corpus licensing
+
+[`docs/licences.md`](licences.md) is generated from the manifests and the training recipe, so it
+states what training actually reads rather than what a hand-maintained table remembers.
+
+Three corpora in the deployed recipe are not commercially usable: EARS and ESC-50 are CC BY-NC, and
+MAD is YouTube-sourced, which is an absence of licence rather than a restrictive one. Three more have
+unresolved terms: DNS noise is licensed per clip, DroneAudioDataset is citation-on-use, and NOISEX-92's
+SPIB redistribution terms are unstated.
+
+Non-commercial licensing is fine for a competition and for research. It is not fine for a claim that
+the system is ready to transfer to a deployable defence product, and the honest position is stated in
+the generated table: a fielded version would retrain on licensed or government-collected data, and
+because a recipe is a list of manifest paths and nothing in the model or the DSP front end is tied to
+a corpus, that substitution is mechanical. Being unable to answer the question would not be defensible;
+this answers it.

@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# r6 session driver: the order of work from the final-round data audit, on the training box.
+#
+# Ordering is not cosmetic. The protocol is registered before anything is scored; disjointness is
+# proven before the generalisation set is used; the two corpus arms run separately so a null can be
+# attributed. Each stage skips if its artefact exists, so an interrupted session resumes instead of
+# repeating GPU hours.
+#
+# Downloads are NOT done here - fetch the corpora onto the box first, then run this.
+#
+#   bash scripts/run_r6.sh
+#
+# Env: OUT, WORKERS. The epoch budget lives in the configs, since the arms must not differ in it.
+set -euo pipefail
+
+OUT="${OUT:-results_r2/r6}"
+WORKERS="${WORKERS:-4}"          # 8 workers twice killed a pool worker in the twin bucket; 4 is the safe default
+GEN="data/eval_gen"
+PROTOCOL="results_r2/generalisation/PROTOCOL.md"
+mkdir -p "$OUT"
+
+# --- preconditions: fail before spending anything -------------------------------------------------
+[ -f "$PROTOCOL" ] || { echo "missing $PROTOCOL: the protocol must be registered before scoring"; exit 1; }
+git ls-files --error-unmatch "$PROTOCOL" >/dev/null 2>&1 || {
+  echo "$PROTOCOL is not committed. Registration only means something if its commit precedes the results."; exit 1; }
+[ -f data/eval_r2/test/EVALSET_HASH ] || { echo "data/eval_r2 missing: the comparison baseline is required"; exit 1; }
+
+echo "== scan the new corpora into manifests =="
+uv run python scripts/fetch_data.py --config configs/data/round1.yaml 2>&1 | tail -5
+
+echo "== crest audit: do not take a corpus's label on trust (MAD taught that at 13 dB) =="
+# crest_audit takes paths and prints a table; the converted 16 kHz FLACs are what training reads
+for m in wham vehicle_interior; do
+  d="data/raw/$m"
+  [ -d "$d" ] || { echo "skip crest $m (not scanned)"; continue; }
+  [ -s "$OUT/crest_$m.log" ] && { echo "skip crest $m (done)"; continue; }
+  uv run python scripts/crest_audit.py "$d" --by-parent > "$OUT/crest_$m.log" 2>&1 \
+    || echo "crest audit failed for $m; see $OUT/crest_$m.log"
+  tail -20 "$OUT/crest_$m.log"
+done
+
+echo "== render the held-out generalisation set =="
+# render_eval_sets refuses to overwrite a frozen set, so eval_r2 cannot be damaged from here
+if [ -f "$GEN/test/EVALSET_HASH" ]; then
+  echo "skip render (eval_gen already frozen: $(cat "$GEN/test/EVALSET_HASH"))"
+elif [ -f data/manifests/vehicle_interior.parquet ]; then
+  uv run python scripts/render_eval_sets.py \
+    --manifests data/manifests/librispeech_100h.parquet data/manifests/cv_hi.parquet \
+                data/manifests/vehicle_interior.parquet \
+    --split test --out "$GEN" --per-bucket 40 > "$OUT/render_gen.log" 2>&1
+else
+  echo "vehicle_interior not downloaded; generalisation set not rendered"
+fi
+
+echo "== prove the held-out corpus is held out, before it is used =="
+if [ -f data/manifests/vehicle_interior.parquet ]; then
+  uv run python scripts/check_heldout.py --heldout data/manifests/vehicle_interior.parquet \
+    --recipes configs/retraining/r6_ctl64.yaml configs/retraining/r6_demand64.yaml \
+              configs/retraining/r6_wham64.yaml configs/retraining/r5_continue128.yaml
+fi
+
+# --- training: control first, then each arm separately --------------------------------------------
+train () {  # $1 = config name under configs/retraining
+  if [ -f "runs/$1/best.pt" ]; then echo "skip train $1 (best.pt exists)"; return; fi
+  echo "== train $1 =="
+  # the 64-epoch budget is registered in the config itself, not passed here: the arms must not differ
+  uv run python -m vaani.train "configs/retraining/$1.yaml" > "$OUT/train_$1.log" 2>&1
+}
+
+eval_system () {  # $1 = system spec, $2 = basename, $3 = eval root
+  [ -f "$OUT/$2.csv" ] && { echo "skip eval $2 (csv exists)"; return; }
+  uv run python -m vaani.eval --system "$1" --split test --eval-root "$3" \
+    --workers "$WORKERS" --dnsmos --out "$OUT/$2.csv" > "$OUT/eval_$2.log" 2>&1
+}
+
+train r6_ctl64
+train r6_demand64
+if [ -f data/manifests/wham.parquet ]; then train r6_wham64; else echo "skip r6_wham64 (wham not downloaded)"; fi
+
+echo "== score every arm on eval_r2, and on the generalisation set =="
+for n in r6_ctl64 r6_demand64 r6_wham64; do
+  [ -f "runs/$n/best.pt" ] || continue
+  eval_system "ckpt:runs/$n/best.pt" "$n" data/eval_r2
+  if [ -f "$GEN/test/EVALSET_HASH" ]; then eval_system "ckpt:runs/$n/best.pt" "${n}_gen" "$GEN"; fi
+done
+
+# the deployed system on the generalisation set: the headline number the protocol registers
+if [ -f "$GEN/test/EVALSET_HASH" ]; then
+  eval_system "cascade:results_r2/runs/vaani_tier46_refiner/best.pt" "tier46_gen" "$GEN"
+fi
+
+echo "== regenerate the licence table: WHAM! is CC BY-NC and changes the transfer story =="
+uv run python scripts/licence_table.py --out docs/licences.md > /dev/null
+
+date -u +%Y-%m-%dT%H:%M:%SZ > "$OUT/DONE"
+echo "r6 complete -> $OUT"

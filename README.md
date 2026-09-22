@@ -120,6 +120,10 @@ rather than only in bytes.
 
 ### Where things stand
 
+[Corpus licences](docs/licences.md) are generated from the manifests: three corpora in the deployed
+recipe are non-commercial and three more have unresolved terms, which constrains a transfer claim but
+not the research result.
+
 [Requirements traceability](docs/requirements-traceability.md) maps every clause of
 SIH26052 to the file and measurement that answers it, including the two clauses that
 are not met (board deployment and a microphone prototype) and the two that are met
