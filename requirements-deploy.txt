@@ -1,0 +1,18 @@
+# Deployment / target board (Raspberry Pi, aarch64). Inference only.
+#
+# This is NOT requirements.txt. That file is the x86_64 + CUDA training environment: it pins a
+# CUDA 12.8 torch build, carries hashes resolved for Windows and Linux x86_64 only, and includes the
+# ASR evaluation stack. On an ARM board every one of those is wrong - the hashes cannot match a
+# different architecture, there is no aarch64 CUDA wheel, and nothing on a board needs faster-whisper.
+#
+# The DSP front end (vaani/dsp/) is numpy-only by construction, and vaani/dsp/stft.py falls back when
+# torch is absent, so the board runs the exported ONNX graph with no deep-learning framework at all.
+# See scripts/board_timing.py and deploy/CONTRACT.md.
+#
+#   pip install -r requirements-deploy.txt
+#   python scripts/board_timing.py deploy/tier46/cascade.onnx --seconds 30 --out deploy/board_timing.json
+#
+# Deliberately unpinned: the board's Python and architecture vary, and pinning here would reproduce
+# exactly the failure this file exists to avoid. The reproducible environment is uv.lock.
+numpy
+onnxruntime
