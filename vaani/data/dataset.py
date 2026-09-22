@@ -12,6 +12,7 @@ from torch.utils.data import Dataset, Sampler
 
 from vaani.data import impulses, manifests
 from vaani.data.mixer import MixConfig, mix
+from vaani.data.pack import open_pack
 from vaani.data.rirs import RirBank
 from vaani.dsp import pipeline
 
@@ -20,17 +21,32 @@ BUCKET_SNRS = [-10, -5, 0, 5, 10, 15]
 NOISE_CLASSES = ["stationary", "changing", "impulsive", "impulsive+stationary", "clean"]
 
 
-def _load(path: str, n: int | None, rng) -> np.ndarray:
-    info = sf.info(path)
-    if n is None or info.frames <= n:
-        x, _ = sf.read(path, dtype="float32"); return x
-    start = int(rng.integers(0, info.frames - n + 1))
-    x, _ = sf.read(path, dtype="float32", start=start, frames=n); return x
+def _load(path: str, n: int | None, rng, pack=None) -> np.ndarray:
+    """Crop one file. `pack` (vaani.data.pack) serves the same bytes from an int16 memmap instead
+    of an sf.info open + an sf.read open + a FLAC decode; None falls back to soundfile.
+
+    The rng is drawn exactly once, and only when the file is longer than the crop. The pack must
+    not disturb that: a frame count off by one would flip the branch, change the number of draws
+    and silently desynchronise the training stream from every run before it. That is why the pack
+    index stores each file's exact frame count rather than deriving it from `duration_s`."""
+    frames = None if pack is None else pack.frames(path)
+    if frames is None:
+        frames = sf.info(path).frames
+    if n is None or frames <= n:
+        x = None if pack is None else pack.read(path)
+        if x is None:
+            x, _ = sf.read(path, dtype="float32")
+        return x
+    start = int(rng.integers(0, frames - n + 1))
+    x = None if pack is None else pack.read(path, start, n)
+    if x is None:
+        x, _ = sf.read(path, dtype="float32", start=start, frames=n)
+    return x
 
 
 class DynamicMixDataset(Dataset):
     def __init__(self, manifest_paths, split, bank_path, cfg: MixConfig, crop_s=4.0, epoch_len=20000, seed=0,
-                 with_dsp=False, controller_on=True, dsp_cfg=None):
+                 with_dsp=False, controller_on=True, dsp_cfg=None, pack_root=None):
         df = pd.concat([manifests.read(p) for p in manifest_paths])
         df = df[df.split == split]
         self.speech = df[df.kind == "speech"].reset_index(drop=True)
@@ -41,6 +57,9 @@ class DynamicMixDataset(Dataset):
         # store the path, not an open RirBank in __init__, so workers open their own handle
         self.bank_path = bank_path
         self._bank = None
+        # same reason for the packed corpus: a memmap handle does not survive worker spawn
+        self.pack_root = pack_root
+        self._pack, self._pack_open = None, False
         self.cfg, self.n, self.epoch_len, self.seed = cfg, int(crop_s * SR), epoch_len, seed
         # with_dsp: run NLMS+features here so the ~150 ms/clip DSP lands in DataLoader workers, not the trainer
         self.with_dsp, self.controller_on, self.dsp_cfg = with_dsp, controller_on, dsp_cfg
@@ -53,6 +72,12 @@ class DynamicMixDataset(Dataset):
             self._bank = RirBank(self.bank_path)
         return self._bank
 
+    @property
+    def pack(self):
+        if not self._pack_open:
+            self._pack, self._pack_open = open_pack(self.pack_root), True
+        return self._pack
+
     def __len__(self):
         return self.epoch_len
 
@@ -60,17 +85,17 @@ class DynamicMixDataset(Dataset):
         # epoch rides in the index (see EpochSampler): persistent workers never see attribute changes
         epoch, i = divmod(int(idx), self.epoch_len)
         rng = np.random.default_rng([self.seed, epoch, i])
-        s = _load(self.speech.path.iloc[int(rng.integers(len(self.speech)))], self.n, rng)
+        s = _load(self.speech.path.iloc[int(rng.integers(len(self.speech)))], self.n, rng, self.pack)
         s = np.pad(s, (0, self.n - len(s)))
         # noise draw: continuous class(es) plus optionally an impulsive one
         k = int(rng.integers(1, 3))
         rows = [self.cont.iloc[int(rng.integers(len(self.cont)))] for _ in range(k)]
-        noises = [_load(r.path, self.n, rng) for r in rows]
+        noises = [_load(r.path, self.n, rng, self.pack) for r in rows]
         noise_class = "stationary" if all(r.noise_class == "stationary" for r in rows) else "changing"
         imp, onsets = None, []
         if rng.random() < 0.5:
             if len(self.impd) and rng.random() < 0.5:
-                imp = _load(self.impd.path.iloc[int(rng.integers(len(self.impd)))], 2 * SR, rng)
+                imp = _load(self.impd.path.iloc[int(rng.integers(len(self.impd)))], 2 * SR, rng, self.pack)
                 # corpus crops start wherever the random offset landed: peak-normalise like generate()
                 # does so impulse_peak_db means the same thing, and find the real onsets in the waveform
                 imp = imp / (np.abs(imp).max() + 1e-9); onsets = impulses.detect_onsets(imp, SR)
