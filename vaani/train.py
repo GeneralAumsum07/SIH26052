@@ -23,6 +23,7 @@ from vaani.dsp import stft
 from vaani.models.gtcrn import GTCRN
 from vaani.models.vaani_net import VaaniNet
 from vaani.training_controls import cosine_lr_multiplier, make_schedule_config, validate_resume_schedule, should_stop_for_patience, verify_checkpoint_hash
+from vaani import runtime
 
 SR = 16000
 ROOT = Path(__file__).resolve().parents[1]  # repo root, so configs work from any cwd
@@ -63,7 +64,8 @@ def frame_weights_from_meta(metas, n_frames, burst_weight=3.0, half_window_s=0.1
 
 def prepare_batch(batch, model_name, device, burst_weight=1.0):
     """Batch (CPU, from collate) -> (model inputs, target spec, frame weights, is_clean) on device."""
-    mix, clean, metas = batch["mix"].to(device), batch["clean"].to(device), batch["meta"]
+    nb = dict(non_blocking=True)   # pinned host buffers: overlap the copy with compute
+    mix, clean, metas = batch["mix"].to(device, **nb), batch["clean"].to(device, **nb), batch["meta"]
     target = stft.stft(clean)  # STFTs on device: cheaper than CPU + transfer of the wider spec
     fw = frame_weights_from_meta(metas, target.shape[2], burst_weight)
     is_clean = torch.tensor([bool(m.get("clean_bucket", False)) for m in metas])
@@ -71,9 +73,9 @@ def prepare_batch(batch, model_name, device, burst_weight=1.0):
         inputs = (stft.stft(mix[:, 0]),)
     else:
         # n_hat/feats were computed in the dataset workers, which own controller_on
-        n_hat = batch["n_hat"].to(device)
+        n_hat = batch["n_hat"].to(device, **nb)
         spec6 = torch.cat([stft.stft(mix[:, 0]), stft.stft(mix[:, 1]), stft.stft(n_hat)], dim=-1)
-        inputs = (spec6, batch["feats"].to(device))
+        inputs = (spec6, batch["feats"].to(device, **nb))
     return inputs, target, fw.to(device), is_clean.to(device)
 
 
@@ -147,17 +149,22 @@ def main(config_path):
 
     d = cfg["data"]; mixcfg = MixConfig(**d.get("mix", {}))
     with_dsp = cfg["model"] == "vaani"  # gtcrn never needs n_hat/feats, skip the 150 ms/clip
-    dsk = dict(with_dsp=with_dsp, controller_on=cfg["controller_on"], dsp_cfg=cfg.get("dsp"))
+    dsk = dict(with_dsp=with_dsp, controller_on=cfg["controller_on"], dsp_cfg=cfg.get("dsp"),
+               pack_root=d.get("pack", "data/pack"))
     ds = DynamicMixDataset(d["manifests"], "train", d.get("bank"), mixcfg, d.get("crop_s", 4.0),
                            d.get("epoch_len", 20000), cfg["seed"], **dsk)
     vds = DynamicMixDataset(d["manifests"], "val", d.get("bank"), mixcfg, d.get("crop_s", 4.0),
                             cfg.get("val", {}).get("dynamic_items", 200), cfg["seed"] + 1, **dsk)
-    nw = cfg.get("num_workers", 8)
+    # "auto" sizes from the box's core count; $VAANI_WORKERS overrides without editing configs
+    nw = runtime.resolve_workers(cfg.get("num_workers", "auto"), share=cfg.get("concurrent_runs", 1))
+    runtime.tune_backends(device)
+    lk = runtime.loader_kwargs(nw, device)
     # Windows spawns workers: persistent_workers avoids re-importing numba/JIT every epoch;
     # the epoch therefore travels in the sampler's indices, not in dataset attributes
     sampler = EpochSampler(len(ds))
-    dl = DataLoader(ds, cfg["batch_size"], sampler=sampler, collate_fn=collate, num_workers=nw, persistent_workers=nw > 0)
-    vdl = DataLoader(vds, cfg["batch_size"], collate_fn=collate, num_workers=nw, persistent_workers=nw > 0)
+    dl = DataLoader(ds, cfg["batch_size"], sampler=sampler, collate_fn=collate, **lk)
+    vdl = DataLoader(vds, cfg["batch_size"], collate_fn=collate, **lk)
+    print(f"runtime: {runtime.describe()} num_workers={nw}", flush=True)
 
     model = build_model(cfg["model"], cfg.get("init_from"), cfg.get("model_cfg")).to(device)
     n_params = sum(p.numel() for p in model.parameters())
@@ -169,8 +176,8 @@ def main(config_path):
     schedule = make_schedule_config(cfg["epochs"], len(dl), warm, cfg.get("max_steps"))
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: cosine_lr_multiplier(s, warm, total))
     sp = cfg["loss"] == "speech_preservation"
-    lk = cfg.get("loss_cfg", {})  # w_complex / w_mag / p / w_snr; absent = upstream loss verbatim
-    loss_fn = losses.SpeechPreservationLoss(**lk) if sp else losses.HybridLoss(**lk)
+    losscfg = cfg.get("loss_cfg", {})  # w_complex / w_mag / p / w_snr; absent = upstream loss verbatim
+    loss_fn = losses.SpeechPreservationLoss(**losscfg) if sp else losses.HybridLoss(**losscfg)
     burst_w = loss_fn.burst_weight if sp else 1.0
     use_amp = bool(cfg.get("amp", True)) and device.type == "cuda"
 
