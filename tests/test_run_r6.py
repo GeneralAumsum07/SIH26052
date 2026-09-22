@@ -79,6 +79,27 @@ def test_an_uncommitted_protocol_stops_the_session(tmp_path):
     assert not (tmp_path / "calls.txt").exists()
 
 
+def test_a_staged_but_uncommitted_protocol_stops_the_session(tmp_path):
+    """`git add` is not registration. The guard used to read the index, which a staged file
+    satisfies while its text is still editable after the numbers come in."""
+    tmp = _sandbox(tmp_path, protocol_committed=True)
+    (tmp / "results_r2/generalisation/PROTOCOL.md").write_text("edited after registration")
+    subprocess.run(["git", "add", "results_r2/generalisation/PROTOCOL.md"], cwd=tmp, check=True)
+    r = _run(tmp)
+    assert r.returncode != 0
+    assert not (tmp / "calls.txt").exists()
+
+
+def test_the_protocol_commit_is_recorded_for_audit(tmp_path):
+    """The ordering claim is only checkable if the commit that registered the protocol is written
+    down beside the results."""
+    tmp = _sandbox(tmp_path)
+    assert _run(tmp).returncode == 0
+    recorded = (tmp / "results_r2/r6/PROTOCOL_COMMIT").read_text().strip()
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=tmp, capture_output=True, text=True).stdout.strip()
+    assert recorded == head
+
+
 def test_a_missing_protocol_stops_the_session(tmp_path):
     _sandbox(tmp_path)
     (tmp_path / "results_r2/generalisation/PROTOCOL.md").unlink()

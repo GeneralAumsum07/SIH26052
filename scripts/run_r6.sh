@@ -66,12 +66,22 @@ if [ -f data/manifests/vehicle_interior.parquet ]; then
               configs/retraining/r6_wham64.yaml configs/retraining/r5_continue128.yaml
 fi
 
-# --- training: control first, then each arm separately --------------------------------------------
+# --- training: the arms differ in their data, so each needs its own loader -------------------------
+# They deliberately do NOT go through vaani.train_multi: that shares one batch stream, which is only
+# valid for configs whose data is identical. Feeding the arms a shared stream would make them see the
+# same batches and silently void the very comparison they exist for (train_multi refuses, by design).
+#
+# ARMS_PARALLEL=1 (default) runs them in sequence. Set it to 3 on a box with cores to spare: total CPU
+# work is the same, but the arms then finish together under the same contention, which is what a paired
+# comparison wants, and one arm dying no longer hides behind another still running.
+ARMS_PARALLEL="${ARMS_PARALLEL:-1}"
+CORES=$(nproc)
 train () {  # $1 = config name under configs/retraining
   if [ -f "runs/$1/best.pt" ]; then echo "skip train $1 (best.pt exists)"; return; fi
   echo "== train $1 =="
   # the 64-epoch budget is registered in the config itself, not passed here: the arms must not differ
-  uv run python -m vaani.train "configs/retraining/$1.yaml" > "$OUT/train_$1.log" 2>&1
+  VAANI_WORKERS="${VAANI_WORKERS:-$(( (CORES - 2) / ARMS_PARALLEL ))}" \
+    uv run python -m vaani.train "configs/retraining/$1.yaml" > "$OUT/train_$1.log" 2>&1
 }
 
 eval_system () {  # $1 = system spec, $2 = basename, $3 = eval root
@@ -80,9 +90,16 @@ eval_system () {  # $1 = system spec, $2 = basename, $3 = eval root
     --workers "$WORKERS" --dnsmos --out "$OUT/$2.csv" > "$OUT/eval_$2.log" 2>&1
 }
 
-train r6_ctl64
-train r6_demand64
-if [ -f data/manifests/wham.parquet ]; then train r6_wham64; else echo "skip r6_wham64 (wham not downloaded)"; fi
+ARMS="r6_ctl64 r6_demand64"
+[ -f data/manifests/wham.parquet ] && ARMS="$ARMS r6_wham64" || echo "skip r6_wham64 (wham not downloaded)"
+if [ "$ARMS_PARALLEL" -gt 1 ]; then
+  pids=()
+  for n in $ARMS; do train "$n" & pids+=("$!"); done
+  failed=0; for pid in "${pids[@]}"; do wait "$pid" || failed=1; done
+  [ "$failed" = 0 ] || { echo "an arm failed; see $OUT/train_*.log" >&2; exit 1; }
+else
+  for n in $ARMS; do train "$n"; done
+fi
 
 echo "== score every arm on eval_r2, and on the generalisation set =="
 for n in r6_ctl64 r6_demand64 r6_wham64; do
