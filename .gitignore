@@ -15,6 +15,7 @@ results*/asr/*
 !results_r2/asr/clean.csv
 results*/**/*.log
 results*/*DONE
+results*/**/*DONE
 results*/.eval_report.lock
 results*/*.partial*.csv
 results*/**/spectra/
@@ -25,3 +26,13 @@ deploy/rir_banks/
 # Exported graphs and scratch checkpoints are regenerated from local run checkpoints.
 deploy/tier46/*.onnx
 deploy/tier46/*.pt
+
+# legacy checkpoints: only best.pt + run.json are tracked (what every scored row and the tier46 anchor load);
+# last.pt is optimizer state for resuming, the rest is training telemetry
+results_r2/runs/**/last.pt
+results_r2/runs/**/events.out.tfevents.*
+results_r2/runs/**/*.exit
+
+# local-only: copies pulled off the rented training box, and personal notes
+box_backup/
+Claude outputs/

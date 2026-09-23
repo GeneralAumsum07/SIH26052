@@ -1,0 +1,96 @@
+{
+  "name": "vaani_full_r3_wsnr0",
+  "config": {
+    "name": "vaani_full_r3_wsnr0",
+    "model": "vaani",
+    "controller_on": true,
+    "loss": "hybrid",
+    "init_from": "runs/vaani_full_r2/best.pt",
+    "data": {
+      "manifests": [
+        "data/manifests/librispeech_100h.parquet",
+        "data/manifests/ears.parquet",
+        "data/manifests/cv_hi.parquet",
+        "data/manifests/esc50.parquet",
+        "data/manifests/dns_datasets_fullband.noise_fullband.freesound_000.tar.parquet",
+        "data/manifests/mad.parquet",
+        "data/manifests/gunshots.parquet",
+        "data/manifests/drone.parquet",
+        "data/manifests/noisex92.parquet"
+      ],
+      "bank": "data/rirs/bank_r3.npz",
+      "crop_s": 4.0,
+      "epoch_len": 20000,
+      "mix": {
+        "impulse_peak_db": [
+          15,
+          45
+        ],
+        "impulse_kinds": [
+          "blast",
+          "blast",
+          "burst",
+          "click_train"
+        ],
+        "impulse_room": true,
+        "overload_softclip": true,
+        "speech_rms_db": [
+          -32,
+          -18
+        ]
+      }
+    },
+    "dsp": {
+      "limiter": true,
+      "blocking": true,
+      "controller": {
+        "diff_jump_max_db": 3.0,
+        "block_margin_db": 10.0
+      }
+    },
+    "model_cfg": {
+      "df_order": 3,
+      "film": false,
+      "coh": true
+    },
+    "loss_cfg": {
+      "w_complex": 50,
+      "w_mag": 50,
+      "p": 0.5,
+      "w_snr": 0.0,
+      "snr_max_db": 30
+    },
+    "val": {
+      "dynamic_items": 200
+    },
+    "optim": {
+      "lr": 0.00025,
+      "lr_new": 0.0005,
+      "warmup": 200,
+      "clip": 5.0
+    },
+    "batch_size": 32,
+    "epochs": 8,
+    "amp": true,
+    "device": "cuda",
+    "num_workers": 6,
+    "seed": 0
+  },
+  "git_sha": "216809f",
+  "config_hash": "abef6cc6b157",
+  "manifest_hash": "a417e172e14d",
+  "evalset_hash": "none",
+  "init_from": "/workspace/SIH_2026/runs/vaani_full_r2/best.pt",
+  "params": 50249,
+  "seed": 0,
+  "torch": "2.11.0+cu128",
+  "cuda": "12.8",
+  "amp": true,
+  "start": 1789901731.0457532,
+  "best_metric": "stoi_dynamic_val",
+  "best_val_stoi": 0.8132342610433758,
+  "steps": 5000,
+  "wall_s": 3080.3073959350586,
+  "skipped_steps": 0,
+  "end": 1789904811.353149
+}

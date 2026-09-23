@@ -1,0 +1,19 @@
+{
+  "host": "AMD64",
+  "board": "DESKTOP-CKCVF9K",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "python": "3.12.10",
+  "onnx": "deploy/tier46/cascade_untrained.onnx",
+  "frames": 624,
+  "threads": 1,
+  "model_ms_mean": 0.9715450320912239,
+  "model_ms_p99": 1.3600409966602454,
+  "model_ms_max": 1.5428999977302738,
+  "dsp_ms_per_frame": 0.2865453674176227,
+  "dsp_nlms_kernel": "numba",
+  "total_ms_p99": 1.646586364077868,
+  "hop_ms": 16.0,
+  "rtf": 0.07863064996930291,
+  "decision_basis": "model + dsp (numba kernel)",
+  "board_decision_3_2": "stay"
+}

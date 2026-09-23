@@ -1,0 +1,54 @@
+{
+  "name": "gtcrn_finetuned_r2",
+  "config": {
+    "name": "gtcrn_finetuned_r2",
+    "model": "gtcrn",
+    "controller_on": false,
+    "loss": "hybrid",
+    "init_from": "runs/gtcrn_finetuned/best.pt",
+    "data": {
+      "manifests": [
+        "data/manifests/librispeech.parquet",
+        "data/manifests/esc50.parquet",
+        "data/manifests/dns_datasets_fullband.noise_fullband.freesound_000.tar.parquet",
+        "data/manifests/cv_hi.parquet",
+        "data/manifests/mad.parquet"
+      ],
+      "bank": "data/rirs/bank.npz",
+      "crop_s": 4.0,
+      "epoch_len": 20000,
+      "mix": {}
+    },
+    "val": {
+      "dynamic_items": 200
+    },
+    "optim": {
+      "lr": 0.00025,
+      "warmup": 200,
+      "clip": 5.0
+    },
+    "batch_size": 32,
+    "epochs": 6,
+    "amp": true,
+    "device": "cuda",
+    "num_workers": 4,
+    "seed": 0
+  },
+  "git_sha": "3e2e5d4",
+  "config_hash": "a2fea561e66c",
+  "manifest_hash": "54c5d35aff93",
+  "evalset_hash": "14e592d12f92",
+  "init_from": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\runs\\gtcrn_finetuned\\best.pt",
+  "params": 48245,
+  "seed": 0,
+  "torch": "2.11.0+cu128",
+  "cuda": "12.8",
+  "amp": true,
+  "start": 1789757161.2893093,
+  "best_metric": "stoi_dynamic_val",
+  "best_val_stoi": 0.8164147819835145,
+  "steps": 3750,
+  "wall_s": 1397.0782625675201,
+  "skipped_steps": 0,
+  "end": 1789758558.3675718
+}

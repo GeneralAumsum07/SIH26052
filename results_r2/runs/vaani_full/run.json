@@ -1,0 +1,52 @@
+{
+  "name": "vaani_full",
+  "config": {
+    "name": "vaani_full",
+    "model": "vaani",
+    "controller_on": true,
+    "loss": "hybrid",
+    "init_from": "vaani/models/checkpoints/model_trained_on_dns3.tar",
+    "data": {
+      "manifests": [
+        "data/manifests/librispeech.parquet",
+        "data/manifests/esc50.parquet"
+      ],
+      "bank": "data/rirs/bank.npz",
+      "crop_s": 4.0,
+      "epoch_len": 20000,
+      "mix": {}
+    },
+    "val": {
+      "dynamic_items": 200
+    },
+    "optim": {
+      "lr": 0.0005,
+      "lr_new": 0.001,
+      "warmup": 500,
+      "clip": 5.0
+    },
+    "batch_size": 32,
+    "epochs": 12,
+    "amp": true,
+    "device": "cuda",
+    "num_workers": 4,
+    "seed": 0
+  },
+  "git_sha": "5028353",
+  "config_hash": "02a8eea0564a",
+  "manifest_hash": "4d646895a010",
+  "evalset_hash": "14e592d12f92",
+  "init_from": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\vaani\\models\\checkpoints\\model_trained_on_dns3.tar",
+  "params": 49989,
+  "seed": 0,
+  "torch": "2.11.0+cu128",
+  "cuda": "12.8",
+  "amp": true,
+  "start": 1789732702.6987789,
+  "best_metric": "stoi_dynamic_val",
+  "best_val_stoi": 0.8675972994305012,
+  "steps": 7500,
+  "wall_s": 7040.235488891602,
+  "skipped_steps": 0,
+  "end": 1789739742.9342678
+}
