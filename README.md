@@ -135,21 +135,28 @@ within-render ablation comparisons. The numbers below are from the current rende
 which every score in [results_r2/r6/](results_r2/r6/) uses. The two renders differ at 606 of the
 617 nominal items, so scores are comparable within one render and not across them.
 
-The selected cascade's operating envelope, based on means, starts at
-input SNR +5 dB for changing/impulsive noise and +10 dB for stationary noise.
-On the nominal envelope (617 clips) the tier46 cascade scores **14.753 dB [14.447,15.081]**,
-**0.915 STOI [0.909,0.920]**, **2.473 PESQ [2.424,2.524]**, and the r6_e256 cascade (trained
-from scratch) scores **14.826 dB [14.532,15.151]**, **0.916 STOI [0.911,0.922]**,
-**2.447 PESQ [2.398,2.498]**. STOI clears its target on the interval; SNR and PESQ miss
-at the point estimate. On the generalisation set (eval_gen, a noise corpus never used in
-training, 201 nominal clips) both clear all three targets on the interval: tier46
-**16.023 dB [15.431,16.655] / 0.950 / 2.835 [2.744,2.931]**, r6_e256 cascade
-**16.236 dB [15.661,16.887] / 0.950 / 2.761 [2.669,2.854]**. Each is one refiner seed;
-the intervals describe evaluation-item variation, not training-seed uncertainty.
+**The shipping system is the r7 cascade** (`runs/r7_e256_wr64_refiner/best.pt`): a backbone
+trained from scratch on our own data for 256 epochs (`r6_e256`), warm-restarted for one further
+64-epoch cycle (`r7_e256_wr64`), with the 2,498-parameter residual refiner trained on top of the
+frozen result. No external pretrained weights enter its lineage. Its operating envelope, based on
+means, starts at input SNR +5 dB for changing/impulsive noise and +10 dB for stationary noise.
 
-On transient-present clips (240) the tier46 cascade scores **10.932 dB / 0.848 / 1.837**,
+On the nominal envelope (617 clips) it scores **14.864 dB [14.565,15.183]**,
+**0.917 STOI [0.911,0.922]**, **2.462 PESQ [2.412,2.511]**. STOI clears its target on the
+interval; SNR and PESQ miss at the point estimate. On the generalisation set (eval_gen, a noise
+corpus never used in training, 201 nominal clips) it clears all three on the interval:
+**16.302 dB [15.732,16.934] / 0.951 [0.944,0.957] / 2.817 [2.724,2.915]**. This is one refiner
+seed; the intervals describe evaluation-item variation, not training-seed uncertainty.
+
+Against the previous candidate, the tier46 cascade (14.753 / 0.915 / 2.473 nominal; 16.023 / 0.950 /
+2.835 on eval_gen), paired per clip: SNR_out **+0.110 dB [+0.061,+0.163]** on eval_r2 and
+**+0.278 dB [+0.185,+0.388]** on eval_gen; PESQ **-0.012 [-0.021,-0.001]** and
+**-0.019 [-0.036,-0.002]**; STOI level. The warm restart itself added +0.095 dB to the backbone
+and +0.038 dB [+0.018,+0.060] to the cascade over `r6_e256`.
+
+On transient-present clips (240) the r7 cascade scores **10.866 dB / 0.848 / 1.797**,
 failing all three targets. Reference gain loss is also unresolved: at -12 dB reference gain,
-the cascade's 6.291 dB is below the single-channel baseline's 8.858 dB (gtcrn_finetuned).
+the cascade's 6.862 dB is below the single-channel baseline's 8.858 dB (gtcrn_finetuned).
 
 The controller did not improve nominal quality across three r3 seeds; removing
 limiter/blocking DSP improved the single tested ablation, and wider wave-4 data

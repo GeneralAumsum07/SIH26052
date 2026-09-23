@@ -1,5 +1,7 @@
 # VAANI deployment contract (trained Tier 4.6 cascade)
 
+> **Shipping model changed (23 Sep 2026).** The system to ship is now the r7 cascade, `runs/r7_e256_wr64_refiner/best.pt` (see the README). It has the same architecture, parameter count, ONNX signature and cache shapes as the tier46 cascade described below, so this contract applies to it unchanged; the measurements below are still the tier46 graph's until the r7 export and its parity/timing run are recorded here.
+
 The evaluated deployment candidate is `runs/vaani_tier46_refiner/best.pt`: frozen
 `vaani_full_r4_ctl` first stage plus residual refiner. It exports to
 `deploy/tier46/cascade.onnx`. The older `deploy/model.onnx` is a first-stage-only
