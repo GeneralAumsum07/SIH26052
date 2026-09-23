@@ -7,12 +7,19 @@
 #
 # The DSP front end (vaani/dsp/) is numpy-only by construction, and vaani/dsp/stft.py falls back when
 # torch is absent, so the board runs the exported ONNX graph with no deep-learning framework at all.
-# See scripts/board_timing.py and deploy/CONTRACT.md.
+# See scripts/board_timing.py, scripts/capture_loop.py and deploy/CONTRACT.md.
 #
+#   sudo apt install alsa-utils              # arecord/aplay: capture_loop.py's audio I/O (not a pip package)
 #   pip install -r requirements-deploy.txt
-#   python scripts/board_timing.py deploy/tier46/cascade.onnx --seconds 30 --out deploy/board_timing.json
+#   python scripts/board_timing.py deploy/r7/cascade.onnx --seconds 30 --out deploy/board_timing.json
+#   python scripts/capture_loop.py --device hw:0,0 --out-device plughw:1,0
 #
 # Deliberately unpinned: the board's Python and architecture vary, and pinning here would reproduce
 # exactly the failure this file exists to avoid. The reproducible environment is uv.lock.
 numpy
 onnxruntime
+# Required for live use, not optional. Without it vaani/dsp/nlms.py falls back to the pure-Python
+# reference loop, which costs ~10.5 ms of the 16 ms hop on a desktop core (0.07 ms with numba) and
+# several times that on a Pi, so scripts/capture_loop.py refuses to run live without it. numba
+# publishes aarch64 wheels; the first call JIT-compiles the kernel (cached on disk afterwards).
+numba
