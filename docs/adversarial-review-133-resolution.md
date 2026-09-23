@@ -52,6 +52,8 @@ All numbers below are nominal means on the same 617 frozen evaluation items.
 | r4 same-data control | 14.191 | 2.405 | One seed; wider data did not improve the tested recipe |
 | Cascade on frozen r4 control | 15.150 | 2.548 | One refiner seed (4606); +0.959 dB over first stage |
 
+All figures in this table are on the earlier frozen render of eval_r2. On the current render ([`results_r2/r6/`](../results_r2/r6/)) the same cascade scores 14.753 dB / 2.473 PESQ; the comparisons within the table are unaffected.
+
 Controller-on minus off averages -0.040 dB nominal. The transient difference
 quoted in the review (+0.055 dB) is seed 0; it does not establish a robust benefit.
 The no-DSP seed-0 transient score is 9.247 versus 9.174 full. These observations

@@ -1,5 +1,7 @@
 # Ablation matrix
 
+> **Eval render.** Measured on the earlier frozen render of eval_r2 (`data/eval_r2`, made before the crest-audit relabel). The current render, used by every score in [`r6/`](r6/), differs at 606 of the 617 nominal items; the tier46 cascade scores 15.150 dB here and 14.753 dB there. Compare rows within this file, not against `r6/`. (Note added by hand to a generated report; regenerating the report drops it.)
+
 H-GTCRN IVA: our integration of the IVA variant; we have not reproduced the authors' configuration/results. This diagnostic row is not presented as their result and must not support comparative superiority claims.
 
 Protocol: anchor `runs/vaani_full_r4_ctl/best.pt` sha256 `8c67be30eb0187d2`, git `311e0d4d83b9`; test split 2280 items / 8041 files content-hashed; val split 1480 items / 5401 files content-hashed

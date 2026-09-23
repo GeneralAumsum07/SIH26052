@@ -52,12 +52,14 @@ nominal envelope = unclipped, no reference fault, input SNR 0/5/10 dB), `deploy/
 | Deliverable | Status | Note |
 |---|---|---|
 | A scalable dataset pipeline for realistic noisy–clean pairs | met | Manifests split by source recording, dynamic mixing, RIR banks, content-hashed frozen eval splits, and a crest-factor gate that every impulse corpus must pass before an adapter is written for it |
-| A state-of-the-art model for robust noise suppression | met | Outperforms DeepFilterNet3, H-GTCRN and RNNoise on the frozen test split, with intervals |
+| A state-of-the-art model for robust noise suppression | met | Outperforms DeepFilterNet3, H-GTCRN and RNNoise on the frozen test split, with intervals (earlier render; the baselines have not been re-scored on the current one, see the note below the table) |
 | A training framework with optimised hyper-parameters and perceptual loss | met | Hyper-parameter sweeps over `w_snr`, width and the refiner grid; the perceptual term is the compressed-magnitude loss at `p = 0.5` (§3.3) |
 | A real-time inference engine deployable on edge hardware | partial | The engine exists and is measured on desktop CPU at 0.999 ms per 16 ms hop. "Deployable on edge hardware" remains an argument from a compute budget, not a board measurement |
 | A prototype demonstrating live cancellation with microphones / headset | **not met** | The known gap (§3.5) |
-| SNR > 15 dB, STOI > 0.85, PESQ > 2.5 | partial | 15.150 dB [14.865, 15.461] · 0.922 STOI [0.917, 0.927] · 2.548 PESQ [2.498, 2.603] on the nominal envelope. STOI clears on the interval; **SNR and PESQ clear only at the point estimate** — their lower bounds sit below target. One refiner seed |
+| SNR > 15 dB, STOI > 0.85, PESQ > 2.5 | partial | eval_r2 nominal envelope (617 clips): tier46 cascade 14.753 dB [14.447, 15.081] · 0.915 STOI [0.909, 0.920] · 2.473 PESQ [2.424, 2.524]; r6_e256 cascade 14.826 dB [14.532, 15.151] · 0.916 [0.911, 0.922] · 2.447 [2.398, 2.498]. STOI clears on the interval; **SNR and PESQ miss at the point estimate**. On eval_gen (a noise corpus never used in training, 201 clips) both clear all three on the interval: tier46 16.023 dB [15.431, 16.655] · 0.950 [0.944, 0.956] · 2.835 [2.744, 2.931]; r6_e256 cascade 16.236 dB [15.661, 16.887] · 0.950 [0.944, 0.956] · 2.761 [2.669, 2.854]. One refiner seed each |
 | Low latency suitable for real-time communication | met | 32 ms algorithmic (one 16 ms hop plus the STFT window's 16 ms lookahead — arithmetic from the framing, not a measurement) and ~1 ms/frame mean compute |
+
+**Which eval render.** The eval_r2 scores in the targets row are from the current render of eval_r2, re-made from the crest-audit relabelled manifests (EVALSET_HASH `17a9414959bb` on Windows, `aa96a28a9955` on Linux: the same audio, the hash digests float text). [`results_r2/matrix.md`](../results_r2/matrix.md) and [`results_r2/optim/optimization.md`](../results_r2/optim/optimization.md) were measured on the earlier frozen render, which differs at 606 of the 617 nominal items: the same tier46 checkpoint scores 15.150 dB there and 14.753 dB here. Comparisons within one render are valid; comparisons across the two are not.
 
 ---
 
@@ -119,6 +121,7 @@ defensible next experiment — it is listed as such and has not been run.
 Both are named by the statement and neither needs hardware, so both were implemented and measured
 rather than deferred. Both came back negative, and the numbers are more useful than the words would
 have been. Full tables in [`results_r2/optim/optimization.md`](../results_r2/optim/optimization.md).
+All of §3.4 was measured on the earlier frozen render of eval_r2. Every comparison in it is paired within that render, so the deltas and ratios stand; the absolute levels are not comparable with the current-render scores in §2.
 
 **INT8 dynamic quantization makes this model larger, slower and worse.** On the trained cascade the
 graph goes 474,599 -> 567,969 bytes (**+19.7 %**) and latency 0.906 -> 1.319 ms per frame (**x1.46**).
@@ -127,7 +130,7 @@ interleaved repeats on a synthetic stream, which is why the FP32 figure reads lo
 0.999 ms single-run deployment measurement in `deploy/CONTRACT.md` quoted against clause 11;
 the ratio is the claim here, not the absolute. It also costs quality: paired per-clip
 against the same checkpoint, SNR_out **-1.18 dB** [-1.27, -1.10] and PESQ **-0.166** [-0.176, -0.156],
-which moves PESQ from 2.548 to 2.382 and takes the system below the statement's 2.5 target. So there
+which on that render moves PESQ from 2.548 to 2.382 and takes the system below the statement's 2.5 target. So there
 is no trade to weigh -- the compressed model is worse on every axis the clause cares about.
 
 The reason is structural and worth knowing before anyone tries again on a model this size: the FP32

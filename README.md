@@ -130,16 +130,26 @@ are not met (board deployment and a microphone prototype) and the two that are m
 with negative results (quantization, pruning).
 
 The [matrix](results_r2/matrix.md) separates point estimates from interval-supported
-passes. The selected cascade's operating envelope, based on means, starts at
-input SNR +5 dB for changing/impulsive noise and +10 dB for stationary noise.
-On the nominal envelope (617 clips), it scores **15.150 dB [14.865,15.461]**,
-**0.922 STOI [0.917,0.927]**, **2.548 PESQ [2.498,2.603]**. SNR and PESQ clear
-their targets only at the point estimate. This is one refiner seed; the intervals
-describe evaluation-item variation, not training-seed uncertainty.
+passes. It was measured on the earlier frozen render of eval_r2 and is kept for its
+within-render ablation comparisons. The numbers below are from the current render of eval_r2, re-made from the crest-audit relabelled manifests (EVALSET_HASH `17a9414959bb` on Windows, `aa96a28a9955` on Linux: the same audio, the hash digests float text),
+which every score in [results_r2/r6/](results_r2/r6/) uses. The two renders differ at 606 of the
+617 nominal items, so scores are comparable within one render and not across them.
 
-On transient-present clips it scores **10.465 dB / 0.843 / 1.805**, failing all
-three targets. Reference gain loss is also unresolved: at -12 dB reference gain,
-the cascade's 5.697 dB is below the single-channel baseline's 8.383 dB.
+The selected cascade's operating envelope, based on means, starts at
+input SNR +5 dB for changing/impulsive noise and +10 dB for stationary noise.
+On the nominal envelope (617 clips) the tier46 cascade scores **14.753 dB [14.447,15.081]**,
+**0.915 STOI [0.909,0.920]**, **2.473 PESQ [2.424,2.524]**, and the r6_e256 cascade (trained
+from scratch) scores **14.826 dB [14.532,15.151]**, **0.916 STOI [0.911,0.922]**,
+**2.447 PESQ [2.398,2.498]**. STOI clears its target on the interval; SNR and PESQ miss
+at the point estimate. On the generalisation set (eval_gen, a noise corpus never used in
+training, 201 nominal clips) both clear all three targets on the interval: tier46
+**16.023 dB [15.431,16.655] / 0.950 / 2.835 [2.744,2.931]**, r6_e256 cascade
+**16.236 dB [15.661,16.887] / 0.950 / 2.761 [2.669,2.854]**. Each is one refiner seed;
+the intervals describe evaluation-item variation, not training-seed uncertainty.
+
+On transient-present clips (240) the tier46 cascade scores **10.932 dB / 0.848 / 1.837**,
+failing all three targets. Reference gain loss is also unresolved: at -12 dB reference gain,
+the cascade's 6.291 dB is below the single-channel baseline's 8.858 dB (gtcrn_finetuned).
 
 The controller did not improve nominal quality across three r3 seeds; removing
 limiter/blocking DSP improved the single tested ablation, and wider wave-4 data
