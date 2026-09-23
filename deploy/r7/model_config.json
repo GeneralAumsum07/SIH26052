@@ -1,0 +1,21 @@
+{
+  "checkpoint": "runs/r7_e256_wr64_refiner/best.pt",
+  "checkpoint_sha256": "121f0c3d15936b810573dc089c597e67fe67f6d09e3d75c2469746decefe2083",
+  "model": "vaani_cascade",
+  "controller_on": true,
+  "dsp": {
+    "blocking": true,
+    "controller": {
+      "block_margin_db": 10.0,
+      "diff_jump_max_db": 3.0
+    },
+    "limiter": true
+  },
+  "model_cfg": {
+    "channels": 16,
+    "coh": true,
+    "df_order": 3,
+    "film": false,
+    "noise_floor": false
+  }
+}

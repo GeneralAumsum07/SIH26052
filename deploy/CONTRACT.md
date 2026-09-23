@@ -1,6 +1,8 @@
 # VAANI deployment contract (trained Tier 4.6 cascade)
 
-> **Shipping model changed (23 Sep 2026).** The system to ship is now the r7 cascade, `runs/r7_e256_wr64_refiner/best.pt` (see the README). It has the same architecture, parameter count, ONNX signature and cache shapes as the tier46 cascade described below, so this contract applies to it unchanged; the measurements below are still the tier46 graph's until the r7 export and its parity/timing run are recorded here.
+> **Shipping model changed (23 Sep 2026).** The system to ship is now the r7 cascade, `runs/r7_e256_wr64_refiner/best.pt` (see the README). It has the same architecture, parameter count, ONNX signature and cache shapes as the tier46 cascade described below, so this contract applies to it unchanged. Its export is `deploy/r7/cascade.onnx` (474,599 bytes, sha256 `e67a2c42a2fd53ec`), with the DSP configuration the weights were trained behind in `deploy/r7/model_config.json` (the graph does not encode it). Parity against batch PyTorch: max_abs_err **1.11e-6** (tolerance 1e-4); model time 1.14 ms mean / 1.96 ms p99 per 16 ms hop on a cloud x86 core (`deploy/r7/cascade_parity_timing.json`) - not the dev laptop, so not directly comparable with the tier46 figures below; re-time on the laptop and the Pi. The measurements below remain the tier46 graph's.
+
+Live runtime: `vaani/live.py::StreamEngine` runs this contract one hop at a time (limiter, blocking matrix, NLMS, features, controller, graph, overlap-add) with numpy + onnxruntime only, and `tests/test_live.py` holds it to the offline eval path within 1e-5. `scripts/capture_loop.py` wraps it for ALSA capture/playback and for WAV files.
 
 The evaluated deployment candidate is `runs/vaani_tier46_refiner/best.pt`: frozen
 `vaani_full_r4_ctl` first stage plus residual refiner. It exports to
