@@ -112,6 +112,8 @@ uv run python scripts/fetch_data.py --only demand   # rescan one source (a full 
 uv run python scripts/render_eval_sets.py           # frozen val/test buckets under data/eval*
 ```
 
+---
+
 ### Sources
 
 See `configs/data/round1.yaml` for URLs and licences.
@@ -129,6 +131,8 @@ Two of them need helper scripts because the hosts sit behind a login or serve od
 scripts/fetch_cadre.sh     # Box shared links from the Cadre download page (log in first)
 scripts/fetch_demand.sh    # Zenodo 1227121; SCAFE only exists at 48 kHz and is resampled at scan time
 ```
+
+---
 
 ### Artillery and gunshot transients are synthesised, deliberately
 
@@ -162,6 +166,8 @@ The result measures **~26.5 dB** event crest, against **15.2 dB** for the previo
 Every impulse corpus must pass the crest gate before an adapter is written for it. See
 [requirements traceability §3.1](docs/requirements-traceability.md).
 
+---
+
 ### Splits
 
 Manifests split by source recording (speaker / recording group), drop byte-identical files so
@@ -190,6 +196,8 @@ uv run python -m vaani.report "results_r2/*.csv" --out results_r2/matrix.md \
 - Val STOI printed during training is **not** comparable across seeds or across runs with different
   noise pools (val is rendered from the run's own pool); only the test-split matrix is.
 
+---
+
 ### Loss
 
 `HybridLoss` (`vaani/losses.py`) works on power-law **compressed** spectra. Writing
@@ -201,8 +209,8 @@ $`S = |S|\,e^{j\angle S}`$ for a clean STFT and $`\hat{S}`$ for the estimate:
 
 ```math
 \mathcal{L} \;=\;
-w_c\Big[\mathrm{MSE}\big(\operatorname{Re}\hat{\tilde S},\operatorname{Re}\tilde S\big)
-      + \mathrm{MSE}\big(\operatorname{Im}\hat{\tilde S},\operatorname{Im}\tilde S\big)\Big]
+w_c\Big[\mathrm{MSE}\big(\mathrm{Re}\hat{\tilde S},\mathrm{Re}\tilde S\big)
+      + \mathrm{MSE}\big(\mathrm{Im}\hat{\tilde S},\mathrm{Im}\tilde S\big)\Big]
 \;+\; w_m\,\mathrm{MSE}\big(|\hat S|^{p},\,|S|^{p}\big)
 \;+\; \mathcal{L}_{\text{SI-SNR}}
 \;-\; w_{\text{snr}}\,\min\!\big(\mathrm{SNR}_{\text{out}},\,30\ \mathrm{dB}\big)
@@ -219,6 +227,8 @@ w_c\Big[\mathrm{MSE}\big(\operatorname{Re}\hat{\tilde S},\operatorname{Re}\tilde
   $`w_{\text{snr}} = 0.2`$.
 - **Speech-preservation variant.** Adds an L1 term to the clean target on clean-bucket items.
 
+---
+
 ### Optimization (ONNX, INT8, pruning)
 
 ```bash
@@ -232,6 +242,8 @@ and slower (×1.45), and there is too little learned capacity for pruning to giv
 
 `vaani.eval --system onnx:<graph>@<ckpt>` scores an exported graph directly, so an optimized export
 is measured in SNR/STOI/PESQ rather than only in bytes.
+
+---
 
 ### Comparators
 
