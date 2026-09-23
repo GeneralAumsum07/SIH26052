@@ -36,3 +36,9 @@ results_r2/runs/**/*.exit
 # local-only: copies pulled off the rented training box, and personal notes
 box_backup/
 Claude outputs/
+
+# internal working notes: kept locally, never published. Only these three docs are tracked.
+docs/*
+!docs/licences.md
+!docs/physical_test_schema.md
+!docs/requirements-traceability.md

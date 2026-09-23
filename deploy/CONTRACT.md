@@ -193,5 +193,4 @@ stream. Read the exported named dimensions rather than reusing legacy allocation
 The conditional refiner is a separate Python host runtime that advances c0 history
 on skipped frames and conditionally computes c1/c2. ONNX export is always-on.
 Its MAC activation estimates do not establish target-device latency or clean-speech
-transparency. See [retraining preparation](../docs/retraining-ready.md) for the
-validation sweep and new-checkpoint workflow.
+transparency.

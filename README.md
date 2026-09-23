@@ -64,8 +64,7 @@ Details:
 - **Measured limitations.** The controller did not improve nominal quality across three r3 seeds;
   removing limiter/blocking DSP improved the single tested ablation, and wider wave-4 data did not
   outperform the same-data control. These are measured limitations, not grounds to remove
-  components from an already-trained checkpoint. See the
-  [review resolution and deferred work](docs/adversarial-review-133-resolution.md).
+  components from an already-trained checkpoint.
 
 > **Which eval render.** The numbers above are from the current render of eval_r2, re-made from the
 > crest-audit relabelled manifests (EVALSET_HASH `17a9414959bb` on Windows, `aa96a28a9955` on Linux:
@@ -297,4 +296,4 @@ python scripts/capture_loop.py --in-wav mix.wav --out-wav enhanced.wav
 | `configs/exp/`, `configs/retraining/` | one yaml per run |
 | `configs/data/` | corpus URLs, licences, splits |
 | `scripts/` | fetchers, round runner, live capture loop, board timing, diagnostics (`ceiling_analysis.py`, `mask_phase_probe.py`, `diag_*.py`) |
-| `docs/superpowers/` | design spec and implementation plans |
+| `docs/` | requirements traceability, corpus licences, physical test schema |
