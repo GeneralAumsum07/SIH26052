@@ -7,19 +7,25 @@
 #
 # The DSP front end (vaani/dsp/) is numpy-only by construction, and vaani/dsp/stft.py falls back when
 # torch is absent, so the board runs the exported ONNX graph with no deep-learning framework at all.
-# See scripts/board_timing.py, scripts/capture_loop.py and deploy/CONTRACT.md.
+# See scripts/board_timing.py, scripts/capture_loop.py, deploy/CONTRACT.md and deploy/PI_SETUP.md.
 #
-#   sudo apt install alsa-utils              # arecord/aplay: capture_loop.py's audio I/O (not a pip package)
-#   pip install -r requirements-deploy.txt
-#   python scripts/board_timing.py deploy/r7/cascade.onnx --seconds 30 --out deploy/board_timing.json
-#   python scripts/capture_loop.py --device hw:0,0 --out-device plughw:1,0
+#   bash scripts/pi_setup.sh                 # venv (PEP 668 safe) + this file + alsa-utils check
+#   .venv-board/bin/python scripts/board_timing.py deploy/r7/cascade.onnx --seconds 30 --out deploy/board_timing.json
+#   .venv-board/bin/python scripts/capture_loop.py --device hw:0,0 --out-device plughw:1,0
 #
-# Deliberately unpinned: the board's Python and architecture vary, and pinning here would reproduce
-# exactly the failure this file exists to avoid. The reproducible environment is uv.lock.
-numpy
-onnxruntime
+# Versions are the uv.lock resolution (the tested desktop environment). uv.lock lists cp312
+# manylinux aarch64 wheels for numpy, onnxruntime, numba and llvmlite at these versions, so the board
+# should run Python 3.12 (pi_setup.sh gets one through uv when the system Python differs).
+# Unverified on board: no install or run on a Pi has been recorded yet.
+numpy==2.5.3
+onnxruntime==1.30.0
+# onnxruntime's own dependencies, pinned to the same lock so the board resolves what was tested
+flatbuffers==25.12.19
+packaging==26.3
+protobuf==7.36.2
 # Required for live use, not optional. Without it vaani/dsp/nlms.py falls back to the pure-Python
 # reference loop, which costs ~10.5 ms of the 16 ms hop on a desktop core (0.07 ms with numba) and
-# several times that on a Pi, so scripts/capture_loop.py refuses to run live without it. numba
-# publishes aarch64 wheels; the first call JIT-compiles the kernel (cached on disk afterwards).
-numba
+# several times that on a Pi, so scripts/capture_loop.py refuses to run live without it. The first
+# call JIT-compiles the kernel (cached on disk afterwards).
+numba==0.67.0
+llvmlite==0.49.0
