@@ -1,6 +1,6 @@
 # Corpus licences
 
-Generated from `data/manifests/*.parquet` by `scripts/licence_table.py`. Training recipe: `configs/retraining/r5_continue128.yaml`. Regenerate rather than edit.
+Generated from `data/manifests/*.parquet` by `scripts/licence_table.py`. Training recipe: `configs/retraining/r7_e256_wr64.yaml`. Regenerate rather than edit.
 
 ## In the deployed recipe
 
@@ -25,6 +25,7 @@ Generated from `data/manifests/*.parquet` by `scripts/licence_table.py`. Trainin
 | dns_noise | noise | 7,997 | 22.2 | per-clip, see DNS README | unclear |
 | dns_noise | noise | 7,998 | 22.2 | per-clip, see DNS README | unclear |
 | dns_noise | noise | 2,287 | 6.3 | per-clip, see DNS README | unclear |
+| vehicle_interior | noise | 8 | 3.6 | CC BY 4.0 | yes |
 | librispeech | speech | 5,820 | 20.0 | CC BY 4.0 | yes |
 
 ## What this means for transfer

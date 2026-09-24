@@ -9,7 +9,7 @@ The commercial-use column is the only judgement here, and it is deliberately coa
 carrying NC, `unclear` where the redistribution terms are genuinely unresolved, `yes` only for permissive
 terms we can name. Where it says unclear it means unclear -- that is a finding, not an omission.
 
-    uv run python scripts/licence_table.py --recipe configs/retraining/r5_continue128.yaml --out docs/licences.md
+    uv run python scripts/licence_table.py --recipe configs/retraining/r7_e256_wr64.yaml --out docs/licences.md
 """
 import argparse
 from pathlib import Path
@@ -99,7 +99,7 @@ def render(df, recipe):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--manifests", default="data/manifests")
-    ap.add_argument("--recipe", default="configs/retraining/r5_continue128.yaml")
+    ap.add_argument("--recipe", default="configs/retraining/r7_e256_wr64.yaml")
     ap.add_argument("--out", default="docs/licences.md")
     a = ap.parse_args()
 

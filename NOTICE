@@ -1,0 +1,55 @@
+VAANI - noise-robust dual-microphone speech enhancement for defence headsets
+Copyright (c) 2026 GA07
+
+1. Source code
+--------------
+All source code in this repository (vaani/, scripts/, tests/, configs/, deploy/*.py and the shell
+scripts) is released under the MIT License; see LICENSE.
+
+2. Trained weights: research use only
+-------------------------------------
+The MIT License does NOT extend to trained model weights. This covers every checkpoint and exported
+graph, including:
+
+  results_r2/runs/r7_e256_wr64/best.pt           (r7 backbone)
+  results_r2/runs/r7_e256_wr64_refiner/best.pt   (r7 cascade refiner)
+  deploy/r7/cascade.onnx                          (r7 shipping graph)
+  deploy/model.onnx, deploy/tier46/, and every other results_r2/runs/*/best.pt
+
+The weights are derived from the training corpora below, several of which carry non-commercial or
+unresolved redistribution terms. They are provided for research and evaluation only, and any use is
+bound by the most restrictive licence among those corpora. A fielded or commercial system must be
+retrained on licensed or government-collected data; a recipe is a list of manifest paths, so the
+substitution needs no code change.
+
+Training corpora of the shipping r7 recipe (configs/retraining/r7_e256_wr64.yaml, data.manifests;
+the r7 refiner inherits the backbone's data). Generated table: docs/licences.md.
+
+  corpus      manifest                                                     licence as recorded       commercial
+  librispeech data/manifests/librispeech_100h.parquet                      CC BY 4.0                 yes
+  ears        data/manifests/ears.parquet                                  CC BY-NC 4.0              no
+  cv_hi       data/manifests/cv_hi.parquet                                 CC0                       yes
+  esc50       data/manifests/esc50.parquet                                 CC BY-NC (per clip)       no
+  dns_noise   data/manifests/dns_datasets_fullband.noise_fullband.         per clip, see DNS README  unclear
+              freesound_000.tar.parquet
+  mad         data/manifests/mad.parquet                                   YouTube-sourced           no
+  gunshots    data/manifests/gunshots.parquet                              CC BY 4.0                 yes
+  drone       data/manifests/drone.parquet                                 DroneAudioDataset,        unclear
+                                                                           cite Al-Emadi et al. 2019
+  noisex92    data/manifests/noisex92.parquet                              NOISEX-92 via SPIB,       unclear
+                                                                           terms unstated
+
+Room impulse responses are simulated in-repo with pyroomacoustics (vaani/data/rirs.py,
+data/rirs/bank_r3.npz); no recorded third-party RIRs enter the r7 recipe.
+
+The r7 backbone was initialised from results of the r6_e256 recipe (init_from runs/r6_e256/best.pt),
+which reads the same manifest list.
+
+This is a licence statement, not a legal opinion. "unclear" means unresolved, not cleared.
+
+3. Third-party components
+-------------------------
+deploy/dnsmos/sig_bak_ovr.onnx - Microsoft DNSMOS P.835 model, used for evaluation only and never
+shipped in the enhancement path. See deploy/dnsmos/NOTICE.md.
+
+Python dependencies are installed from PyPI under their own licences and are not redistributed here.
