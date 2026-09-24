@@ -1,0 +1,966 @@
+[
+ {
+  "clip": "web:abcd",
+  "path": "C:\\Users\\Rachit\\Downloads\\abcd.wav"
+ },
+ {
+  "clip": "mad:training/261_4",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\261\\4.wav",
+  "video": "--QG9dLN6f4"
+ },
+ {
+  "clip": "mad:training/076_2",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\076\\2.wav",
+  "video": "-0-zfSkWqZE"
+ },
+ {
+  "clip": "mad:training/153_43",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\153\\43.wav",
+  "video": "-ZzB2B_DNU0"
+ },
+ {
+  "clip": "mad:training/098_25",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\098\\25.wav",
+  "video": "-aVNTPTeU1A"
+ },
+ {
+  "clip": "mad:training/384_0",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\384\\0.wav",
+  "video": "0ChWRi55eiI"
+ },
+ {
+  "clip": "mad:training/246_6",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\246\\6.wav",
+  "video": "0M0eOGobAos"
+ },
+ {
+  "clip": "mad:training/070_0",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\070\\0.wav",
+  "video": "1HGMJwHuGPQ"
+ },
+ {
+  "clip": "mad:test/174_1",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\test\\174\\1.wav",
+  "video": "1VODpmWTj_A"
+ },
+ {
+  "clip": "mad:training/482_14",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\482\\14.wav",
+  "video": "1l8J2t37tD4"
+ },
+ {
+  "clip": "mad:test/190_1",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\test\\190\\1.wav",
+  "video": "2QaJBTR0IAQ"
+ },
+ {
+  "clip": "mad:training/515_11",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\515\\11.wav",
+  "video": "2azM9R_qEUU"
+ },
+ {
+  "clip": "mad:training/248_11",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\248\\11.wav",
+  "video": "2oyPGVoryaY"
+ },
+ {
+  "clip": "mad:training/188_24",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\188\\24.wav",
+  "video": "3NUTWPo4_Ws"
+ },
+ {
+  "clip": "mad:training/448_10",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\448\\10.wav",
+  "video": "3O1G1B7izSI"
+ },
+ {
+  "clip": "mad:test/252_0",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\test\\252\\0.wav",
+  "video": "3mSzoHeQDhU"
+ },
+ {
+  "clip": "mad:training/249_7",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\249\\7.wav",
+  "video": "3orkL84sGIs"
+ },
+ {
+  "clip": "mad:training/124_18",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\124\\18.wav",
+  "video": "48R1JD44KbQ"
+ },
+ {
+  "clip": "mad:training/168_28",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\168\\28.wav",
+  "video": "4PEKmTKl11A"
+ },
+ {
+  "clip": "mad:test/241_5",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\test\\241\\5.wav",
+  "video": "4h7MAdyQZLw"
+ },
+ {
+  "clip": "mad:training/183_7",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\183\\7.wav",
+  "video": "5F9BKowe5x0"
+ },
+ {
+  "clip": "mad:test/161_15",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\test\\161\\15.wav",
+  "video": "60bZqwvjWa8"
+ },
+ {
+  "clip": "mad:training/128_56",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\128\\56.wav",
+  "video": "6wqlS_1E6zA"
+ },
+ {
+  "clip": "mad:training/113_9",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\113\\9.wav",
+  "video": "7LwLpTpJ9Do"
+ },
+ {
+  "clip": "mad:training/112_8",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\112\\8.wav",
+  "video": "94CPYhhKelU"
+ },
+ {
+  "clip": "mad:training/111_7",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\111\\7.wav",
+  "video": "9QgwDCXiLOw"
+ },
+ {
+  "clip": "mad:training/024_1",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\024\\1.wav",
+  "video": "9TeyGsEA0_g"
+ },
+ {
+  "clip": "mad:training/087_3",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\087\\3.wav",
+  "video": "9UbXVOLs1EI"
+ },
+ {
+  "clip": "mad:training/316_0",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\316\\0.wav",
+  "video": "AE-Fh6acAtA"
+ },
+ {
+  "clip": "mad:training/496_4",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\496\\4.wav",
+  "video": "AZmYdFyzTzc"
+ },
+ {
+  "clip": "mad:training/006_3",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\006\\3.wav",
+  "video": "AvSEHXGx-xU"
+ },
+ {
+  "clip": "mad:training/068_21",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\068\\21.wav",
+  "video": "BlHYY--FsFo"
+ },
+ {
+  "clip": "mad:training/009_8",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\009\\8.wav",
+  "video": "Bpfbw-lccQw"
+ },
+ {
+  "clip": "mad:training/511_2",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\511\\2.wav",
+  "video": "C0NzkieCEBU"
+ },
+ {
+  "clip": "mad:training/066_4",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\066\\4.wav",
+  "video": "CKNWEEq0PQI"
+ },
+ {
+  "clip": "mad:training/231_6",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\231\\6.wav",
+  "video": "DJJzzdxtnro"
+ },
+ {
+  "clip": "mad:training/440_3",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\440\\3.wav",
+  "video": "DnLan6X1tDw"
+ },
+ {
+  "clip": "mad:training/243_18",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\243\\18.wav",
+  "video": "DsU74ubgHMQ"
+ },
+ {
+  "clip": "mad:training/460_8",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\460\\8.wav",
+  "video": "Dumo2etHkIk"
+ },
+ {
+  "clip": "mad:test/147_82",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\test\\147\\82.wav",
+  "video": "EKJaJIWD7ts"
+ },
+ {
+  "clip": "mad:training/393_20",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\393\\20.wav",
+  "video": "EKuc7AfFrxU"
+ },
+ {
+  "clip": "mad:training/119_10",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\119\\10.wav",
+  "video": "FPia9omI1g4"
+ },
+ {
+  "clip": "mad:training/213_9",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\213\\9.wav",
+  "video": "FX-sf0UcJRI"
+ },
+ {
+  "clip": "mad:training/088_7",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\088\\7.wav",
+  "video": "FsDPxAQdd30"
+ },
+ {
+  "clip": "mad:training/436_21",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\436\\21.wav",
+  "video": "GJSfEEdV76k"
+ },
+ {
+  "clip": "mad:test/245_15",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\test\\245\\15.wav",
+  "video": "Gezu6A9zcLU"
+ },
+ {
+  "clip": "mad:training/130_0",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\130\\0.wav",
+  "video": "Ggetv1Cf9T8"
+ },
+ {
+  "clip": "mad:training/186_11",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\186\\11.wav",
+  "video": "GjT9m2i4bUg"
+ },
+ {
+  "clip": "mad:training/230_6",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\230\\6.wav",
+  "video": "GogYTMoWbbk"
+ },
+ {
+  "clip": "mad:training/181_10",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\181\\10.wav",
+  "video": "HavEuTLprbE"
+ },
+ {
+  "clip": "mad:test/296_0",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\test\\296\\0.wav",
+  "video": "IwBLEXLdfII"
+ },
+ {
+  "clip": "mad:test/258_56",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\test\\258\\56.wav",
+  "video": "J6xx3eTlFFo"
+ },
+ {
+  "clip": "mad:training/167_12",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\167\\12.wav",
+  "video": "JAJW66OWh-Y"
+ },
+ {
+  "clip": "mad:training/129_20",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\129\\20.wav",
+  "video": "KNe49xAa1iE"
+ },
+ {
+  "clip": "mad:training/253_22",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\253\\22.wav",
+  "video": "KxN50GNWOCQ"
+ },
+ {
+  "clip": "mad:training/454_5",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\454\\5.wav",
+  "video": "L35RtDA0lqk"
+ },
+ {
+  "clip": "mad:training/438_1",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\438\\1.wav",
+  "video": "LRrlQeozSxY"
+ },
+ {
+  "clip": "mad:training/154_19",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\154\\19.wav",
+  "video": "M553AmdYqhg"
+ },
+ {
+  "clip": "mad:training/179_7",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\179\\7.wav",
+  "video": "MHMkTwqtCaQ"
+ },
+ {
+  "clip": "mad:training/328_10",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\328\\10.wav",
+  "video": "MSXFauKSLXo"
+ },
+ {
+  "clip": "mad:training/044_0",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\044\\0.wav",
+  "video": "MTWdt5DB9k0"
+ },
+ {
+  "clip": "mad:training/254_10",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\254\\10.wav",
+  "video": "NK_lQl2-j1A"
+ },
+ {
+  "clip": "mad:training/007_3",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\007\\3.wav",
+  "video": "NiQ481TD8ag"
+ },
+ {
+  "clip": "mad:training/203_0",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\203\\0.wav",
+  "video": "NxM8RDkoLms"
+ },
+ {
+  "clip": "mad:training/297_0",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\297\\0.wav",
+  "video": "O1pwEykAc1w"
+ },
+ {
+  "clip": "mad:training/091_7",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\091\\7.wav",
+  "video": "O5B1ibSi96I"
+ },
+ {
+  "clip": "mad:training/106_1",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\106\\1.wav",
+  "video": "OAXdcTuqZGA"
+ },
+ {
+  "clip": "mad:training/187_0",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\187\\0.wav",
+  "video": "Oady_OaLZ1g"
+ },
+ {
+  "clip": "mad:training/109_22",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\109\\22.wav",
+  "video": "Oc8KB1R_iyI"
+ },
+ {
+  "clip": "mad:training/185_19",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\185\\19.wav",
+  "video": "PWscEN2l8dE"
+ },
+ {
+  "clip": "mad:training/114_21",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\114\\21.wav",
+  "video": "QKN09nf6BC8"
+ },
+ {
+  "clip": "mad:training/278_1",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\278\\1.wav",
+  "video": "QvfBIagtg8M"
+ },
+ {
+  "clip": "mad:training/158_14",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\158\\14.wav",
+  "video": "S7BGTY8uy2M"
+ },
+ {
+  "clip": "mad:training/468_5",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\468\\5.wav",
+  "video": "SSb7xh7yFGs"
+ },
+ {
+  "clip": "mad:training/156_8",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\156\\8.wav",
+  "video": "SsXjPrFD4o0"
+ },
+ {
+  "clip": "mad:training/134_3",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\134\\3.wav",
+  "video": "Sv4swYq659A"
+ },
+ {
+  "clip": "mad:training/173_8",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\173\\8.wav",
+  "video": "TAmvdbjQR7k"
+ },
+ {
+  "clip": "mad:training/067_11",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\067\\11.wav",
+  "video": "Tj3FmeYH-Oo"
+ },
+ {
+  "clip": "mad:training/464_31",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\464\\31.wav",
+  "video": "UOuGC4NErpo"
+ },
+ {
+  "clip": "mad:training/075_14",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\075\\14.wav",
+  "video": "UaKBbJcLBi8"
+ },
+ {
+  "clip": "mad:test/425_1",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\test\\425\\1.wav",
+  "video": "UccqNrFCZ4o"
+ },
+ {
+  "clip": "mad:training/374_6",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\374\\6.wav",
+  "video": "Uu6nSOOZA4Y"
+ },
+ {
+  "clip": "mad:training/017_3",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\017\\3.wav",
+  "video": "V1NJPSZZBsk"
+ },
+ {
+  "clip": "mad:training/320_3",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\320\\3.wav",
+  "video": "VZixjxo4OOI"
+ },
+ {
+  "clip": "mad:training/005_1",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\005\\1.wav",
+  "video": "WNW3I8z6WBQ"
+ },
+ {
+  "clip": "mad:training/421_28",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\421\\28.wav",
+  "video": "WYEEeQN6ffI"
+ },
+ {
+  "clip": "mad:training/146_20",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\146\\20.wav",
+  "video": "X6FZmkzd7-A"
+ },
+ {
+  "clip": "mad:training/486_3",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\486\\3.wav",
+  "video": "XHR0ZpBqiu4"
+ },
+ {
+  "clip": "mad:test/467_9",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\test\\467\\9.wav",
+  "video": "XNbuRkeF1Yo"
+ },
+ {
+  "clip": "mad:training/439_5",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\439\\5.wav",
+  "video": "XXhzdeMMb8g"
+ },
+ {
+  "clip": "mad:training/160_6",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\160\\6.wav",
+  "video": "Xg77md8fw8Y"
+ },
+ {
+  "clip": "mad:training/184_16",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\184\\16.wav",
+  "video": "Xv0YG8kX69k"
+ },
+ {
+  "clip": "mad:test/388_25",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\test\\388\\25.wav",
+  "video": "YaRd3uFfoFo"
+ },
+ {
+  "clip": "mad:training/293_6",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\293\\6.wav",
+  "video": "ZGhYiNTJUdc"
+ },
+ {
+  "clip": "mad:test/208_1",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\test\\208\\1.wav",
+  "video": "Zm_fPbLqkwU"
+ },
+ {
+  "clip": "mad:training/481_1",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\481\\1.wav",
+  "video": "Zmtts5FaNDA"
+ },
+ {
+  "clip": "mad:training/317_1",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\317\\1.wav",
+  "video": "ZxTJVpUlwZc"
+ },
+ {
+  "clip": "mad:training/107_6",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\107\\6.wav",
+  "video": "ZyjpYEWmtPg"
+ },
+ {
+  "clip": "mad:test/052_7",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\test\\052\\7.wav",
+  "video": "_b8fADe41w0"
+ },
+ {
+  "clip": "mad:training/463_4",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\463\\4.wav",
+  "video": "_e6-UA3PRIU"
+ },
+ {
+  "clip": "mad:training/237_1",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\237\\1.wav",
+  "video": "_r4Yo-LbPjg"
+ },
+ {
+  "clip": "mad:training/001_0",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\001\\0.wav",
+  "video": "_zPFYjW8EF8"
+ },
+ {
+  "clip": "mad:training/260_5",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\260\\5.wav",
+  "video": "a2gwUGtaGT8"
+ },
+ {
+  "clip": "mad:training/233_44",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\233\\44.wav",
+  "video": "abubtv-3wZ0"
+ },
+ {
+  "clip": "mad:training/255_16",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\255\\16.wav",
+  "video": "agbBksKN52E"
+ },
+ {
+  "clip": "mad:training/446_7",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\446\\7.wav",
+  "video": "b0Tbfheq2oQ"
+ },
+ {
+  "clip": "mad:training/159_21",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\159\\21.wav",
+  "video": "bDh0xN7C89s"
+ },
+ {
+  "clip": "mad:test/451_4",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\test\\451\\4.wav",
+  "video": "bsDmYS5BorU"
+ },
+ {
+  "clip": "mad:training/095_22",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\095\\22.wav",
+  "video": "c3BzJ-O_1V4"
+ },
+ {
+  "clip": "mad:training/155_23",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\155\\23.wav",
+  "video": "cNxMlZyTcPI"
+ },
+ {
+  "clip": "mad:training/125_5",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\125\\5.wav",
+  "video": "cvHwie5AI34"
+ },
+ {
+  "clip": "mad:training/211_3",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\211\\3.wav",
+  "video": "cvPBi-61irw"
+ },
+ {
+  "clip": "mad:training/169_52",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\169\\52.wav",
+  "video": "dA1JuqOdS1U"
+ },
+ {
+  "clip": "mad:training/437_8",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\437\\8.wav",
+  "video": "dBHGWbfbuuk"
+ },
+ {
+  "clip": "mad:training/149_14",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\149\\14.wav",
+  "video": "dM0uwd6Vy_I"
+ },
+ {
+  "clip": "mad:training/302_4",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\302\\4.wav",
+  "video": "dO7fRwSnoBc"
+ },
+ {
+  "clip": "mad:training/322_5",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\322\\5.wav",
+  "video": "dVOVf1TaHYk"
+ },
+ {
+  "clip": "mad:training/305_1",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\305\\1.wav",
+  "video": "dspmzT5tBhM"
+ },
+ {
+  "clip": "mad:training/003_5",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\003\\5.wav",
+  "video": "eqSEgOfQ1HI"
+ },
+ {
+  "clip": "mad:test/152_15",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\test\\152\\15.wav",
+  "video": "fCZK3Lckq_c"
+ },
+ {
+  "clip": "mad:test/444_5",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\test\\444\\5.wav",
+  "video": "fHi5sZB3G9w"
+ },
+ {
+  "clip": "mad:training/379_31",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\379\\31.wav",
+  "video": "fisa16uerj4"
+ },
+ {
+  "clip": "mad:training/171_0",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\171\\0.wav",
+  "video": "g22J4_nXGjI"
+ },
+ {
+  "clip": "mad:training/002_2",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\002\\2.wav",
+  "video": "gRMz4ZEN4Bg"
+ },
+ {
+  "clip": "mad:test/163_11",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\test\\163\\11.wav",
+  "video": "gqbfJRuaUQY"
+ },
+ {
+  "clip": "mad:training/494_9",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\494\\9.wav",
+  "video": "gshBDiDBHnk"
+ },
+ {
+  "clip": "mad:training/225_4",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\225\\4.wav",
+  "video": "h4J4iKhLgbk"
+ },
+ {
+  "clip": "mad:training/461_6",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\461\\6.wav",
+  "video": "hVgXyf3cyJI"
+ },
+ {
+  "clip": "mad:training/136_19",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\136\\19.wav",
+  "video": "hWXbQAt51Rc"
+ },
+ {
+  "clip": "mad:training/018_5",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\018\\5.wav",
+  "video": "hfOL6s2bGoA"
+ },
+ {
+  "clip": "mad:test/127_11",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\test\\127\\11.wav",
+  "video": "iH1GMjD_BuI"
+ },
+ {
+  "clip": "mad:training/178_19",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\178\\19.wav",
+  "video": "iQ0YtEUDPSo"
+ },
+ {
+  "clip": "mad:training/023_1",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\023\\1.wav",
+  "video": "ioTIUb_7y74"
+ },
+ {
+  "clip": "mad:training/180_9",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\180\\9.wav",
+  "video": "j5hqj2rBf2U"
+ },
+ {
+  "clip": "mad:training/471_0",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\471\\0.wav",
+  "video": "jNGOgWcdtBI"
+ },
+ {
+  "clip": "mad:training/418_0",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\418\\0.wav",
+  "video": "kgnPh8n3cOc"
+ },
+ {
+  "clip": "mad:training/182_18",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\182\\18.wav",
+  "video": "lUXvsMukQbI"
+ },
+ {
+  "clip": "mad:training/090_1",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\090\\1.wav",
+  "video": "lu_jvDyJMYE"
+ },
+ {
+  "clip": "mad:training/224_1",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\224\\1.wav",
+  "video": "m5cG_iZbOOM"
+ },
+ {
+  "clip": "mad:test/256_1",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\test\\256\\1.wav",
+  "video": "ma9iw-EDiAE"
+ },
+ {
+  "clip": "mad:training/144_21",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\144\\21.wav",
+  "video": "nqf17othGbE"
+ },
+ {
+  "clip": "mad:training/489_3",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\489\\3.wav",
+  "video": "nvgd3VMzKVM"
+ },
+ {
+  "clip": "mad:training/428_4",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\428\\4.wav",
+  "video": "oWxhsbE9u6U"
+ },
+ {
+  "clip": "mad:training/244_43",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\244\\43.wav",
+  "video": "pJ4nLxpp7io"
+ },
+ {
+  "clip": "mad:training/389_0",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\389\\0.wav",
+  "video": "pJOFxu3jfas"
+ },
+ {
+  "clip": "mad:training/165_7",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\165\\7.wav",
+  "video": "phwpf_vm0ks"
+ },
+ {
+  "clip": "mad:training/072_2",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\072\\2.wav",
+  "video": "pjQvk5PrqdA"
+ },
+ {
+  "clip": "mad:training/177_13",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\177\\13.wav",
+  "video": "qEALr2gytdo"
+ },
+ {
+  "clip": "mad:training/232_6",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\232\\6.wav",
+  "video": "qHZ3mPNxF_w"
+ },
+ {
+  "clip": "mad:training/029_5",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\029\\5.wav",
+  "video": "qRWZi0lQCA0"
+ },
+ {
+  "clip": "mad:training/405_10",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\405\\10.wav",
+  "video": "qbcWFYhPIRc"
+ },
+ {
+  "clip": "mad:training/123_17",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\123\\17.wav",
+  "video": "qcTmkKP_ku0"
+ },
+ {
+  "clip": "mad:training/189_0",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\189\\0.wav",
+  "video": "qnPsNNYFl30"
+ },
+ {
+  "clip": "mad:training/092_5",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\092\\5.wav",
+  "video": "rTn5UezOC0A"
+ },
+ {
+  "clip": "mad:test/079_5",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\test\\079\\5.wav",
+  "video": "sMnN2xZCook"
+ },
+ {
+  "clip": "mad:training/447_7",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\447\\7.wav",
+  "video": "tM3fIawjRn8"
+ },
+ {
+  "clip": "mad:training/474_0",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\474\\0.wav",
+  "video": "tP-ysPz7tJ8"
+ },
+ {
+  "clip": "mad:test/394_12",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\test\\394\\12.wav",
+  "video": "tXR7Cqb1HpQ"
+ },
+ {
+  "clip": "mad:test/080_5",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\test\\080\\5.wav",
+  "video": "test/080"
+ },
+ {
+  "clip": "mad:test/102_12",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\test\\102\\12.wav",
+  "video": "test/102"
+ },
+ {
+  "clip": "mad:test/148_4",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\test\\148\\4.wav",
+  "video": "test/148"
+ },
+ {
+  "clip": "mad:test/151_20",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\test\\151\\20.wav",
+  "video": "test/151"
+ },
+ {
+  "clip": "mad:training/051_6",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\051\\6.wav",
+  "video": "training/051"
+ },
+ {
+  "clip": "mad:training/089_4",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\089\\4.wav",
+  "video": "training/089"
+ },
+ {
+  "clip": "mad:training/097_3",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\097\\3.wav",
+  "video": "training/097"
+ },
+ {
+  "clip": "mad:training/117_16",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\117\\16.wav",
+  "video": "training/117"
+ },
+ {
+  "clip": "mad:training/137_27",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\137\\27.wav",
+  "video": "training/137"
+ },
+ {
+  "clip": "mad:training/145_16",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\145\\16.wav",
+  "video": "training/145"
+ },
+ {
+  "clip": "mad:training/150_24",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\150\\24.wav",
+  "video": "training/150"
+ },
+ {
+  "clip": "mad:training/164_12",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\164\\12.wav",
+  "video": "training/164"
+ },
+ {
+  "clip": "mad:training/166_1",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\166\\1.wav",
+  "video": "training/166"
+ },
+ {
+  "clip": "mad:test/477_9",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\test\\477\\9.wav",
+  "video": "tuThyjzSzkA"
+ },
+ {
+  "clip": "mad:training/026_0",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\026\\0.wav",
+  "video": "u3QyF7z3THg"
+ },
+ {
+  "clip": "mad:training/462_10",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\462\\10.wav",
+  "video": "u43Z54mddn4"
+ },
+ {
+  "clip": "mad:training/269_4",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\269\\4.wav",
+  "video": "uctRYVWEDFI"
+ },
+ {
+  "clip": "mad:training/064_0",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\064\\0.wav",
+  "video": "udyVmJuyC74"
+ },
+ {
+  "clip": "mad:training/262_12",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\262\\12.wav",
+  "video": "v_yOX-5rdWY"
+ },
+ {
+  "clip": "mad:training/392_8",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\392\\8.wav",
+  "video": "vaXolON89bE"
+ },
+ {
+  "clip": "mad:training/084_6",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\084\\6.wav",
+  "video": "vc9plIAPNjA"
+ },
+ {
+  "clip": "mad:training/223_11",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\223\\11.wav",
+  "video": "vj3rcOBhqt8"
+ },
+ {
+  "clip": "mad:training/126_9",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\126\\9.wav",
+  "video": "w1H9Lz5H0NM"
+ },
+ {
+  "clip": "mad:training/020_0",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\020\\0.wav",
+  "video": "wavCf3JrwbE"
+ },
+ {
+  "clip": "mad:test/115_15",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\test\\115\\15.wav",
+  "video": "wmRxVu42BgA"
+ },
+ {
+  "clip": "mad:training/105_7",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\105\\7.wav",
+  "video": "x2ay87_wA5Q"
+ },
+ {
+  "clip": "mad:training/120_44",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\120\\44.wav",
+  "video": "xZHWTBftoB4"
+ },
+ {
+  "clip": "mad:training/122_16",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\122\\16.wav",
+  "video": "x_tFZcYmIeE"
+ },
+ {
+  "clip": "mad:training/277_7",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\277\\7.wav",
+  "video": "xg4G6XIkrw8"
+ },
+ {
+  "clip": "mad:test/094_8",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\test\\094\\8.wav",
+  "video": "ylkEfC-CoyI"
+ },
+ {
+  "clip": "mad:training/108_25",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\108\\25.wav",
+  "video": "ysAPJQ1aTSM"
+ },
+ {
+  "clip": "mad:training/162_13",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\162\\13.wav",
+  "video": "ywl3QETXf9s"
+ },
+ {
+  "clip": "mad:training/081_7",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\081\\7.wav",
+  "video": "zFELG_vEEnc"
+ },
+ {
+  "clip": "mad:training/315_7",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\315\\7.wav",
+  "video": "ztTY9hp9zqM"
+ },
+ {
+  "clip": "mad:training/132_2",
+  "path": "C:\\Users\\Rachit\\Desktop\\Projects\\SIH_2026\\data\\download\\mad\\MAD_dataset\\training\\132\\2.wav",
+  "video": "zwPVadlwcLM"
+ }
+]
