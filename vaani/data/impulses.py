@@ -16,9 +16,18 @@ def _decay(rng, sr, tau_s):
     return (x * np.exp(-t / tau_s)).astype(np.float32)
 
 
-def generate(rng: np.random.Generator, sr: int = 16000, kind: str | None = None, blast_kind: str | None = None):
-    """blast_kind pins the blast sub-kind ("small_arms" | "artillery"); None draws it, as training does."""
+def generate(rng: np.random.Generator, sr: int = 16000, kind: str | None = None, blast_kind: str | None = None,
+             physics: str = "v1", **scene):
+    """blast_kind pins the blast sub-kind ("small_arms" | "artillery"); None draws it, as training does.
+    physics="v2" (blast only) uses blast.blast_v2, or blast.burst for blast_kind "burst"; scene passes their parameters.
+    v2 meta carries peak_spl_db at the mic for the caller to calibrate to dBFS; the waveform is still peak-normalised."""
     kind = kind or rng.choice(KINDS)
+    if physics == "v2":
+        if kind != "blast":
+            raise ValueError("physics='v2' applies to kind='blast' only")
+        return _generate_v2(rng, sr, blast_kind, scene)
+    if physics != "v1" or scene:
+        raise ValueError(f"physics={physics!r} with {sorted(scene)}: only v2 takes scene parameters")
     if kind == "blast":
         from vaani.data import blast as _blast
         x, m = _blast.blast(rng, sr, kind=blast_kind)
@@ -52,6 +61,25 @@ def generate(rng: np.random.Generator, sr: int = 16000, kind: str | None = None,
     if kind == "blast":
         meta.update(blast_kind=m["kind"], distance=m["distance"])
     return x.astype(np.float32), meta
+
+
+V2_MAX_S = 3.5   # a 30-round burst at 650 rpm lasts 2.6 s; the mixer crops to the clip
+
+
+def _generate_v2(rng, sr, blast_kind, scene):
+    from vaani.data import blast as _blast
+    if blast_kind == "burst":
+        x, m = _blast.burst(rng, sr, **scene)
+    else:
+        x, m = _blast.blast_v2(rng, sr, kind=blast_kind, **scene)
+    pre = int(rng.uniform(0.05, 0.3) * sr)   # same silent lead-in as v1 so the onset is inside the clip
+    x = np.concatenate([np.zeros(pre), x])[:int(V2_MAX_S * sr)]
+    x = (x / (np.abs(x).max() + 1e-30)).astype(np.float32)
+    keep = ("physics", "distance_m", "peak_spl_db", "source_spl_1m", "charge_kg", "n_rounds", "rpm", "ballistic")
+    meta = {"kind": "blast", "blast_kind": m["kind"], "distance": None,
+            "onsets_s": [pre / sr + o for o in m["onsets_s"] if (pre / sr + o) * sr < len(x)],
+            **{k: m[k] for k in keep if k in m}}
+    return x, meta
 
 
 def detect_onsets(x: np.ndarray, sr: int = 16000, frame_ms: float = 5.0, rise_db: float = 12.0,
