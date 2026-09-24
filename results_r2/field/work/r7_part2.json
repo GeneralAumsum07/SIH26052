@@ -1,0 +1,47 @@
+{
+ "wav": "C:\\Users\\Rachit\\Downloads\\abcd.wav",
+ "seconds": 37.1519375,
+ "whisper_available": false,
+ "runs": {
+  "as_is": {
+   "longest_atten30_s": 2.38,
+   "atten20_frac": 0.7916666666666666,
+   "proxy_survival": 0.20833333333333337,
+   "vad_speech_s": null,
+   "vad_speech_in_s": null,
+   "word_survival": null,
+   "validity_key": null,
+   "validity_latency_s": "absent"
+  },
+  "ref_zero": {
+   "longest_atten30_s": 0.1,
+   "atten20_frac": 0.14399509803921567,
+   "proxy_survival": 0.8560049019607843,
+   "vad_speech_s": null,
+   "vad_speech_in_s": null,
+   "word_survival": null,
+   "validity_key": null,
+   "validity_latency_s": "absent"
+  },
+  "mono_dup": {
+   "longest_atten30_s": 32.64,
+   "atten20_frac": 1.0,
+   "proxy_survival": 0.0,
+   "vad_speech_s": null,
+   "vad_speech_in_s": null,
+   "word_survival": null,
+   "validity_key": null,
+   "validity_latency_s": "absent"
+  },
+  "swapped": {
+   "longest_atten30_s": 3.34,
+   "atten20_frac": 0.8927613941018767,
+   "proxy_survival": 0.10723860589812328,
+   "vad_speech_s": null,
+   "vad_speech_in_s": null,
+   "word_survival": null,
+   "validity_key": null,
+   "validity_latency_s": "absent"
+  }
+ }
+}
