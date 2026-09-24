@@ -5,6 +5,13 @@ cannot: does the model use the 18-dim feature vector and the NLMS channel at all
 
 Run:
     uv run python scripts/diag_conditioning.py --ckpt runs/vaani_full/best.pt --n 120
+    uv run --with numba python scripts/diag_conditioning.py --ckpt runs/r7_e256_wr64_refiner/best.pt \
+        --eval-root data/eval_r2 --split val --n 0 --out results_r2/r7/diag/conditioning_cascade
+
+A cascade checkpoint (vaani_cascade) is accepted: the ablations act on the frozen first stage's
+inputs, and the refiner sees the same spec6, so "ref zeroed" zeroes the reference for both stages.
+--out writes <out>.csv (one row per clip x variant: SNR_out, STOI, PESQ-WB) and <out>.json
+(per-variant means and paired deltas with a 1000-sample bootstrap CI over clips).
 
 Interpretation:
   * |dSTOI| for "feats zeroed" close to 0  -> the FiLM conditioning is inert; the
@@ -18,15 +25,18 @@ Interpretation:
     suggests no measured benefit on these clips, not proof the pathway is unused.
 """
 import argparse
+import json
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import torch
-from pystoi import stoi as _stoi
 
+from vaani import metrics
 from vaani.data.dataset import RenderedDataset
 from vaani.dsp import pipeline, stft
+from vaani.models import cascade
 from vaani.train import build_model
 
 SR = 16000
@@ -58,15 +68,22 @@ def main():
     ap.add_argument("--ckpt", required=True)
     ap.add_argument("--eval-root", default="data/eval")
     ap.add_argument("--split", default="test")
-    ap.add_argument("--n", type=int, default=120, help="clips to sample (stratified over buckets)")
+    ap.add_argument("--n", type=int, default=120, help="clips to sample (stratified over buckets); 0 = every clip")
+    ap.add_argument("--out", help="write <out>.csv (per clip x variant) and <out>.json (summary)")
     a = ap.parse_args()
+    torch.set_num_threads(1)  # one core per diagnostic process; several run side by side
 
     ck = torch.load(a.ckpt, map_location="cpu", weights_only=True)
     cfg = ck["config"]
-    assert cfg["model"] == "vaani", "this diagnostic only applies to VaaniNet checkpoints"
-    m = build_model("vaani", model_cfg=cfg.get("model_cfg"))
-    m.load_state_dict(ck["model"])
-    m.eval()
+    assert cfg["model"] in ("vaani", cascade.MODEL_NAME), "this diagnostic only applies to VaaniNet (or cascade) checkpoints"
+    if cfg["model"] == cascade.MODEL_NAME:
+        model = cascade.FrozenCascade.from_config(cfg)
+        model.load_state_dict(ck["model"])
+        m = model.first  # every ablation targets the first stage's inputs and modules
+    else:
+        model = m = build_model("vaani", model_cfg=cfg.get("model_cfg"))
+        m.load_state_dict(ck["model"])
+    model.eval()
 
     # --- static check: how big is the FiLM shift next to the activations it modifies? ---
     film = m.encoder.film
@@ -79,12 +96,15 @@ def main():
         print("FiLM disabled; feature-zeroing variants are expected no-ops.")
 
     ds = RenderedDataset(Path(a.eval_root) / a.split)
-    idx = np.linspace(0, len(ds) - 1, min(a.n, len(ds))).astype(int)
+    idx = np.arange(len(ds)) if a.n <= 0 else np.linspace(0, len(ds) - 1, min(a.n, len(ds))).astype(int)
 
     variants = ["as trained", "feats zeroed", "n_hat zeroed", "ref zeroed", "feats+n_hat zeroed"]
+    if film is None:  # features only reach the net through FiLM; zeroing them is an exact no-op, so skip the cost
+        variants = ["as trained", "n_hat zeroed", "ref zeroed"]
     if m.use_coh:
         variants.append("coh zeroed")
     acc = {v: [] for v in variants}
+    rows = []
     film_ratio = []
 
     # capture the activation the FiLM shift is added to, to size the shift against it
@@ -104,6 +124,7 @@ def main():
             F = torch.from_numpy(r["features"])[None]
             Z = torch.zeros_like(F)
 
+            meta = it["meta"]
             inputs = [
                 ("as trained", torch.cat([P, R, N], -1), F),
                 ("feats zeroed", torch.cat([P, R, N], -1), Z),
@@ -113,11 +134,14 @@ def main():
             ]
             if m.use_coh:
                 inputs.append(("coh zeroed", torch.cat([P, R, N], -1), F))
+            inputs = [t for t in inputs if t[0] in variants]
             for name, spec6, feats in inputs:
                 with zero_coherence(m) if name == "coh zeroed" else nullcontext():
-                    out = m(spec6, feats)
+                    out = model(spec6, feats)
                 y = stft.istft(out, length=mix.shape[1])[0].numpy()
-                acc[name].append(_stoi(clean, y, SR, extended=False))
+                acc[name].append(metrics.stoi(clean, y))
+                rows.append(dict(id=meta.get("id"), bucket=meta.get("bucket"), variant=name,
+                                 snr_out=metrics.snr_db(clean, y), stoi=acc[name][-1], pesq_wb=metrics.pesq_wb(clean, y)))
                 if name == "as trained" and film is not None:
                     shift = m.encoder.film(torch.clamp(F * m.encoder.feat_scale, -3.0, 3.0))
                     film_ratio.append(float(shift.abs().mean() / (grab["x"].abs().mean() + 1e-9)))
@@ -133,6 +157,27 @@ def main():
     for v in variants:
         mu = float(np.mean(acc[v]))
         print(f"{v:<22s} {mu:7.4f} {mu - base:+8.4f}")
+
+    if a.out:
+        df = pd.DataFrame(rows)
+        out = Path(a.out); out.parent.mkdir(parents=True, exist_ok=True)
+        df.to_csv(out.with_suffix(".csv"), index=False)
+        wide = df.pivot(index=["bucket", "id"], columns="variant", values=["snr_out", "stoi", "pesq_wb"])
+        rng = np.random.default_rng(0)
+        boot = rng.integers(0, len(wide), (1000, len(wide)))  # one clip resample shared by every variant and metric
+        summary = {"checkpoint": a.ckpt, "model": cfg["model"], "eval_root": a.eval_root, "split": a.split,
+                   "n_clips": int(len(wide)), "film_shift_ratio": float(np.mean(film_ratio)) if film_ratio else None,
+                   "variants": {}}
+        for v in variants:
+            summary["variants"][v] = {}
+            for k in ("snr_out", "stoi", "pesq_wb"):
+                d = (wide[(k, v)] - wide[(k, "as trained")]).to_numpy()
+                bm = np.nanmean(d[boot], axis=1)
+                summary["variants"][v][k] = {"mean": float(np.nanmean(wide[(k, v)])), "delta": float(np.nanmean(d)),
+                                             "delta_ci95": [float(np.percentile(bm, 2.5)), float(np.percentile(bm, 97.5))],
+                                             "n_finite": int(np.isfinite(d).sum())}
+        out.with_suffix(".json").write_text(json.dumps(summary, indent=2))
+        print(f"wrote {out.with_suffix('.csv')} and {out.with_suffix('.json')}")
 
 
 if __name__ == "__main__":

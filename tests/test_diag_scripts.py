@@ -96,3 +96,24 @@ def test_coherence_ablation_preserves_spectra_and_restores_after_error():
             raise RuntimeError("probe")
     with torch.no_grad():
         torch.testing.assert_close(model(spec, feats), baseline, rtol=0, atol=0)
+
+
+def test_diag_conditioning_writes_csv_and_json(monkeypatch, capsys, evalroot, vaani_ckpt, tmp_path):
+    import json
+    import pandas as pd
+    from scripts import diag_conditioning
+    stem = tmp_path / "diag" / "cond"
+    _run(monkeypatch, capsys, diag_conditioning, ["--ckpt", vaani_ckpt, "--eval-root", evalroot, "--n", "0", "--out", str(stem)])
+    df = pd.read_csv(stem.with_suffix(".csv"))
+    assert {"variant", "snr_out", "stoi", "pesq_wb"} <= set(df.columns) and df.variant.nunique() > 1
+    assert json.loads(stem.with_suffix(".json").read_text())
+
+
+def test_mask_phase_probe_writes_csv_and_json(monkeypatch, capsys, evalroot, vaani_ckpt, tmp_path):
+    import json
+    import pandas as pd
+    from scripts import mask_phase_probe
+    stem = tmp_path / "mask"
+    _run(monkeypatch, capsys, mask_phase_probe, ["--system", f"ckpt:{vaani_ckpt}", "--eval-root", evalroot, "--per-bucket", "0", "--out", str(stem)])
+    assert len(pd.read_csv(stem.with_suffix(".csv"))) > 0
+    assert json.loads(stem.with_suffix(".json").read_text())

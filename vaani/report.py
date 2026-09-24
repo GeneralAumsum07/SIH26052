@@ -21,6 +21,43 @@ def ci(x, n=1000, seed=0):
     return (x.mean(), np.percentile(means, 2.5), np.percentile(means, 97.5))
 
 
+def nominal_mask(df):
+    """The nominal envelope exactly as main() builds it: unclipped, no ref dropout, no fault bucket, input SNR 0/5/10 dB."""
+    fault = df.fault if "fault" in df else pd.Series(np.nan, index=df.index)
+    return ((~df.clipped.astype(bool)) & (~df.ref_dropout.astype(bool)) & fault.isna()
+            & df.snr_in.isin([0, 5, 10])).to_numpy()
+
+
+def scene_clusters(df):
+    """Cluster key (snr_in, id): items rendered from one seed at one input SNR share speech and room across noise classes."""
+    return df.snr_in.astype(str) + "|" + df.id.astype(str)
+
+
+def cluster_ci(x, clusters, n=1000, seed=0):
+    """Scene-clustered bootstrap of the item mean: resample whole clusters, so correlated items do not narrow the CI."""
+    x = np.asarray(x, float); c = np.asarray(clusters)
+    keep = np.isfinite(x); x, c = x[keep], c[keep]
+    if len(x) == 0: return (np.nan, np.nan, np.nan)
+    _, inv = np.unique(c, return_inverse=True)
+    sums, cnts = np.bincount(inv, weights=x), np.bincount(inv).astype(float)
+    idx = np.random.default_rng(seed).integers(0, len(sums), size=(n, len(sums)))
+    means = sums[idx].sum(1) / cnts[idx].sum(1)
+    return (x.mean(), np.percentile(means, 2.5), np.percentile(means, 97.5))
+
+
+def pass_all(df, targets=TARGETS):
+    """Per clip: True only where every target metric strictly exceeds its target (a NaN metric fails)."""
+    ok = np.ones(len(df), bool)
+    for m, t in targets.items():
+        ok &= np.asarray(df[m], float) > t
+    return ok
+
+
+def pass_rate(df, targets=TARGETS):
+    """Fraction of clips meeting all targets at once; the mean-based marks hide how few clips do."""
+    return float(pass_all(df, targets).mean()) if len(df) else np.nan
+
+
 def _words(t):
     return re.sub(r"[^a-z0-9' ]+", " ", str(t).lower()).split()
 
