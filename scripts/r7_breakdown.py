@@ -25,7 +25,7 @@ from vaani.report import TARGETS, ci, cluster_ci, load_results, nominal_mask, pa
 
 R7_R2 = "results_r2/r7/r7_e256_wr64_cascade_eval_r2.csv"
 R7_GEN = "results_r2/r7/r7_e256_wr64_cascade_gen.csv"
-RAW_R2 = "results_r2/raw.csv"
+RAW_R2 = "results_r2/r7/raw_eval_r2_relabel.csv"  # same render as the r7 CSV; results_r2/raw.csv is the earlier render
 RAW_GEN = "results_r2/generalisation/raw_gen.csv"
 TM = ["snr_out", "stoi", "pesq_wb"]  # the three problem-statement targets, in the order the docs quote them
 KEYS = ["bucket", "id"]
