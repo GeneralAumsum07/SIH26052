@@ -11,10 +11,17 @@ of "hop": the number is what a capture loop pays per period, minus ALSA I/O.
     # dev machine: r7 plus untrained C16/C32/C64/C96 cascades on every backend present
     python scripts/hop_benchmark.py --models r7,C16,C32,C64,C96 --backends ort-cpu,torch-cpu,torch-cuda,ort-cuda
 
+    # the VaaniFE tiers (untrained step-graph exports) against r7
+    python scripts/hop_benchmark.py --models r7,fe-mini,fe-mid,fe-large,fe-large_plus --backends ort-cpu,torch-cpu
+
 Models. r7 = deploy/r7/cascade.onnx (ORT) and its cascade checkpoint (Torch twin). C<w> = an UNTRAINED cascade at
 first-stage width w with the profile settings of docs/research/2026-09-24/profile_scaling.py (film off, coh on,
 df_order 3, no noise floor, refiner hidden 16 / past 2), written as a scratch checkpoint and exported with
-`vaani.export.export` into --scratch: cost only, never quality. Every row runs behind r7's DSP configuration.
+`vaani.export.export` into --scratch: cost only, never quality. fe-<tier> = an UNTRAINED VaaniFE tier
+(vaani.models.vaani_fe.TIERS: mini, mid, large, large_plus) seeded by --seed, exported with `vaani.export.export_fe`
+into --scratch (the ORT-folded step graph runs; the Torch rows run VaaniFE.step on the same weights) and stepped
+through `backend.FeOrtBackend` / `FeTorchBackend` with validity 1: cost only, never quality. Every row runs behind
+r7's DSP configuration (the VaaniFE front end is the same engine; only the model step differs).
 
 Cold vs warm. "cold" is the first --cold hops of a fresh engine (numba compile if not cached, ORT/torch first-run
 allocation, cuDNN autotune); "warm" is every hop after --warm discarded ones. Per stage and for the whole hop:
@@ -104,8 +111,18 @@ def model_sources(name: str, scratch: Path, dsp_cfg: dict, seed: int, need_torch
     """-> {"onnx": path or None, "ckpt": path or None, "trained": bool}. ONNX for a C<w> row via vaani.export.export."""
     if name == "r7":
         return {"onnx": R7_ONNX, "ckpt": R7_CKPT if R7_CKPT.exists() else None, "trained": True}
+    if name.lower().startswith("fe-"):
+        from vaani import export
+        from vaani.models.vaani_fe import TIERS
+        tier = name[3:].lower()
+        if tier not in TIERS:
+            raise SystemExit(f"unknown VaaniFE tier {tier!r}: one of {sorted(TIERS)}")
+        m = export.fe_untrained(tier, seed)
+        rep = export.export_fe(m, scratch / f"fe_{tier}_untrained_s{seed}.onnx", parity=False)
+        return {"onnx": Path(rep["folded"]), "ckpt": None, "trained": False, "kind": bk.FE_KIND, "profile": tier,
+                "fe_model": m}
     if not name.upper().startswith("C"):
-        raise SystemExit(f"unknown model {name!r}: r7 or C<width>")
+        raise SystemExit(f"unknown model {name!r}: r7, C<width> or fe-<tier>")
     from vaani import export
     ck = untrained_checkpoint(int(name[1:]), scratch, dsp_cfg, seed)
     onnx = scratch / f"{name.upper()}_untrained.onnx"
@@ -116,6 +133,8 @@ def model_sources(name: str, scratch: Path, dsp_cfg: dict, seed: int, need_torch
 
 def make_backend(kind: str, src: dict, threads: int, profile_id: str):
     """-> (backend, None) or (None, reason it was skipped)."""
+    if src.get("kind") == bk.FE_KIND:
+        return make_fe_backend(kind, src, threads)
     if kind == "ort-cpu":
         return bk.OrtBackend(src["onnx"], threads=threads, profile_id=profile_id), None
     if kind in ("ort-cuda", "ort-trt"):
@@ -134,6 +153,27 @@ def make_backend(kind: str, src: dict, threads: int, profile_id: str):
             return None, "no checkpoint for the Torch twin"
         torch.set_num_threads(threads)
         return bk.TorchBackend.from_checkpoint(src["ckpt"], device=dev, profile_id=profile_id), None
+    raise SystemExit(f"unknown backend {kind!r}")
+
+
+def make_fe_backend(kind: str, src: dict, threads: int):
+    """VaaniFE rows: FeOrtBackend over the folded step graph, or FeTorchBackend over the same untrained weights."""
+    if kind == "ort-cpu":
+        return bk.FeOrtBackend(src["onnx"], threads=threads, profile=src["profile"]), None
+    if kind in ("ort-cuda", "ort-trt"):
+        import onnxruntime as ort
+        prov = "CUDAExecutionProvider" if kind == "ort-cuda" else "TensorrtExecutionProvider"
+        if prov not in ort.get_available_providers():
+            return None, f"{prov} not in this onnxruntime ({ort.get_available_providers()})"
+        return bk.FeOrtBackend(src["onnx"], threads=threads, providers=[prov, "CPUExecutionProvider"],
+                               profile=src["profile"]), None
+    if kind in ("torch-cpu", "torch-cuda"):
+        import torch
+        dev = kind.split("-")[1]
+        if dev == "cuda" and not torch.cuda.is_available():
+            return None, "torch.cuda.is_available() is False"
+        torch.set_num_threads(threads)
+        return bk.FeTorchBackend(src["fe_model"], device=dev, profile=src["profile"]), None
     raise SystemExit(f"unknown backend {kind!r}")
 
 
@@ -215,13 +255,14 @@ def run(models=("r7",), backends=("ort-cpu",), seconds=10.0, warm=50, cold=10, t
                 out["skipped"].append({"model": m, "backend": b, "reason": why}); print(f"skip {m}/{b}: {why}", file=sys.stderr)
                 continue
             r = bench_one(backend, dsp_cfg, mix, warm, cold, resample48)
-            r.update(model=m, backend=b, trained=src["trained"],
+            r.update(model=m, backend=b, trained=src["trained"], kind=getattr(backend, "kind", "cascade"),
+                     profile_id=backend.profile_id,
                      onnx=str(Path(src["onnx"]).as_posix()) if b.startswith("ort") else None,
                      onnx_sha256=bk.file_sha256(src["onnx"]) if b.startswith("ort") else None,
                      ckpt=str(Path(src["ckpt"]).as_posix()) if b.startswith("torch") and src["ckpt"] else None)
             out["rows"].append(r)
             w = r["warm"]["hop"]
-            print(f"{m:4s} {b:10s} warm hop p50 {w.get('p50_ms', float('nan')):6.2f} p99 {w.get('p99_ms', float('nan')):6.2f} "
+            print(f"{m:13s} {b:10s} warm hop p50 {w.get('p50_ms', float('nan')):6.2f} p99 {w.get('p99_ms', float('nan')):6.2f} "
                   f"max {w.get('max_ms', float('nan')):6.2f} ms, misses {w.get('deadline_misses')}/{w.get('n')}; "
                   f"model p99 {r['warm']['model'].get('p99_ms', float('nan')):.2f}; first hop {r['first_hop_ms']:.1f} ms",
                   file=sys.stderr)
@@ -230,7 +271,8 @@ def run(models=("r7",), backends=("ort-cpu",), seconds=10.0, warm=50, cold=10, t
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--models", default="r7", help="comma list: r7, C16, C32, C64, C96 (C<w> are untrained)")
+    ap.add_argument("--models", default="r7", help="comma list: r7, C16, C32, C64, C96, fe-mini, fe-mid, fe-large, "
+                                                   "fe-large_plus (C<w> and fe-<tier> are untrained)")
     ap.add_argument("--backends", default="ort-cpu", help="comma list: ort-cpu, torch-cpu, torch-cuda, ort-cuda, ort-trt")
     ap.add_argument("--onnx", default=None, help="override the r7 graph (default deploy/r7/cascade.onnx)")
     ap.add_argument("--config", default=str(R7_CONFIG), help="model_config.json whose DSP settings every row runs behind")
@@ -239,7 +281,8 @@ def main(argv=None):
     ap.add_argument("--cold", type=int, default=10, help="first hops reported as cold")
     ap.add_argument("--threads", type=int, default=1, help="ORT intra-op / torch threads (contract budget: 1)")
     ap.add_argument("--resample48", action="store_true", help="include the 48 kHz streaming resamplers in the hop")
-    ap.add_argument("--scratch", default=None, help="where untrained C<w> checkpoints/graphs go (default runs/hop_benchmark_scratch)")
+    ap.add_argument("--scratch", default=None, help="where untrained C<w> / fe-<tier> checkpoints and graphs go "
+                                                    "(default runs/hop_benchmark_scratch)")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--label", default="", help="e.g. 'smoke, shared loaded machine: non-reportable'")
     ap.add_argument("--out", default=None, help="JSON output path")

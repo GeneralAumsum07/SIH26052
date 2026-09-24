@@ -168,9 +168,11 @@ def watch_stderr(proc, counts: collections.Counter, tag: str) -> threading.Threa
 
 def build(args, cfg=None):
     cfg = cfg or live.load_model_config(args.config)
+    # a VaaniFE config (kind vaani_fe) gets its step-graph backend and tier profile; r7 builds as before
+    fe = {"kind": cfg["kind"], "profile": cfg.get("profile")} if cfg.get("kind", "cascade") != "cascade" else {}
     eng = live.StreamEngine(args.onnx, cfg["controller_on"], cfg["dsp"], threads=args.threads,
                             onnx_sha256=cfg.get("onnx_sha256"), allow_hash_mismatch=args.allow_hash_mismatch,
-                            guards=True if args.guards else None)
+                            guards=True if args.guards else None, **fe)
     return eng, cfg
 
 
@@ -379,7 +381,7 @@ def run_live(args):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--onnx", default="deploy/r7/cascade.onnx", help="exported cascade graph")
+    ap.add_argument("--onnx", default="deploy/r7/cascade.onnx", help="exported graph: r7 cascade or a VaaniFE step graph")
     ap.add_argument("--config", default="deploy/r7/model_config.json",
                     help="DSP configuration the weights were trained behind (vaani.live.write_model_config); its "
                          "onnx_sha256 is checked against --onnx")

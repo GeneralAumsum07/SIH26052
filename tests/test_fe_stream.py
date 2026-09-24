@@ -225,3 +225,34 @@ def test_mono_inputs_graph_has_no_validity(tmp_path):
     eng.process(np.zeros(H), np.zeros(H))
     assert not eng.takes_valid and "validity" not in eng.last
     assert np.isfinite(_stream(eng, _mix(0.5, seed=8), np.zeros(31, bool))).all()
+
+
+def test_hop_benchmark_runs_an_fe_tier(tmp_path):
+    import importlib.util
+    from pathlib import Path
+    p = Path(__file__).resolve().parents[1] / "scripts" / "hop_benchmark.py"
+    spec = importlib.util.spec_from_file_location("hop_benchmark", p)
+    hb = importlib.util.module_from_spec(spec); spec.loader.exec_module(hb)
+    r = hb.run(["fe-mini"], ["ort-cpu", "torch-cpu"], seconds=0.5, warm=5, cold=3, scratch=tmp_path, label="test")
+    assert [(x["backend"], x["kind"], x["profile_id"], x["trained"]) for x in r["rows"]] == [
+        ("ort-cpu", "vaani_fe", "vaani_fe-mini", False), ("torch-cpu", "vaani_fe", "vaani_fe-mini", False)]
+    assert r["rows"][0]["hops"] == 31 and r["rows"][0]["onnx_sha256"]
+
+
+def test_capture_loop_file_mode_runs_an_fe_config(fe, tmp_path):
+    import argparse
+    from tests.test_live import _capture_loop
+    _, onnx, cfg = fe
+    mix = _mix(1.0, seed=3)
+    live.write_wav(tmp_path / "in.wav", mix, 16000)
+    cl = _capture_loop()
+    eng, _ = cl.build(argparse.Namespace(
+        config=str(cfg), onnx=str(onnx), threads=1, allow_hash_mismatch=False, guards=False))
+    assert eng.backend.profile_id == "vaani_fe-mini" and eng.takes_valid
+    cl.main(["--onnx", str(onnx), "--config", str(cfg), "--in-wav", str(tmp_path / "in.wav"),
+             "--out-wav", str(tmp_path / "out.wav")])
+    out, sr = live.read_wav(tmp_path / "out.wav")
+    x, _ = live.read_wav(tmp_path / "in.wav")
+    e = live.StreamEngine.from_config(onnx, cfg)
+    ref = np.clip(_stream(e, x)[H:], -1, 1)
+    assert sr == 16000 and np.abs(out[0, :len(ref)] - ref).max() < 2e-4
