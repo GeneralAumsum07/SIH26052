@@ -53,8 +53,9 @@ def envelope(df):
     ref_dropout): n=1097, and the r7 cascade reads 2.15 dB low. Filtering only on the fault bucket
     leaves the soft-clipped items in (overload_softclip is on in the mix config): n=720, and r7 reads
     0.10 dB low. Both measured on results_r2/r7/r7_e256_wr64_cascade_eval_r2.csv (current render).
-    The correct filter gives n=617 on either eval_r2 render, but matrix.md was scored on the earlier
-    render, so its rows are not comparable with this table's."""
+    The correct filter gives n=617 on either eval_r2 render. matrix.md is scored on the current render
+    (data/eval_r2_relabel), as are the r6/ and r7/ CSVs; matrix_prerelabel.md holds the earlier render,
+    whose rows are not comparable with this table's."""
     fault = df.fault if "fault" in df else pd.Series(np.nan, index=df.index)
     return df[(~df.clipped.astype(bool)) & (~df.ref_dropout.astype(bool))
               & fault.isna() & df.snr_in.isin([0, 5, 10])]
