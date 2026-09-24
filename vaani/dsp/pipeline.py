@@ -18,15 +18,49 @@ from vaani.dsp.limiter import Limiter
 from vaani.dsp.nlms import NLMS
 
 
-def run(mix: np.ndarray, controller_on: bool = True, dsp_cfg: dict | None = None) -> dict:
+RAMP_FRAMES = 12   # reconnect ramp: ~200 ms at the 16 ms hop, the controller's own NLMS ramp length
+
+
+def ref_gain(avail: np.ndarray, ramp_frames: int = RAMP_FRAMES) -> np.ndarray:
+    """Per-sample reference gain from capture-path availability: 0 while absent, then a linear ramp back to 1 over
+    ramp_frames hops after every reconnect, so the reference influence never steps in with a click."""
+    avail = np.asarray(avail, bool); g = avail.astype(np.float32)
+    n_ramp = max(1, int(ramp_frames) * stft.HOP)
+    for r in np.flatnonzero(avail[1:] & ~avail[:-1]) + 1:
+        end = min(len(g), r + n_ramp); k = np.arange(1, end - r + 1, dtype=np.float32) / n_ramp
+        g[r:end] = np.minimum(g[r:end], k)
+    return g
+
+
+def frame_avail(avail: np.ndarray, n_frames: int) -> np.ndarray:
+    """(n_frames,) float32: frame k is available only if every sample of its window [k*HOP-256, k*HOP+256) is."""
+    avail = np.asarray(avail, bool); out = np.ones(n_frames, np.float32)
+    for k in range(n_frames):
+        a, b = max(0, k * stft.HOP - stft.N_FFT // 2), min(len(avail), k * stft.HOP + stft.N_FFT // 2)
+        out[k] = float(avail[a:b].all()) if b > a else 1.0
+    return out
+
+
+def run(mix: np.ndarray, controller_on: bool = True, dsp_cfg: dict | None = None, ref_avail: np.ndarray | None = None) -> dict:
     """dsp_cfg (plans 2.7/2.8, ablatable): {"limiter": bool | Limiter kwargs, "controller": {Controller kwargs},
-    "blocking": bool | BlockingMatrix kwargs}. None = r1/r2 behaviour.
+    "blocking": bool | BlockingMatrix kwargs, "ref_policy": {...}}. None = r1/r2 behaviour.
+    ref_policy (spec 6.2, plan B1; absent = off, bit-exact): {"nlms": True | NLMS robust kwargs, "absent": "freeze"|"reset",
+    "ramp_frames": int}. ref_avail: per-sample capture-path availability of the reference (None = always present);
+    it acts only under ref_policy: absent samples reach no NLMS/feature/model input, the NLMS freezes (or resets), and
+    the reference ramps back in on reconnect. Returns "ref_avail" (per frame) when ref_policy is set.
     Returns "mix" too: the limited signal when the limiter is on (what the model must see), else the input."""
     dsp_cfg = dsp_cfg or {}
     prim, ref = mix[0].astype(np.float32), mix[1].astype(np.float32)
     T = len(prim)
+    pol = dsp_cfg.get("ref_policy")
+    if pol is not None and pol.get("absent", "freeze") not in ("freeze", "reset"):
+        raise ValueError("ref_policy.absent must be 'freeze' or 'reset'")
+    avail = np.ones(T, bool) if ref_avail is None else np.asarray(ref_avail, bool)
+    if avail.shape != (T,):
+        raise ValueError("ref_avail must be one flag per sample")
     # local instances only (no module-level mutable state) -> safe in DataLoader workers
-    nlms, ff, ctl = NLMS(), FrameFeatures(), Controller(**dsp_cfg.get("controller", {}))
+    nlms = NLMS(robust=pol.get("nlms")) if pol is not None else NLMS()
+    ff, ctl = FrameFeatures(), Controller(**dsp_cfg.get("controller", {}))
     bk = dsp_cfg.get("blocking"); blk_m = BlockingMatrix(**(bk if isinstance(bk, dict) else {})) if bk else None
     n_blocks = (T + stft.HOP - 1) // stft.HOP  # tail: last block may be shorter than HOP
     lim_hit = np.zeros(n_blocks + 1, bool)     # per hop block: did the limiter engage (feeds the burst flag)
@@ -38,6 +72,10 @@ def run(mix: np.ndarray, controller_on: bool = True, dsp_cfg: dict | None = None
             lp[i:i + stft.HOP], lr[i:i + stft.HOP] = lim.process_block(prim[i:i + stft.HOP], ref[i:i + stft.HOP])
             lim_hit[j] = lim.engaged > 0; lim.engaged = 0
         prim, ref = lp, lr
+    g_ref = None
+    if pol is not None:
+        # after the limiter, which sees the raw capture: the zeroed/ramped reference is what every later stage consumes
+        g_ref = ref_gain(avail, pol.get("ramp_frames", RAMP_FRAMES)); ref = ref * g_ref
 
     P = stft.np_stft(prim); R = stft.np_stft(ref)
     n_frames = P.shape[1]
@@ -52,17 +90,22 @@ def run(mix: np.ndarray, controller_on: bool = True, dsp_cfg: dict | None = None
 
     gate = 1.0
     health = 0.0  # only used if n_frames exceeds the sample-derived block count (tail)
+    was_absent = False
     for k in range(n_frames):
         # NLMS block k, gated by the decision made for the *previous* frame
         if k < n_blocks:
             i = k * stft.HOP
             r_in = ref[i:i + stft.HOP]
+            absent = pol is not None and not avail[i:i + stft.HOP].all()
+            if absent and not was_absent and pol.get("absent", "freeze") == "reset":
+                nlms.reset()
+            was_absent = absent
             if blk_m is not None:
                 # 2.8: speech-path estimate adapts on the previous frame's speech verdict, same causality as the gate.
                 # Without a controller there is no speech verdict, so the block matrix stays at its initial zero.
                 r_in = blk_m.process_block(prim[i:i + stft.HOP], r_in, ctl.speech_adapt if controller_on else 0.0)
             blk, health = nlms.process_block(prim[i:i + stft.HOP], r_in,
-                                              gate if controller_on else 1.0)
+                                              0.0 if absent else (gate if controller_on else 1.0))
             n_hat[i:i + len(blk)] = blk
         # if there are more feature frames than NLMS blocks (frame count can
         # exceed sample-derived block count near the tail), hold the last health
@@ -76,5 +119,9 @@ def run(mix: np.ndarray, controller_on: bool = True, dsp_cfg: dict | None = None
             gates[k], bursts[k], rel[k] = gate, b, r
     if not controller_on:
         feats[:] = 0.0
-    return {"n_hat": n_hat, "features": feats, "gate": gates, "burst": bursts, "reliability": rel,
-            "mix": np.stack([prim, ref])}
+    out = {"n_hat": n_hat, "features": feats, "gate": gates, "burst": bursts, "reliability": rel,
+           "mix": np.stack([prim, ref])}
+    if pol is not None:
+        out["n_hat"] = n_hat * g_ref   # a stale 64-tap history must not leak an estimate into an absent block
+        out["ref_avail"] = frame_avail(avail, n_frames)
+    return out
