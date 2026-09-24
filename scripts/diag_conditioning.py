@@ -118,7 +118,7 @@ def main():
         out = Path(a.out); out.parent.mkdir(parents=True, exist_ok=True)
         part, inflight = out.with_suffix(".partial.csv"), out.with_suffix(".inflight")
         if part.exists():
-            rows = pd.read_csv(part).to_dict("records")
+            rows = pd.read_csv(part, dtype={"id": str}).to_dict("records")  # keep zero-padded ids
             done = {int(r["clip"]) for r in rows}
         if inflight.exists():  # the previous process died inside this clip; skip it rather than crash again
             skipped = [int(x) for x in inflight.read_text().split()]

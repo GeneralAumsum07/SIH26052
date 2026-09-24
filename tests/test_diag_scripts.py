@@ -131,7 +131,7 @@ def test_diag_conditioning_resumes_and_skips_crashed_clip(monkeypatch, capsys, e
     argv = ["--ckpt", vaani_ckpt, "--eval-root", evalroot, "--n", "0"]
     full = tmp_path / "full"
     _run(monkeypatch, capsys, diag_conditioning, [*argv, "--out", str(full)])
-    ref = pd.read_csv(full.with_suffix(".csv"))
+    ref = pd.read_csv(full.with_suffix(".csv"), dtype={"id": str})
     n = len(ref) // ref["variant"].nunique()
     assert n == 2
     # simulate a run that finished clip 0 and then died natively inside clip 1
@@ -141,7 +141,7 @@ def test_diag_conditioning_resumes_and_skips_crashed_clip(monkeypatch, capsys, e
     first.to_csv(stem.with_suffix(".partial.csv"), index=False)
     stem.with_suffix(".inflight").write_text("1")
     _run(monkeypatch, capsys, diag_conditioning, [*argv, "--out", str(stem)])
-    got = pd.read_csv(stem.with_suffix(".csv"))
+    got = pd.read_csv(stem.with_suffix(".csv"), dtype={"id": str})  # resumed rows must keep the zero-padded id
     summary = json.loads(stem.with_suffix(".json").read_text())
     assert len(got) == nv * (n - 1) and len(summary["skipped_ids"]) == 1
     assert not stem.with_suffix(".partial.csv").exists() and not stem.with_suffix(".inflight").exists()
