@@ -31,7 +31,8 @@ CLASSES = {"stationary": ("stationary", None), "changing": ("changing", None),
            "recorded_impulsive": ("changing", "corpus"), "recorded_impulsive+stationary": ("stationary", "corpus")}
 FAULT_SNRS = [0, 5]
 
-# defence category -> (continuous bed, impulse source). Transient categories sit on the MAD stationary bed
+# defence category -> (continuous bed, impulse source). Blasts use vaani/data/blast.py physics v2: small arms over
+# 1-300 m, artillery 0.1-20 kg TNT over 30-3000 m; the level at the mic is still set by impulse_peak_db below. Transient categories sit on the MAD stationary bed
 # (vehicle, helicopter, fighter test rows) so the input SNR means the same thing as in the bed-only rows.
 DEFENCE = {"gunshot": ("mad_stationary", "gunshot"),
            "blast_small_arms": ("mad_stationary", "blast:small_arms"),
@@ -53,7 +54,8 @@ def _impulse(seed, source, imp_df):
         imp, m = impulses.generate(rng)
         return imp, m["onsets_s"], f"synthetic:{m['kind']}"
     if source.startswith("blast:"):
-        imp, m = impulses.generate(rng, kind="blast", blast_kind=source.split(":", 1)[1])
+        # physics v2 (same-sign ground bounce, ISO 9613-1 absorption over the drawn range), not r7's v1 training draw
+        imp, m = impulses.generate(rng, kind="blast", blast_kind=source.split(":", 1)[1], physics="v2")
         return imp, m["onsets_s"], f"synthetic:blast:{m['blast_kind']}"
     if source == "gunshot":
         return _peak_window(imp_df.iloc[int(rng.integers(len(imp_df)))])
