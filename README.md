@@ -182,8 +182,8 @@ nothing appears in two splits, and store posix paths so a manifest built on Wind
 uv run python -m vaani.train configs/exp/vaani_full_r3_e32.yaml
 uv run python -m vaani.eval --system vaani_full_r3_e32 --split test --eval-root data/eval_r2 \
     --workers 8 --asr --asr-device cuda --dnsmos
-uv run python -m vaani.report "results_r2/r6_local/*_eval_r2.csv" "results_r2/r6/legacy_*_eval_r2.csv" \
-    results_r2/r6/tier46_eval_r2.csv --out results_r2/matrix.md --note "..."   # the notes as in the file
+uv run python -m vaani.report "results_r2/r6_local/*_eval_r2.csv" "results_r2/r6/*_eval_r2.csv" \
+    "results_r2/r7/*_eval_r2.csv" --out results_r2/matrix.md --note "..."   # the notes as in the file
 ```
 
 - `scripts/run_round.sh [1|2|3|3b|3c|3d|4]` runs a whole ablation wave and drops a `ROUND*_DONE`
