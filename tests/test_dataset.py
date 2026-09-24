@@ -114,3 +114,102 @@ def test_corpus_impulse_onset_comes_from_waveform(tmp_path, monkeypatch):
     assert corpus, "corpus impulse branch never hit or onset not detected at 0.5 s"
     for on, meta in starts.values():
         assert meta["impulse_onsets_s"] and meta["impulse_onsets_s"][0] >= on[0] - 1e-6
+
+
+# --- r8 wiring: mixer v2 scenes, VaaniFE front end, validity labels, held-out groups ---
+import importlib.util, subprocess, sys, types
+import pytest
+from vaani.dsp import pipeline
+
+BASE = "5c006b7"   # dataset.py before the r8 wiring: v1 items must stay bit-exact to it
+
+
+def _old_dataset(tmp_path):
+    src = subprocess.check_output(["git", "show", f"{BASE}:vaani/data/dataset.py"], text=True,
+                                  cwd=Path(__file__).resolve().parents[1])
+    p = tmp_path / "old_dataset.py"; p.write_text(src, encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("old_dataset", p); mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod); return mod
+
+
+@pytest.mark.parametrize("dsp", [False, True])
+def test_v1_items_bit_exact_to_pre_r8(tmp_path, dsp):
+    m = _tiny_manifest(tmp_path); old = _old_dataset(tmp_path)
+    cfg = mixer.MixConfig(p_room=0.0)
+    kw = dict(crop_s=1.0, epoch_len=8, seed=3, with_dsp=dsp, ref_corrupt={"p": 0.5, "p_absent": 0.2} if dsp else None)
+    a = dataset.DynamicMixDataset([m], "train", None, cfg, **kw)
+    b = old.DynamicMixDataset([m], "train", None, cfg, **kw)
+    for i in range(8):
+        x, y = a[i], b[i]
+        assert x.keys() == y.keys() and x["meta"] == y["meta"]
+        for k in x:
+            if k != "meta":
+                assert torch.equal(x[k], y[k]), (i, k)
+
+
+def test_v2_scene_items(tmp_path):
+    m = _tiny_manifest(tmp_path)
+    cfg = mixer.MixConfig(version=2, p_room=0.0)
+    ds = dataset.DynamicMixDataset([m], "train", None, cfg, crop_s=1.0, epoch_len=12, seed=0)
+    assert ds.scene_pool is not None
+    scenes = set()
+    for i in range(12):
+        it = ds[i]
+        assert it["mix"].shape == (2, 16000) and torch.isfinite(it["mix"]).all()
+        assert it["meta"]["mix_version"] == 2; scenes.add(it["meta"]["scene"])
+    assert len(scenes) >= 2
+    again = dataset.DynamicMixDataset([m], "train", None, cfg, crop_s=1.0, epoch_len=12, seed=0)[5]
+    assert torch.equal(again["mix"], ds[5]["mix"])
+
+
+def test_front_end_matches_pipeline_mix():
+    rng = np.random.default_rng(0)
+    x = (rng.standard_normal((2, 16000)) * 0.3).astype(np.float32); x[:, 4000:4300] *= 8
+    av = np.ones(16000, bool); av[6000:9000] = False
+    cfg = {"limiter": True, "ref_policy": {"nlms": True, "absent": "freeze", "ramp_frames": 12}}
+    m2, fa = dataset.front_end(x, cfg, av)
+    r = pipeline.run(x, controller_on=True, dsp_cfg=cfg, ref_avail=av)
+    assert np.array_equal(m2, r["mix"]) and np.array_equal(fa, r["ref_avail"])
+    m0, f0 = dataset.front_end(x)
+    assert np.array_equal(m0, x) and (f0 == 1).all() and f0.shape == (63,)
+
+
+def test_fe_inputs_emit_validity_labels(tmp_path):
+    m = _tiny_manifest(tmp_path)
+    cfg = mixer.MixConfig(p_room=0.0)
+    ds = dataset.DynamicMixDataset([m], "train", None, cfg, crop_s=1.0, epoch_len=4, seed=0, fe_inputs=True,
+                                   dsp_cfg={"limiter": True})
+    it = ds[0]
+    assert "n_hat" not in it and it["ref_avail"].shape == (63,) and (it["ref_avail"] == 1).all()
+    absent = dataset.DynamicMixDataset([m], "train", None, cfg, crop_s=1.0, epoch_len=4, seed=0, fe_inputs=True,
+                                       ref_corrupt={"p": 0.0, "p_absent": 1.0},
+                                       dsp_cfg={"limiter": True, "ref_policy": {"absent": "freeze"}})
+    for i in range(4):
+        it = absent[i]
+        assert (it["ref_avail"] == 0).all() and (it["mix"][1] == 0).all() and it["meta"]["ref_fault"]["kind"] == "dropout"
+    b = dataset.collate([absent[0], absent[1]])
+    assert b["ref_avail"].shape == (2, 63)
+
+
+def test_m9_rates(tmp_path):
+    c = dataset.ref_corrupt_config({"p": 0.15, "p_absent": 0.15})
+    kinds = []
+    for i in range(2000):
+        g = np.random.default_rng([0, i])
+        x = g.standard_normal((2, 800)).astype(np.float32) * 0.1
+        _, av, tr = dataset.corrupt_reference(g, x, x[0], c)
+        kinds.append(None if tr is None else ("absent" if not av.any() else "fault"))
+    absent = kinds.count("absent") / 2000; fault = kinds.count("fault") / 2000
+    assert 0.12 < absent < 0.20 and 0.10 < fault < 0.20   # dropout faults also count as absent here
+
+
+def test_exclude_groups_file(tmp_path, capsys):
+    m = _tiny_manifest(tmp_path)
+    ex = tmp_path / "ex.json"; json.dump({"speakers": ["g0", "g1"], "noise": {"groups": ["ng0"]}}, open(ex, "w"))
+    ds = dataset.DynamicMixDataset([m], "train", None, mixer.MixConfig(p_room=0.0), crop_s=1.0, epoch_len=2,
+                                   exclude_groups_file=str(ex))
+    assert set(ds.speech.group_id) == {"g2", "g3"} and "ng0" not in set(ds.noise.group_id)
+    with pytest.warns(UserWarning, match="ABSENT"):
+        ds2 = dataset.DynamicMixDataset([m], "train", None, mixer.MixConfig(p_room=0.0), crop_s=1.0, epoch_len=2,
+                                        exclude_groups_file=str(tmp_path / "missing.json"))
+    assert len(ds2.speech) == 4 and "WARNING" in capsys.readouterr().out

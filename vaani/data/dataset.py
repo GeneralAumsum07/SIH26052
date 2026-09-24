@@ -1,7 +1,7 @@
 """Train = dynamic mixing (a fresh mixture every item, infinite variety).
 Val/test = rendered once, frozen, so numbers across runs are comparable.
 """
-import json
+import json, warnings
 from pathlib import Path
 
 import numpy as np
@@ -15,7 +15,9 @@ from vaani.data import impulses, manifests
 from vaani.data.mixer import MixConfig, mix
 from vaani.data.pack import open_pack
 from vaani.data.rirs import RirBank
-from vaani.dsp import pipeline
+from vaani.data.scenes import ScenePool, sample_scene
+from vaani.dsp import pipeline, stft
+from vaani.dsp.limiter import Limiter
 
 SR = 16000
 BUCKET_SNRS = [-10, -5, 0, 5, 10, 15]
@@ -142,10 +144,66 @@ def corrupt_reference(rng, mixed, clean, c):
     return apply_ref_fault(rng, mixed, clean, kinds[k], c)
 
 
+def front_end(mixed, dsp_cfg=None, avail=None):
+    """The classical front end without NLMS/features (VaaniFE inputs p/pr/pr_pld): the hop-by-hop limiter and the
+    ref_policy zero/ramp, exactly as the first half of pipeline.run. Returns (mix (2,n), frame validity (T,))."""
+    dsp_cfg = dsp_cfg or {}
+    prim, ref = mixed[0].astype(np.float32), mixed[1].astype(np.float32); n = len(prim)
+    if dsp_cfg.get("limiter"):
+        lk = dsp_cfg["limiter"]; lim = Limiter(**(lk if isinstance(lk, dict) else {}))
+        lp, lr = np.empty_like(prim), np.empty_like(ref)
+        for i in range(0, n, stft.HOP):
+            lp[i:i + stft.HOP], lr[i:i + stft.HOP] = lim.process_block(prim[i:i + stft.HOP], ref[i:i + stft.HOP])
+            lim.engaged = 0
+        prim, ref = lp, lr
+    av = np.ones(n, bool) if avail is None else np.asarray(avail, bool)
+    pol = dsp_cfg.get("ref_policy")
+    if pol is not None:
+        ref = ref * pipeline.ref_gain(av, pol.get("ramp_frames", pipeline.RAMP_FRAMES))
+    return np.stack([prim, ref]).astype(np.float32), pipeline.frame_avail(av, n // stft.HOP + 1)
+
+
+def load_exclude_groups(path):
+    """data.exclude_groups_file (held-out drone/NOISEX/speaker groups of the r8 test set). Accepts a JSON list, or a
+    dict whose (nested) values hold the ids; every string is matched against group_id, speaker_id and source_id.
+    An absent file -> empty set with a loud warning, since training could then see test-set groups."""
+    if not path or not Path(path).exists():
+        msg = f"data.exclude_groups_file {path!r} is ABSENT: no held-out groups are excluded from training"
+        warnings.warn(msg); print("WARNING: " + msg, flush=True)
+        return set()
+    out = set()
+
+    def walk(v):
+        if isinstance(v, str):
+            out.add(v)
+        elif isinstance(v, dict):
+            for x in v.values():
+                walk(x)
+        elif isinstance(v, (list, tuple)):
+            for x in v:
+                walk(x)
+    walk(json.load(open(path, encoding="utf-8")))
+    return out
+
+
+def drop_groups(df, ids):
+    """Rows whose group_id, speaker_id or source_id is held out."""
+    if not ids:
+        return df
+    hit = np.zeros(len(df), bool)
+    for c in ("group_id", "speaker_id", "source_id"):
+        if c in df:
+            hit |= df[c].astype(str).isin(ids).to_numpy()
+    return df[~hit]
+
+
 class DynamicMixDataset(Dataset):
     def __init__(self, manifest_paths, split, bank_path, cfg: MixConfig, crop_s=4.0, epoch_len=20000, seed=0,
-                 with_dsp=False, controller_on=True, dsp_cfg=None, pack_root=None, ref_corrupt=None):
+                 with_dsp=False, controller_on=True, dsp_cfg=None, pack_root=None, ref_corrupt=None,
+                 fe_inputs=False, exclude_groups_file=None, scene_weights=None):
         df = pd.concat([manifests.read(p) for p in manifest_paths])
+        if exclude_groups_file is not None:   # the key present in the config = the r8 recipe: apply it or warn loudly
+            df = drop_groups(df, load_exclude_groups(exclude_groups_file))
         df = df[df.split == split]
         self.speech = df[df.kind == "speech"].reset_index(drop=True)
         self.noise = df[df.kind == "noise"].reset_index(drop=True)
@@ -162,6 +220,11 @@ class DynamicMixDataset(Dataset):
         # with_dsp: run NLMS+features here so the ~150 ms/clip DSP lands in DataLoader workers, not the trainer
         self.with_dsp, self.controller_on, self.dsp_cfg = with_dsp, controller_on, dsp_cfg
         self.ref_corrupt = ref_corrupt_config(ref_corrupt)
+        # fe_inputs (VaaniFE without n_hat): limiter/ref_policy front end only, validity always emitted
+        self.fe_inputs = bool(fe_inputs) and not with_dsp
+        # mixer v2 (M8): scenes draw their noise classes; v1 never builds or touches the pool
+        self.scene_pool = ScenePool(self.noise) if cfg.version == 2 else None
+        self.scene_weights = scene_weights
         assert len(self.speech) and len(self.cont), "empty manifest split"
 
     @property
@@ -186,6 +249,9 @@ class DynamicMixDataset(Dataset):
         rng = np.random.default_rng([self.seed, epoch, i])
         s = _load(self.speech.path.iloc[int(rng.integers(len(self.speech)))], self.n, rng, self.pack)
         s = np.pad(s, (0, self.n - len(s)))
+        if self.scene_pool is not None:
+            mixed, clean, meta = self._mix_v2(rng, s)
+            return self._finish(epoch, i, mixed, clean, meta)
         # noise draw: continuous class(es) plus optionally an impulsive one
         k = int(rng.integers(1, 3))
         rows = [self.cont.iloc[int(rng.integers(len(self.cont)))] for _ in range(k)]
@@ -205,6 +271,27 @@ class DynamicMixDataset(Dataset):
             noise_class = "impulsive+stationary" if noise_class == "stationary" else "impulsive"
         mixed, clean, meta = mix(rng, s, noises, imp, onsets, self.bank, self.cfg)
         meta["noise_class"] = "clean" if meta["clean_bucket"] else noise_class
+        return self._finish(epoch, i, mixed, clean, meta)
+
+    def _mix_v2(self, rng, s):
+        """M8 scene -> rows -> mix_v2. Sources without an eligible row leave the scene, so rows and levels stay aligned."""
+        scene = sample_scene(rng, weights=self.scene_weights, crop_s=self.n / SR)
+        rows, imp_row = self.scene_pool.draw(rng, scene)
+        keep = [k for k, r in enumerate(rows) if r is not None]
+        scene["sources"] = [scene["sources"][k] for k in keep]
+        noises = [_load(rows[k].path, self.n, rng, self.pack) for k in keep]
+        imp, onsets = None, []
+        ev = scene.get("event") or {}
+        if imp_row is not None:
+            imp = _load(imp_row.path, 2 * SR, rng, self.pack)
+            imp = imp if imp.ndim == 1 else imp[:, 0]
+            imp = imp / (np.abs(imp).max() + 1e-9); onsets = impulses.detect_onsets(imp, SR)
+        elif ev.get("fired"):   # the scene's event with no corpus row: the synthetic generator
+            kind = str(rng.choice(self.cfg.impulse_kinds)) if self.cfg.impulse_kinds else None
+            imp, m = impulses.generate(rng, kind=kind); onsets = m["onsets_s"]
+        return mix(rng, s, noises, imp, onsets, self.bank, self.cfg, scene=scene)
+
+    def _finish(self, epoch, i, mixed, clean, meta):
         avail = None
         if self.ref_corrupt is not None:
             mixed, avail, tr = corrupt_reference(np.random.default_rng([self.seed, epoch, i, REF_SEED]), mixed, clean, self.ref_corrupt)
@@ -217,6 +304,9 @@ class DynamicMixDataset(Dataset):
             if avail is not None:   # capture-path label per model frame, with or without a DSP ref_policy
                 fa = r["ref_avail"] if "ref_avail" in r else pipeline.frame_avail(avail, r["features"].shape[0])
                 out["ref_avail"] = torch.from_numpy(fa)
+        elif self.fe_inputs:
+            m2, fa = front_end(mixed, self.dsp_cfg, avail)
+            out["mix"] = torch.from_numpy(m2); out["ref_avail"] = torch.from_numpy(fa)
         return out
 
 
