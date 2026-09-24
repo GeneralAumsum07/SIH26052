@@ -12,6 +12,9 @@ A cascade checkpoint (vaani_cascade) is accepted: the ablations act on the froze
 inputs, and the refiner sees the same spec6, so "ref zeroed" zeroes the reference for both stages.
 --out writes <out>.csv (one row per clip x variant: SNR_out, STOI, PESQ-WB) and <out>.json
 (per-variant means and paired deltas with a 1000-sample bootstrap CI over clips).
+With --out, rows are appended to <out>.partial.csv as each clip finishes, so rerunning the same
+command resumes; a clip that killed the previous process (native crash) is skipped and listed
+under "skipped_ids" in <out>.json.
 
 Interpretation:
   * |dSTOI| for "feats zeroed" close to 0  -> the FiLM conditioning is inert; the
@@ -25,6 +28,7 @@ Interpretation:
     suggests no measured benefit on these clips, not proof the pathway is unused.
 """
 import argparse
+import faulthandler
 import json
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
@@ -71,6 +75,10 @@ def main():
     ap.add_argument("--n", type=int, default=120, help="clips to sample (stratified over buckets); 0 = every clip")
     ap.add_argument("--out", help="write <out>.csv (per clip x variant) and <out>.json (summary)")
     a = ap.parse_args()
+    try:
+        faulthandler.enable()  # a native crash (rc=139) otherwise leaves no stack in the job log
+    except (AttributeError, OSError, ValueError):  # captured stderr (pytest) has no fileno
+        pass
     torch.set_num_threads(1)  # one core per diagnostic process; several run side by side
 
     ck = torch.load(a.ckpt, map_location="cpu", weights_only=True)
@@ -103,9 +111,18 @@ def main():
         variants = ["as trained", "n_hat zeroed", "ref zeroed"]
     if m.use_coh:
         variants.append("coh zeroed")
-    acc = {v: [] for v in variants}
     rows = []
-    film_ratio = []
+    done, skipped = set(), []
+    part = inflight = None
+    if a.out:
+        out = Path(a.out); out.parent.mkdir(parents=True, exist_ok=True)
+        part, inflight = out.with_suffix(".partial.csv"), out.with_suffix(".inflight")
+        if part.exists():
+            rows = pd.read_csv(part).to_dict("records")
+            done = {int(r["clip"]) for r in rows}
+        if inflight.exists():  # the previous process died inside this clip; skip it rather than crash again
+            skipped = [int(x) for x in inflight.read_text().split()]
+            done |= set(skipped)
 
     # capture the activation the FiLM shift is added to, to size the shift against it
     grab = {}
@@ -113,6 +130,10 @@ def main():
 
     with torch.no_grad():
         for i in idx:
+            if int(i) in done:
+                continue
+            if inflight is not None:
+                inflight.write_text(" ".join(str(x) for x in skipped + [int(i)]))
             it = ds[int(i)]
             mix = it["mix"].numpy()
             clean = it["clean"].numpy()
@@ -135,20 +156,28 @@ def main():
             if m.use_coh:
                 inputs.append(("coh zeroed", torch.cat([P, R, N], -1), F))
             inputs = [t for t in inputs if t[0] in variants]
+            clip_rows = []
             for name, spec6, feats in inputs:
                 with zero_coherence(m) if name == "coh zeroed" else nullcontext():
-                    out = model(spec6, feats)
-                y = stft.istft(out, length=mix.shape[1])[0].numpy()
-                acc[name].append(metrics.stoi(clean, y))
-                rows.append(dict(id=meta.get("id"), bucket=meta.get("bucket"), variant=name,
-                                 snr_out=metrics.snr_db(clean, y), stoi=acc[name][-1], pesq_wb=metrics.pesq_wb(clean, y)))
+                    y = model(spec6, feats)
+                y = stft.istft(y, length=mix.shape[1])[0].numpy()
+                fr = np.nan
                 if name == "as trained" and film is not None:
                     shift = m.encoder.film(torch.clamp(F * m.encoder.feat_scale, -3.0, 3.0))
-                    film_ratio.append(float(shift.abs().mean() / (grab["x"].abs().mean() + 1e-9)))
+                    fr = float(shift.abs().mean() / (grab["x"].abs().mean() + 1e-9))
+                clip_rows.append(dict(clip=int(i), id=meta.get("id"), bucket=meta.get("bucket"), variant=name,
+                                      snr_out=metrics.snr_db(clean, y), stoi=metrics.stoi(clean, y),
+                                      pesq_wb=metrics.pesq_wb(clean, y), film_ratio=fr))
+            rows += clip_rows
+            if part is not None:
+                pd.DataFrame(clip_rows).to_csv(part, mode="a", header=not part.exists(), index=False)
     h.remove()
 
+    df = pd.DataFrame(rows)
+    acc = {v: df.loc[df["variant"] == v, "stoi"].to_numpy() for v in variants}
+    film_ratio = df["film_ratio"].dropna().tolist()
     base = float(np.mean(acc["as trained"]))
-    print(f"\nclips: {len(idx)}   checkpoint: {a.ckpt}")
+    print(f"\nclips: {df['clip'].nunique()}   skipped (native crash): {len(skipped)}   checkpoint: {a.ckpt}")
     if film_ratio:
         print(f"film_shift / activation magnitude: {np.mean(film_ratio):.4f}"
               "   (<0.01 means the conditioning is numerically irrelevant)\n")
@@ -159,14 +188,13 @@ def main():
         print(f"{v:<22s} {mu:7.4f} {mu - base:+8.4f}")
 
     if a.out:
-        df = pd.DataFrame(rows)
-        out = Path(a.out); out.parent.mkdir(parents=True, exist_ok=True)
-        df.to_csv(out.with_suffix(".csv"), index=False)
+        df.drop(columns=["clip", "film_ratio"]).to_csv(out.with_suffix(".csv"), index=False)
         wide = df.pivot(index=["bucket", "id"], columns="variant", values=["snr_out", "stoi", "pesq_wb"])
         rng = np.random.default_rng(0)
         boot = rng.integers(0, len(wide), (1000, len(wide)))  # one clip resample shared by every variant and metric
         summary = {"checkpoint": a.ckpt, "model": cfg["model"], "eval_root": a.eval_root, "split": a.split,
-                   "n_clips": int(len(wide)), "film_shift_ratio": float(np.mean(film_ratio)) if film_ratio else None,
+                   "n_clips": int(len(wide)), "skipped_ids": [ds[k]["meta"].get("id") for k in skipped],
+                   "film_shift_ratio": float(np.mean(film_ratio)) if film_ratio else None,
                    "variants": {}}
         for v in variants:
             summary["variants"][v] = {}
@@ -177,6 +205,7 @@ def main():
                                              "delta_ci95": [float(np.percentile(bm, 2.5)), float(np.percentile(bm, 97.5))],
                                              "n_finite": int(np.isfinite(d).sum())}
         out.with_suffix(".json").write_text(json.dumps(summary, indent=2))
+        part.unlink(missing_ok=True); inflight.unlink(missing_ok=True)
         print(f"wrote {out.with_suffix('.csv')} and {out.with_suffix('.json')}")
 
 

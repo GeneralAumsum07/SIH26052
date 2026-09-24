@@ -117,3 +117,32 @@ def test_mask_phase_probe_writes_csv_and_json(monkeypatch, capsys, evalroot, vaa
     _run(monkeypatch, capsys, mask_phase_probe, ["--system", f"ckpt:{vaani_ckpt}", "--eval-root", evalroot, "--per-bucket", "0", "--out", str(stem)])
     assert len(pd.read_csv(stem.with_suffix(".csv"))) > 0
     assert json.loads(stem.with_suffix(".json").read_text())
+
+
+def test_diag_conditioning_resumes_and_skips_crashed_clip(monkeypatch, capsys, evalroot, vaani_ckpt, tmp_path):
+    import json
+    import pandas as pd
+    from scripts import diag_conditioning
+    import shutil
+    from pathlib import Path
+    b = Path(evalroot) / "test" / "stationary_0"
+    for ext in (".mix.wav", ".clean.wav", ".json"):  # a second clip, so one can finish and one can crash
+        shutil.copy(b / f"0000{ext}", b / f"0001{ext}")
+    argv = ["--ckpt", vaani_ckpt, "--eval-root", evalroot, "--n", "0"]
+    full = tmp_path / "full"
+    _run(monkeypatch, capsys, diag_conditioning, [*argv, "--out", str(full)])
+    ref = pd.read_csv(full.with_suffix(".csv"))
+    n = len(ref) // ref["variant"].nunique()
+    assert n == 2
+    # simulate a run that finished clip 0 and then died natively inside clip 1
+    stem = tmp_path / "resume"
+    nv = ref["variant"].nunique()
+    first = ref.iloc[:nv].assign(clip=0, film_ratio=float("nan"))
+    first.to_csv(stem.with_suffix(".partial.csv"), index=False)
+    stem.with_suffix(".inflight").write_text("1")
+    _run(monkeypatch, capsys, diag_conditioning, [*argv, "--out", str(stem)])
+    got = pd.read_csv(stem.with_suffix(".csv"))
+    summary = json.loads(stem.with_suffix(".json").read_text())
+    assert len(got) == nv * (n - 1) and len(summary["skipped_ids"]) == 1
+    assert not stem.with_suffix(".partial.csv").exists() and not stem.with_suffix(".inflight").exists()
+    pd.testing.assert_frame_equal(got, ref.iloc[:nv])
