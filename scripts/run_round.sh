@@ -53,7 +53,7 @@ if [ "$round" = 3 ] || [ "$round" = 3b ] || [ "$round" = 3c ] || [ "$round" = 3d
   for r in $R3; do
     [ -f results_r2/$r.csv ] || uv run --all-extras python -m vaani.eval --system ckpt:runs/$r/best.pt --split test --eval-root data/eval_r2 --out results_r2/$r.csv --asr --asr-device cuda --dnsmos > results_r2/eval_$r.log 2>&1
   done
-  uv run --all-extras python -m vaani.report results_r2/*.csv --asr-ref results_r2/asr/clean.csv --out results_r2/matrix.md > results_r2/report.log 2>&1
+  uv run --all-extras python -m vaani.report results_r2/*.csv --asr-ref results_r2/asr/clean.csv --out results_r2/matrix_prerelabel.md > results_r2/report.log 2>&1
   echo "round$round done $(date)" > results_r2/$marker; exit 0
 fi
 for r in gtcrn_finetuned vaani_no_controller vaani_full vaani_full_sp; do r=$r$sfx

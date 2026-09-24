@@ -15,11 +15,12 @@ Numbers quoted here come from:
 
 - `results_r2/r7/*.csv`: r7 on the current render of eval_r2 (2,280 test items; nominal envelope =
   unclipped, no reference fault, input SNR 0/5/10 dB, 617 items) and on eval_gen;
-- `results_r2/matrix.md`: the earlier frozen render of eval_r2, for ablations and external
-  baselines;
+- `results_r2/matrix.md`: the ablations, on the same current render;
+- `results_r2/matrix_prerelabel.md`: the earlier frozen render of eval_r2, the only render the
+  external baselines and WER were measured on;
 - `deploy/r7/` and `deploy/tier46/*.json`: deployment measurements;
 - [`results_r2/optim/optimization.md`](../results_r2/optim/optimization.md): quantization and
-  pruning.
+  pruning (earlier render).
 
 **Every score is on synthetic mixtures** made by `vaani/data/mixer.py`. No real noisy recording is
 scored yet. <!-- TBD(real): first real-recording row -->
@@ -49,7 +50,7 @@ scored yet. <!-- TBD(real): first real-recording row -->
 | 8a | Loss: SI-SNR | met | `HybridLoss`, plus an absolute-SNR term (`w_snr = 0.2`) because SI-SNR is scale-blind and the target is absolute SNR |
 | 8b | Loss: L1 / L2 | partial | L2 is in r7's loss as `wmse` on complex parts and magnitude. L1 is not: `clean_l1` exists only in `SpeechPreservationLoss` (`vaani/losses.py`), used by the `vaani_full_sp*` variants, and r7 trains with `loss: hybrid` |
 | 8c | **Loss: perceptual** | met | The `mag ** p` compressed-magnitude term, `p = 0.5` in r7's config. Power-law magnitude compression is a perceptual weighting of the loudness response, not a numerical convenience — see `vaani/losses.py` and §3.3 for what it is and is not |
-| 9 | Metrics: SNR, STOI, PESQ | met | Plus SI-SDR, DNSMOS P.835, bootstrap confidence intervals and post-transient recovery time. WER against a clean-reference transcript appears in `results_r2/matrix.md` for earlier-render systems only; the r7 CSVs have an empty `asr_text` column, so r7 has no WER |
+| 9 | Metrics: SNR, STOI, PESQ | met | Plus SI-SDR, DNSMOS P.835, bootstrap confidence intervals and post-transient recovery time. WER against a clean-reference transcript appears in `results_r2/matrix_prerelabel.md` for earlier-render systems only; the r7 CSVs have an empty `asr_text` column, so r7 has no WER |
 | 10a | Augmentation: random noise mixing | met | `vaani/data/mixer.py`, a fresh mixture per training item |
 | 10b | Augmentation: reverberation | met | RIR banks (`vaani/data/rirs.py`, `scripts/make_rir_bank.py`). The training bank `bank_r3` includes 20 % armoured-compartment rooms; that mode is used in training only and never evaluated |
 | 10c | Augmentation: clipping | met | `p_clip = 0.10`, `overload_softclip`, and dedicated `fault_clip_mild` / `fault_clip_hard` evaluation buckets |
@@ -76,7 +77,7 @@ scored yet. <!-- TBD(real): first real-recording row -->
 | SNR > 15 dB, STOI > 0.85, PESQ > 2.5 | partial | r7 cascade, eval_r2 nominal (617 clips): 14.864 dB [14.565, 15.183] · 0.917 STOI [0.911, 0.922] · 2.462 PESQ [2.412, 2.511]. STOI clears on the interval; **SNR and PESQ miss at the point estimate**. Full test split (2,280): 12.78 · 0.870 · 2.138. eval_gen, the registered stationary grid (102 clips): 14.295 · 0.932 · 2.490, **missing SNR and PESQ**; the changing grid added later (99 clips): 18.37 · 0.970 · 3.153. Loud transients, input 0/5 dB: 10.866 · 0.848 · 1.797, all three fail. Per clip, all three targets are met together on 35.5 % of nominal clips, 24.1 % of the full split and 3.8 % of transient clips. The previous candidate, tier46, scores 14.753 · 0.915 · 2.473 on eval_r2; paired, r7 is +0.110 dB [+0.061, +0.163] SNR_out and −0.012 [−0.021, −0.001] PESQ. One refiner seed. <!-- TBD(diag): per-grid eval_gen table and per-clip pass-rate table, committed with their command --> |
 | Low latency suitable for real-time communication | partial | 32 ms algorithmic (one 16 ms hop plus the STFT window's 16 ms lookahead — arithmetic from the framing, not a measurement), plus 4 ms resampler group delay on the 48 kHz path, and about 1 ms/hop model compute. End-to-end mic-to-ear latency, including ALSA buffering, has not been measured |
 
-**Which eval render.** The eval_r2 scores in the targets row are from the current render of eval_r2, re-made from the crest-audit relabelled manifests (EVALSET_HASH `17a9414959bb` on Windows, `aa96a28a9955` on Linux: the same audio, the hash digests float text). [`results_r2/matrix.md`](../results_r2/matrix.md) and [`results_r2/optim/optimization.md`](../results_r2/optim/optimization.md) were measured on the earlier frozen render, which differs at 606 of the 617 nominal items: the same tier46 checkpoint scores 15.150 dB there and 14.753 dB here. Comparisons within one render are valid; comparisons across the two are not.
+**Which eval render.** The eval_r2 scores in the targets row are from the current render of eval_r2, re-made from the crest-audit relabelled manifests (EVALSET_HASH `17a9414959bb` on Windows, `aa96a28a9955` on Linux: the same audio, the hash digests float text). [`results_r2/matrix.md`](../results_r2/matrix.md) is on the current render too. [`results_r2/matrix_prerelabel.md`](../results_r2/matrix_prerelabel.md) (which alone has the external baselines and WER) and [`results_r2/optim/optimization.md`](../results_r2/optim/optimization.md) were measured on the earlier frozen render, which differs at 606 of the 617 nominal items: the same tier46 checkpoint scores 15.150 dB there and 14.753 dB here. Comparisons within one render are valid; comparisons across the two are not.
 
 **Held-out status.** The eval_r2 test split informed development decisions (r7 was launched after r6 scored 14.83 dB on it, `configs/retraining/r7_e256_wr64.yaml`), so it is not untouched. eval_gen's noise is hash-disjoint from the r6/r7 recipes, but r7 was scored on it without the checkpoint registration `results_r2/generalisation/PROTOCOL.md` asks for.
 

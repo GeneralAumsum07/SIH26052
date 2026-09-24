@@ -1,6 +1,6 @@
 # Optimization: ONNX, INT8 quantization and magnitude pruning
 
-Frozen round-2 test split (2280 items); tables below use the nominal envelope (unclipped, no reference fault, no fault bucket, input SNR 0/5/10 dB) so they are directly comparable with [the ablation matrix](../matrix.md).
+Frozen round-2 test split (2280 items); tables below use the nominal envelope (unclipped, no reference fault, no fault bucket, input SNR 0/5/10 dB) so they are directly comparable with [the earlier-render ablation matrix](../matrix_prerelabel.md), the render they were measured on.
 
 > **Eval render.** Like the matrix, this was measured on the earlier frozen render of eval_r2, not the current render used in [`../r6/`](../r6/) (they differ at 606 of the 617 nominal items; the reference cascade scores 15.150 dB here and 14.753 dB there). Every comparison below is paired within this render, so the export parity, the INT8 deltas and the pruning falloff stand; the absolute levels are not comparable with `r6/`.
 

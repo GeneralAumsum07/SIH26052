@@ -93,18 +93,19 @@ Details:
 - **Reference gain loss is unresolved.** At −12 dB reference gain the cascade's 6.862 dB is below
   the single-channel baseline's 8.858 dB (`gtcrn_finetuned`).
 - **Measured limitations.** The controller did not improve nominal quality across three r3 seeds.
-  Removing limiter/blocking DSP improved the single tested r3 ablation (earlier render), and wider
-  wave-4 data did not outperform the same-data control. The fresh r6/r7 runs kept limiter and
-  blocking anyway, and no r6/r7-era ablation has re-tested them.
+  Removing limiter/blocking DSP improved the single tested r3 ablation, and wider wave-4 data did
+  not outperform the same-data control. The fresh r6/r7 runs kept limiter and blocking anyway, and
+  no r6/r7-era ablation has re-tested them.
 
 > **Which eval render.** The eval_r2 numbers above are from the current render of eval_r2, re-made
 > from the crest-audit relabelled manifests (EVALSET_HASH `17a9414959bb` on Windows, `aa96a28a9955`
 > on Linux: the same audio, the hash digests float text), which every score in
-> [results_r2/r6/](results_r2/r6/) and [results_r2/r7/](results_r2/r7/) uses. The
+> [results_r2/r6/](results_r2/r6/) and [results_r2/r7/](results_r2/r7/) uses. The ablation
 > [matrix](results_r2/matrix.md), which separates point estimates from interval-supported passes,
-> was measured on the earlier frozen render and is kept for its within-render ablation comparisons.
-> The two renders differ at 606 of the 617 nominal items, so scores are comparable within one
-> render and not across them.
+> is scored on the same render. The external baselines and WER were measured only on the earlier
+> frozen render and stay in [matrix_prerelabel.md](results_r2/matrix_prerelabel.md). The two
+> renders differ at 606 of the 617 nominal items, so scores are comparable within one render and
+> not across them.
 
 Further reading:
 
@@ -144,7 +145,7 @@ Timing results for the communications model say nothing about hearing protection
 - **Every score comes from synthetic mixtures.** The two-channel physics of every eval item come
   from the same mixer that made the training data. <!-- TBD(real): first real-recording row (DNSMOS, reference-free) -->
 - **The NLMS alone is worse than passthrough:** 1.115 dB SNR_out for `nlms_only` against 1.974 dB
-  for raw input (`results_r2/matrix.md`, earlier render).
+  for raw input (`results_r2/matrix_prerelabel.md`, earlier render).
 - **Real two-channel audio can erase speech.** A two-channel web recording whose "reference"
   channel carried the talker at primary level lost 79 % of its active frames through r7; with the
   reference zeroed it lost 14 %. The *inferred* cause is that r7 relies on the level difference
@@ -264,8 +265,8 @@ nothing appears in two splits, and store posix paths so a manifest built on Wind
 uv run python -m vaani.train configs/exp/vaani_full_r3_e32.yaml
 uv run python -m vaani.eval --system vaani_full_r3_e32 --split test --eval-root data/eval_r2 \
     --workers 8 --asr --asr-device cuda --dnsmos
-uv run python -m vaani.report "results_r2/*.csv" --out results_r2/matrix.md \
-    --asr-ref results_r2/asr/clean.csv --protocol results_r2/tier46_v2/anchor.json
+uv run python -m vaani.report "results_r2/r6_local/*_eval_r2.csv" "results_r2/r6/*_eval_r2.csv" \
+    "results_r2/r7/*_eval_r2.csv" --out results_r2/matrix.md --note "..."   # the notes as in the file
 ```
 
 - `scripts/run_round.sh [1|2|3|3b|3c|3d|4]` runs a whole ablation wave and drops a `ROUND*_DONE`
@@ -273,10 +274,10 @@ uv run python -m vaani.report "results_r2/*.csv" --out results_r2/matrix.md \
 - Round 1 scored on `data/eval` (`results/`); every later round scores on the frozen
   `data/eval_r2` test split (`results_r2/`, 2280 items) so rows stay comparable across waves.
   **The directory suffix names the eval set, not the training round.**
-- Per-system CSVs, `matrix.md` and the clean test ASR reference are versioned report inputs. The
+- Per-system CSVs, `matrix.md`, `matrix_prerelabel.md` and the clean test ASR reference are versioned report inputs. The
   report records the ASR reference hash, excludes `.partial*.csv` snapshots and rejects duplicate
   evaluation/reference keys. Eval logs, other ASR dumps and run markers are ignored.
-- WER appears in `matrix.md` for systems scored on the earlier render only. The r7 CSVs have an
+- WER appears in `matrix_prerelabel.md`, for systems scored on the earlier render only. The r7 CSVs have an
   empty `asr_text` column, so no WER is reported for r7.
 - Val STOI printed during training is **not** comparable across seeds or across runs with different
   noise pools (val is rendered from the run's own pool); only the test-split matrix is.
@@ -342,7 +343,7 @@ is measured in SNR/STOI/PESQ rather than only in bytes.
 
 The external baselines were scored on the earlier render only, and `gtcrn_finetuned` had 12+6
 training epochs against 256+64 for VAANI. DeepFilterNet3 beats VAANI on DNSMOS (OVRL 2.851 against
-2.702 for tier46, `results_r2/matrix.md`), while tier46 leads on SNR_out, STOI and PESQ there.
+2.702 for tier46, `results_r2/matrix_prerelabel.md`), while tier46 leads on SNR_out, STOI and PESQ there.
 
 ---
 

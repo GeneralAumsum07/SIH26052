@@ -115,6 +115,9 @@ def load_results(paths):
     if not frames:
         raise ValueError("No final evaluation CSVs supplied")
     df = pd.concat(frames, ignore_index=True)
+    # the eval records the checkpoint path as given, so the box (/workspace/SIH26052/results_r2/runs/...)
+    # and the laptop (results_r2/runs/...) name one checkpoint differently; key rows on runs/<name>/...
+    df["system"] = df.system.astype(str).str.replace(r"^(ckpt|cascade):(?:.*[\\/])?(runs[\\/])", r"\1:\2", regex=True).str.replace("\\", "/", regex=False)
     keys = ["system", "bucket", "id"]
     if df.duplicated(keys).any():
         raise ValueError("Evaluation CSVs contain duplicate (system, bucket, id) keys; supply each final result once")
@@ -149,6 +152,7 @@ def main():
     ap = argparse.ArgumentParser(); ap.add_argument("csvs", nargs="+"); ap.add_argument("--out", required=True)
     ap.add_argument("--asr-ref", help="results/asr/clean.csv from scripts/asr_clean_reference.py; adds a WER column")
     ap.add_argument("--protocol", help="results_r2/tier46/anchor.json: prints the frozen split/anchor identity above the tables")
+    ap.add_argument("--note", action="append", default=[], help="a paragraph printed under the title (e.g. which eval render); repeatable")
     a = ap.parse_args()
     df = load_results(a.csvs)
     metrics = list(METRICS)
@@ -161,6 +165,7 @@ def main():
     df["snr_gain"] = df.snr_out - df.snr_in  # improvement reading; the target is judged on absolute snr_out
     df["nominal"] = (~df.clipped) & (~df.ref_dropout) & df.fault.isna() & df.snr_in.isin([0, 5, 10])
     lines = ["# Ablation matrix", ""]
+    for n in a.note: lines += [f"> {n}", ""]
     if "h_gtcrn_iva" in set(df.system):
         # Keep the measurements auditable, but label every table occurrence so
         # copying a row cannot silently turn our failed integration into a paper result.

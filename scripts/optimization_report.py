@@ -140,7 +140,7 @@ def main():
     lines = ["# Optimization: ONNX, INT8 quantization and magnitude pruning", "",
              "Frozen round-2 test split (2280 items); tables below use the nominal envelope "
              "(unclipped, no reference fault, no fault bucket, input SNR 0/5/10 dB) so they are "
-             "directly comparable with [the ablation matrix](../matrix.md).", "",
+             "directly comparable with [the earlier-render ablation matrix](../matrix_prerelabel.md), the render they were measured on.", "",
              "Targets (problem statement): SNR_out > 15 dB, STOI > 0.85, PESQ > 2.5. "
              "✓ = lower 95 % bootstrap bound exceeds target, ~ = mean does but the bound does not, ✗ = mean does not.", ""]
 

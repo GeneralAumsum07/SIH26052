@@ -103,6 +103,22 @@ def test_report_main_writes_markdown(tmp_path):
     assert "✓" in text  # both rows clear all three targets
 
 
+def test_report_keys_checkpoints_on_runs_path(tmp_path):
+    """One checkpoint scored on the box and on the laptop must collide, not show up as two systems."""
+    import pytest
+    from vaani import report
+
+    head = "system,id,bucket,noise_class,snr_in,clipped,ref_dropout,impulse_peak_db,snr_out,si_sdr,stoi,pesq_wb\n"
+    a, b = tmp_path / "box.csv", tmp_path / "laptop.csv"
+    a.write_text(head + "ckpt:/workspace/SIH26052/results_r2/runs/x/best.pt,0000,s_0,s,0,False,False,,1,1,0.9,2\n")
+    b.write_text(head + "ckpt:results_r2\\runs\\x\\best.pt,0001,s_0,s,0,False,False,,1,1,0.9,2\n")
+    df = report.load_results([a, b])
+    assert set(df.system) == {"ckpt:runs/x/best.pt"}
+    b.write_text(head + "ckpt:results_r2/runs/x/best.pt,0000,s_0,s,0,False,False,,1,1,0.9,2\n")
+    with pytest.raises(ValueError, match="duplicate"):
+        report.load_results([a, b])
+
+
 def _train_two_steps(tmp_path, model_name):
     """Reuses tests/test_train_smoke.py's fixture: train 2 real steps, return the checkpoint path."""
     import yaml
