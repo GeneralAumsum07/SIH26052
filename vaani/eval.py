@@ -119,6 +119,26 @@ def _ckpt_spectrum_fn(path, device=None, conditional_cfg=None):
 
 
 _ds = _fn = _sys = None
+# per-item tags a set's index.csv carries (data/eval_defence); appended only for such sets so older CSVs keep their bytes
+EXTRA_COLS = ["category", "noise_source", "impulse_source"]
+
+
+def read_index(split_root):
+    """(bucket, id) -> index.csv row, or {} when the set has no index.csv."""
+    p = Path(split_root) / "index.csv"
+    if not p.exists():
+        return {}
+    with open(p, encoding="utf-8", newline="") as fh:
+        return {(r["bucket"], r["id"]): r for r in csv.DictReader(fh)}
+
+
+def fill_extra(row, index):
+    """Tags missing from the clip's meta come from index.csv; the meta wins where both exist."""
+    r = index.get((row.get("bucket"), row.get("id")), {})
+    for k in EXTRA_COLS:
+        if row.get(k) in (None, "") and r.get(k) not in (None, ""):
+            row[k] = r[k]
+    return row
 
 
 def _init(system, root, split, dnsmos=False):
@@ -136,7 +156,7 @@ def _nan_row(meta):
                 snr_in=meta.get("snr_db"), clipped=meta.get("clipped"), ref_dropout=meta.get("ref_dropout"),
                 impulse_peak_db=meta.get("impulse_peak_db"), fault=meta.get("fault"), speech_source=meta.get("speech_source"), snr_out=float("nan"), si_sdr=float("nan"),
                 stoi=float("nan"), pesq_wb=float("nan"), dnsmos_sig=float("nan"), dnsmos_bak=float("nan"), dnsmos_ovrl=float("nan"),
-                recovery_s=float("nan"), asr_text="")
+                recovery_s=float("nan"), asr_text="", **{k: meta.get(k) for k in EXTRA_COLS})
 
 
 def _work(i):
@@ -179,8 +199,10 @@ def main():
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
     cols = ["system", "id", "bucket", "noise_class", "snr_in", "clipped", "ref_dropout", "impulse_peak_db", "fault", "speech_source",
             "snr_out", "si_sdr", "stoi", "pesq_wb", "dnsmos_sig", "dnsmos_bak", "dnsmos_ovrl", "recovery_s", "asr_text"]
+    index = read_index(root / a.split)
+    if index: cols += EXTRA_COLS
     with open(a.out, "w", encoding="utf-8", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=cols); w.writeheader()
+        w = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore"); w.writeheader()
         # imap keeps CSV order deterministic; results stream back so ASR overlaps the workers' DSP/PESQ
         if a.workers == 0: _init(a.system, root, a.split, a.dnsmos)
         # One BLAS/OpenMP thread per worker. _init caps torch and vaani/dnsmos.py caps onnxruntime,
@@ -207,7 +229,7 @@ def main():
                         row["asr_text"] = whisper_text(asr, est)
                     except Exception as e:
                         print(f"asr {row['id']} failed: {e!r}")
-                return row
+                return fill_extra(row, index)
             # executor.map would drain the whole stream before yielding; a bounded deque keeps ~2x threads in flight
             pending, bar = deque(), tqdm(total=n, desc=a.system)
             for item in stream:

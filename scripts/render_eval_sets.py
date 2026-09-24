@@ -1,13 +1,18 @@
 """Render frozen val/test sets, bucketed by noise class x input SNR.
 Burst buckets also get a 'twin' with the impulse removed (same seed) for
 the recovery-time metric. Impulses come from the synthetic generator or
-from recorded impulsive clips in the manifest ("recorded_*" buckets), so
-the impulsive numbers are also measured on real recordings, not only on a
-decaying noise burst. --faults adds reliability-fault buckets (clipping,
+from recorded impulsive clips in the manifest ("recorded_*" buckets). In
+eval_r2 those recorded clips are ESC-50 household transients (can opening,
+mouse click, keyboard, fireworks, footsteps, clock tick), and every mixture
+is synthetic: clean speech plus noise through a simulated room, not a
+recording made in noise. --faults adds reliability-fault buckets (clipping,
 reference-mic faults, over-range bursts) at fixed SNRs; report.py keeps
-them out of the nominal envelope. Writes an eval-set hash for run.json.
+them out of the nominal envelope. --defence renders the PS defence-noise set
+instead (DEFENCE below: recorded gunshots, Friedlander blasts, MAD
+helicopter/vehicle, ESC-50 siren) with r7's training mix block. Writes an
+eval-set hash for run.json.
 """
-import argparse, hashlib, json
+import argparse, csv, hashlib, json
 from pathlib import Path
 
 import numpy as np
@@ -26,6 +31,20 @@ CLASSES = {"stationary": ("stationary", None), "changing": ("changing", None),
            "recorded_impulsive": ("changing", "corpus"), "recorded_impulsive+stationary": ("stationary", "corpus")}
 FAULT_SNRS = [0, 5]
 
+# defence category -> (continuous bed, impulse source). Transient categories sit on the MAD stationary bed
+# (vehicle, helicopter, fighter test rows) so the input SNR means the same thing as in the bed-only rows.
+DEFENCE = {"gunshot": ("mad_stationary", "gunshot"),
+           "blast_small_arms": ("mad_stationary", "blast:small_arms"),
+           "blast_artillery": ("mad_stationary", "blast:artillery"),
+           "helicopter": ("mad:helicopter", None), "vehicle": ("mad:vehicle", None), "siren": ("esc50:siren", None)}
+# noise_class of the bed-only categories: sources.MAD_CLASS_MAP puts helicopter and vehicle in stationary;
+# the two ESC-50 siren test clips are labelled changing in the manifest
+CLASS_OF_BED = {"mad:helicopter": "stationary", "mad:vehicle": "stationary", "esc50:siren": "changing"}
+# r7's training mix block (configs/retraining/r7_e256_wr64.yaml data.mix) minus impulse_kinds, which the category fixes
+DEFENCE_MIX = {"impulse_peak_db": (15.0, 45.0), "impulse_room": True, "overload_softclip": True,
+               "speech_rms_db": (-32.0, -18.0)}
+GUNSHOT_CORPORA = ("gunshots", "cadre")
+
 
 def _impulse(seed, source, imp_df):
     """(waveform, onsets_s, source label) for a burst bucket."""
@@ -33,6 +52,11 @@ def _impulse(seed, source, imp_df):
     if source == "synthetic":
         imp, m = impulses.generate(rng)
         return imp, m["onsets_s"], f"synthetic:{m['kind']}"
+    if source.startswith("blast:"):
+        imp, m = impulses.generate(rng, kind="blast", blast_kind=source.split(":", 1)[1])
+        return imp, m["onsets_s"], f"synthetic:blast:{m['blast_kind']}"
+    if source == "gunshot":
+        return _peak_window(imp_df.iloc[int(rng.integers(len(imp_df)))])
     row = imp_df.iloc[int(rng.integers(len(imp_df)))]
     imp = _load(row.path, 2 * SR, rng)
     # same treatment as DynamicMixDataset: peak-normalise so impulse_peak_db is comparable, onsets from the waveform
@@ -40,18 +64,34 @@ def _impulse(seed, source, imp_df):
     return imp, impulses.detect_onsets(imp, SR), str(row.get("source_id", row.path))
 
 
-def render_bucket_item(seed: list[int], speech_df, pool_df, n: int, snr: float, impulse, bank, imp_df=None, cfg=None):
-    """One eval clip. impulse is None | "synthetic" | "corpus". Returns (mix, clean, meta, twin_or_None)."""
+def _peak_window(row, win_s=2.0, pre_s=0.25):
+    """A recorded shot cropped to win_s around its loudest sample: a random crop can miss the shot, and
+    peak-normalising a crop without it would turn background hiss into a 45 dB 'transient'."""
+    x, _ = sf.read(row.path, dtype="float32")
+    x = x if x.ndim == 1 else x.mean(axis=1)
+    a = max(0, int(np.argmax(np.abs(x))) - int(pre_s * SR))
+    imp = x[a:a + int(win_s * SR)]
+    imp = (imp / (np.abs(imp).max() + 1e-9)).astype(np.float32)
+    return imp, impulses.detect_onsets(imp, SR), str(row.get("source_id", row.path))
+
+
+def render_bucket_item(seed: list[int], speech_df, pool_df, n: int, snr: float, impulse, bank, imp_df=None, cfg=None,
+                       tag_noise=False):
+    """One eval clip. impulse is None | "synthetic" | "corpus" | "gunshot" | "blast:<kind>". Returns
+    (mix, clean, meta, twin_or_None). tag_noise records the bed's source_id; off so older sets keep their meta bytes."""
     rng = np.random.default_rng(seed)
     sp = speech_df.iloc[int(rng.integers(len(speech_df)))]
     x = _load(sp.path, n, rng)
     s = np.pad(x, (0, n - len(x)))
-    nz = [_load(pool_df.path.iloc[int(rng.integers(len(pool_df)))], n, rng)]
+    j = int(rng.integers(len(pool_df)))
+    nz = [_load(pool_df.path.iloc[j], n, rng)]
     cfg = cfg or MixConfig(snr_range=(snr, snr), p_clean=0.0)
     imp, on, src = _impulse(seed, impulse, imp_df) if impulse else (None, [], None)
     m, c, meta = mix(np.random.default_rng(seed), s, nz, imp, on, bank, cfg)
     meta["impulse_source"] = src
     meta["speech_source"] = str(sp.get("source_id", sp.path))  # report needs the corpus to know whether English WER applies
+    if tag_noise:
+        meta["noise_source"] = str(pool_df.iloc[j].get("source_id", pool_df.path.iloc[j]))
     twin = None
     if impulse:  # identical draw with no impulse, scaled like the burst clip so only the impulse differs
         twin, _, _ = mix(np.random.default_rng(seed), s, nz, None, [], bank, cfg, norm_gain=meta["norm_gain"])
@@ -141,12 +181,77 @@ def guard_frozen(a):
                          f"to overwrite it deliberately.")
 
 
+def guard_bank(a):
+    """A missing bank used to fall back silently to the parametric path, so a wrong path rendered a different set."""
+    if getattr(a, "no_bank", False):
+        return None
+    if not Path(a.bank).exists():
+        raise SystemExit(f"RIR bank {a.bank} not found. Build it (scripts/make_rir_bank.py) or pass --no-bank "
+                         f"to render every item on the parametric path deliberately.")
+    return a.bank
+
+
+def _source_class(df):
+    # source_id is "<corpus>:<class>/<clip>" for MAD and ESC-50
+    return df.source_id.str.split(":").str[1].str.split("/").str[0]
+
+
+def defence_pools(noise):
+    """(beds, shots) for DEFENCE from one split's noise rows. An empty pool fails loudly, never substitutes."""
+    mad, esc = noise[noise.corpus == "mad"], noise[noise.corpus == "esc50"]
+    beds = {"mad_stationary": mad[mad.noise_class == "stationary"],
+            "mad:helicopter": mad[_source_class(mad) == "helicopter"],
+            "mad:vehicle": mad[_source_class(mad) == "vehicle"],
+            "esc50:siren": esc[_source_class(esc) == "siren"]}
+    shots = noise[noise.corpus.isin(GUNSHOT_CORPORA)]
+    for k, v in {**beds, "gunshot": shots}.items():
+        if v.empty:
+            raise ValueError(f"no noise rows for defence pool {k!r}")
+    return beds, shots
+
+
+def _stamp(root):
+    h = hashlib.sha1()
+    for p in sorted(root.rglob("*.json")): h.update(p.read_bytes())
+    (root / "EVALSET_HASH").write_text(h.hexdigest()[:12]); print("eval-set hash", h.hexdigest()[:12])
+
+
+INDEX_COLS = ["bucket", "id", "category", "snr_db", "noise_class", "noise_source", "impulse_source", "impulse_peak_db",
+              "overloaded", "clipped", "ref_dropout", "path", "speech_source"]
+
+
+def main_defence(a, bank):
+    """DEFENCE categories x BUCKET_SNRS from one split's rows, at r7's training transient levels; index.csv per item."""
+    df = pd.concat([manifests.read(p) for p in a.manifests]); df = df[df.split == a.split]
+    speech, noise = df[df.kind == "speech"], df[df.kind == "noise"]
+    beds, shots = defence_pools(noise)
+    root = Path(a.out) / a.split; n = int(a.clip_s * SR); rows = []
+    for cat, (bed, impulse) in DEFENCE.items():
+        for snr in BUCKET_SNRS:
+            d = root / f"{cat}_{snr}"; d.mkdir(parents=True, exist_ok=True)
+            cfg = MixConfig(snr_range=(snr, snr), p_clean=0.0, **DEFENCE_MIX)
+            for i in range(a.per_bucket):
+                seed = [a.seed, manifests.stable_hash(cat) % 1000, snr + 100, i]
+                m, c, meta, twin = render_bucket_item(seed, speech, beds[bed], n, snr, impulse, bank, imp_df=shots,
+                                                      cfg=cfg, tag_noise=True)
+                meta["category"] = cat
+                meta["noise_class"] = "impulsive+stationary" if impulse else CLASS_OF_BED[bed]
+                _write(d, i, m, c, meta, twin)
+                rows.append({**{k: meta.get(k) for k in INDEX_COLS}, "bucket": d.name, "id": f"{i:04d}"})
+    with open(root / "index.csv", "w", encoding="utf-8", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=INDEX_COLS); w.writeheader(); w.writerows(rows)
+    _stamp(root)
+
+
 def main(a):
     guard_frozen(a)   # before the manifests are read: a guard that fires after minutes of work is not a guard
+    bank_path = guard_bank(a)
+    bank = RirBank(bank_path) if bank_path else None
+    if getattr(a, "defence", False):
+        return main_defence(a, bank)
     classes = CLASSES if not a.classes else {k: CLASSES[k] for k in a.classes}
     df = pd.concat([manifests.read(p) for p in a.manifests]); df = df[df.split == a.split]
     speech, noise = df[df.kind == "speech"], df[df.kind == "noise"]
-    bank = RirBank(a.bank) if Path(a.bank).exists() else None
     root = Path(a.out) / a.split; n = int(a.clip_s * SR)
     impd = noise[noise.noise_class == "impulsive"]
 
@@ -195,9 +300,7 @@ def main(a):
     # selection field, the rendered audio is bit-identical (maxdiff 0 on int16 samples), and the
     # only deltas are those two fields at <= 1.9e-06, far below the int16 quantisation step.
     # To decide whether two renders are the same set, compare selections and audio, not this hash.
-    h = hashlib.sha1()
-    for p in sorted(root.rglob("*.json")): h.update(p.read_bytes())
-    (root / "EVALSET_HASH").write_text(h.hexdigest()[:12]); print("eval-set hash", h.hexdigest()[:12])
+    _stamp(root)
 
 
 if __name__ == "__main__":
@@ -214,6 +317,10 @@ if __name__ == "__main__":
                     help="render only these bucket classes (default: all). A held-out set built from one "
                          "corpus may legitimately have no rows of some class, and the impulse-bearing "
                          "buckets draw from training corpora, which a generalisation set must not do.")
+    ap.add_argument("--no-bank", action="store_true",
+                    help="render without a RIR bank (parametric path only); otherwise a missing --bank is an error")
+    ap.add_argument("--defence", action="store_true",
+                    help="render the DEFENCE categories (gunshot, blast, MAD helicopter/vehicle, siren) instead of CLASSES")
     ap.add_argument("--force", action="store_true",
                     help="overwrite an already-frozen eval set (one carrying EVALSET_HASH); invalidates every result that cites its hash")
     main(ap.parse_args())
