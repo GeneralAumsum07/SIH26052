@@ -23,7 +23,7 @@ from vaani.training_controls import cosine_lr_multiplier, verify_checkpoint_hash
 LOSS_CFG = dict(w_complex=50, w_mag=50, p=0.5, w_snr=0.2, snr_max_db=30)
 STOI_TOL, PESQ_W, EARLY_EPOCH, EARLY_SNR, EARLY_PESQ = 0.003, 5.0, 2, 0.1, 0.01
 SCREEN_PER_BUCKET = 4
-SCREEN_WORKERS = 32   # CPU processes for the screen's DSP and metrics
+SCREEN_WORKERS = 32   # CPU processes for the screen's DSP and metrics; $VAANI_SCREEN_WORKERS caps it on a shared box
 
 
 def _sha(path):
@@ -47,7 +47,7 @@ def build_train_data(first_cfg, seed, batch_size, num_workers, split="train"):
     # no reason for the second stage to read it the slow way.
     ds = DynamicMixDataset(d["manifests"], split, d.get("bank"), MixConfig(**d.get("mix", {})), d.get("crop_s", 4.0),
                            d.get("epoch_len", 20000), seed, with_dsp=True, controller_on=first_cfg["controller_on"],
-                           dsp_cfg=first_cfg.get("dsp"), pack_root=d.get("pack", "data/pack"))
+                           dsp_cfg=first_cfg.get("dsp"), pack_root=d.get("pack", "data/pack"), ref_corrupt=d.get("ref_corrupt"))
     sampler = EpochSampler(len(ds))
     # num_workers may be "auto" - vaani.train resolves it through runtime, and this trainer has to do
     # the same or a config that works for the backbone dies here with a TypeError comparing str to int.
@@ -81,7 +81,7 @@ def _screen_pool():
         from multiprocessing import get_context
         caps = {k: "1" for k in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMBA_NUM_THREADS")}
         saved = {k: os.environ.get(k) for k in caps}; os.environ.update(caps)
-        try: _pool = get_context("spawn").Pool(SCREEN_WORKERS)
+        try: _pool = get_context("spawn").Pool(int(os.environ.get("VAANI_SCREEN_WORKERS", SCREEN_WORKERS)))
         finally:
             for k, v in saved.items():
                 if v is None: os.environ.pop(k, None)
@@ -173,9 +173,9 @@ def main(config_path, max_steps=None):
         sampler.set_epoch(epoch); done = False
         clamp_sum, clamp_batches = 0., 0
         for batch in dl:
-            (spec6, feats), target, _, is_clean = prepare_batch(batch, "vaani", device)
+            inputs, target, _, is_clean = prepare_batch(batch, "vaani", device)   # (spec6, feats[, ref_avail])
             with torch.autocast("cuda", dtype=torch.bfloat16, enabled=use_amp):
-                z = model(spec6, feats)
+                z = model(*inputs)
             z = z.float(); loss = loss_fn(z, target)
             if is_clean.any():   # clean items are supervised to the clean target, never to the noisy input
                 loss = loss + (z[is_clean] - target[is_clean]).abs().mean()

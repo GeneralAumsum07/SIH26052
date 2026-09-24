@@ -76,17 +76,20 @@ def prepare_batch(batch, model_name, device, burst_weight=1.0):
         n_hat = batch["n_hat"].to(device, **nb)
         spec6 = torch.cat([stft.stft(mix[:, 0]), stft.stft(mix[:, 1]), stft.stft(n_hat)], dim=-1)
         inputs = (spec6, batch["feats"].to(device, **nb))
+        if "ref_avail" in batch:   # data.ref_corrupt: the capture-path availability label rides along as a third input
+            inputs = (*inputs, batch["ref_avail"].to(device, **nb))
     return inputs, target, fw.to(device), is_clean.to(device)
 
 
 def build_param_groups(model, optim_cfg):
-    """AdamW groups. FiLM projections get lr_new. With lr_df set, the deep-filter head gets its own
+    """AdamW groups. FiLM projections and the zero-init ref_validity conv get lr_new. With lr_df set, the deep-filter head gets its own
     group (lr_df, clipped alone at clip_df): r3 showed its tap gradient is heavy-tailed (per-batch norm
     3..120 on real batches), so Adam's second moment pinned the taps near zero at the shared lr."""
     lr = optim_cfg["lr"]
     is_df = lambda n: n.startswith("df.") and "lr_df" in optim_cfg
-    groups = [{"params": [p for n, p in model.named_parameters() if "film" not in n and not is_df(n)], "lr": lr}]
-    film = [p for n, p in model.named_parameters() if "film" in n]
+    is_new = lambda n: "film" in n or "ref_conv" in n
+    groups = [{"params": [p for n, p in model.named_parameters() if not is_new(n) and not is_df(n)], "lr": lr}]
+    film = [p for n, p in model.named_parameters() if is_new(n)]
     if film:
         groups.append({"params": film, "lr": optim_cfg.get("lr_new", lr)})
     df = [p for n, p in model.named_parameters() if is_df(n)]
@@ -150,7 +153,7 @@ def main(config_path):
     d = cfg["data"]; mixcfg = MixConfig(**d.get("mix", {}))
     with_dsp = cfg["model"] == "vaani"  # gtcrn never needs n_hat/feats, skip the 150 ms/clip
     dsk = dict(with_dsp=with_dsp, controller_on=cfg["controller_on"], dsp_cfg=cfg.get("dsp"),
-               pack_root=d.get("pack", "data/pack"))
+               pack_root=d.get("pack", "data/pack"), ref_corrupt=d.get("ref_corrupt"))
     ds = DynamicMixDataset(d["manifests"], "train", d.get("bank"), mixcfg, d.get("crop_s", 4.0),
                            d.get("epoch_len", 20000), cfg["seed"], **dsk)
     vds = DynamicMixDataset(d["manifests"], "val", d.get("bank"), mixcfg, d.get("crop_s", 4.0),
@@ -246,6 +249,8 @@ def main(config_path):
         tb.add_scalar("train/snr_clamp_fraction", history[-1]["snr_clamp_fraction"], step)
         if v > best:
             best = v; _save({"model": model.state_dict(), "config": cfg, "step": step}, run_dir / "best.pt")
+        if cfg.get("save_every_epoch"):   # learning-curve pilots score intermediate epochs; off = r1..r7 behaviour
+            _save({"model": model.state_dict(), "config": cfg, "step": step, "epoch": epoch}, run_dir / f"epoch{epoch:03d}.pt")
         _save({"model": model.state_dict(), "config": cfg, "step": step, "epoch": epoch, "best": best,
                "optim": opt.state_dict(), "sched": sched.state_dict(), "schedule": schedule, "history": history}, last)
         run_info.update(history=history, best_val_stoi=best, steps=step)

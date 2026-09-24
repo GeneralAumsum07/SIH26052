@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import soundfile as sf
 import torch
+from scipy.signal import lfilter
 from torch.utils.data import Dataset, Sampler
 
 from vaani.data import impulses, manifests
@@ -44,9 +45,106 @@ def _load(path: str, n: int | None, rng, pack=None) -> np.ndarray:
     return x
 
 
+# --- reference-failure augmentation (spec 6.2; off unless data.ref_corrupt is configured) ---
+REF_KINDS = ("dropout", "burst", "delay", "gain", "polarity", "clip", "noise", "lowpass", "leak")
+REF_CORRUPT_DEFAULTS = dict(
+    p=0.4,                                  # fraction of items given one reference fault (drawn by weights)
+    p_absent=0.0,                           # extra fraction with the reference absent the whole crop (validity 0; M9: ~0.15)
+    weights=dict(dropout=1.0, burst=1.0, delay=1.0, gain=1.0, polarity=0.5, clip=1.0, noise=1.0, lowpass=1.0, leak=1.5),
+    burst_s=(0.1, 1.0), bursts=(1, 3),      # burst dropouts: count and length each
+    delay_samples=(1, 48),                  # ADC/channel slip, either sign (48 = 3 ms)
+    gain_db=(-18.0, -6.0), gain_up_db=(3.0, 8.0), p_gain_up=0.2,
+    clip_frac=(0.05, 0.4),                  # clip level as a fraction of the reference peak
+    noise_snr_db=(-10.0, 10.0),             # unrelated noise relative to the reference's own RMS
+    lowpass_hz=(300.0, 1500.0), lowpass_db=(-20.0, -6.0),   # strap/obstruction over the reference mic
+    leak_db=(-14.0, 1.0), leak_delay=(0, 8),   # talker leakage onto the reference relative to the primary
+    leak_near_db=(-4.0, 1.0), p_leak_near=0.5,  # half of it at near-primary level (the web-WAV failure)
+)
+REF_SEED = 0x5EF   # separate stream: the mixture draws are identical with or without corruption
+
+
+def ref_corrupt_config(cfg):
+    """None/False -> None (off); True or a dict -> REF_CORRUPT_DEFAULTS overridden by it (weights merge per kind)."""
+    if not cfg:
+        return None
+    user = cfg if isinstance(cfg, dict) else {}
+    c = {**REF_CORRUPT_DEFAULTS, **user}
+    c["weights"] = {**REF_CORRUPT_DEFAULTS["weights"], **user.get("weights", {})}
+    unknown = set(c) - set(REF_CORRUPT_DEFAULTS) | set(c["weights"]) - set(REF_KINDS)
+    ok_w = all(v >= 0 for v in c["weights"].values()) and sum(c["weights"].values()) > 0
+    if unknown or not ok_w or not (0 <= c["p"] and 0 <= c["p_absent"] and c["p"] + c["p_absent"] <= 1):
+        raise ValueError(f"bad ref_corrupt config: unknown keys {sorted(unknown)} or p, p_absent outside [0,1]")
+    return c
+
+
+def _shift(x, d):
+    """Integer shift, zero fill: d > 0 delays x, d < 0 advances it."""
+    y = np.zeros_like(x)
+    if d >= 0:
+        y[d:] = x[:len(x) - d]
+    else:
+        y[:d] = x[-d:]
+    return y
+
+
+def apply_ref_fault(rng, mixed, clean, kind, c):
+    """One reference fault on a (2, n) mixture. Returns (mixed', per-sample availability, trace dict).
+    Availability is the capture path's knowledge: 0 only for dropouts (the channel is absent); every other fault
+    leaves a present-but-wrong reference for the reliability map to catch."""
+    out = mixed.copy(); ref = out[1]; n = ref.shape[0]; avail = np.ones(n, bool); tr = {"kind": kind}
+    if kind == "dropout":
+        ref[:] = 0.0; avail[:] = False
+    elif kind == "burst":
+        spans = []
+        for _ in range(int(rng.integers(c["bursts"][0], c["bursts"][1] + 1))):
+            ln = int(rng.uniform(*c["burst_s"]) * SR); a = int(rng.integers(0, max(1, n - ln)))
+            ref[a:a + ln] = 0.0; avail[a:a + ln] = False; spans.append([a, a + ln])
+        tr["spans"] = spans
+    elif kind == "delay":
+        d = int(rng.integers(c["delay_samples"][0], c["delay_samples"][1] + 1)) * (1 if rng.random() < 0.5 else -1)
+        ref[:] = _shift(ref, d); tr["delay"] = d
+    elif kind == "gain":
+        g = float(rng.uniform(*c["gain_up_db"])) if rng.random() < c["p_gain_up"] else float(rng.uniform(*c["gain_db"]))
+        ref *= 10 ** (g / 20); tr["gain_db"] = g
+    elif kind == "polarity":
+        ref *= -1.0
+    elif kind == "clip":
+        f = float(rng.uniform(*c["clip_frac"])); lvl = np.abs(ref).max() * f
+        ref[:] = np.clip(ref, -lvl, lvl); tr["clip_frac"] = f
+    elif kind == "noise":
+        snr = float(rng.uniform(*c["noise_snr_db"])); a = float(rng.uniform(0.0, 0.99))
+        z = lfilter([1.0], [1.0, -a], rng.standard_normal(n)).astype(np.float32)   # white .. strongly low-tilted
+        z *= np.sqrt((ref ** 2).mean() + 1e-12) / (z.std() + 1e-9) * 10 ** (-snr / 20)
+        ref += z; tr.update(snr_db=snr, pole=a)
+    elif kind == "lowpass":
+        fc = float(rng.uniform(*c["lowpass_hz"])); att = float(rng.uniform(*c["lowpass_db"]))
+        a = float(np.exp(-2 * np.pi * fc / SR))
+        ref[:] = lfilter([1 - a], [1.0, -a], ref).astype(np.float32) * 10 ** (att / 20); tr.update(fc_hz=fc, att_db=att)
+    elif kind == "leak":
+        near = rng.random() < c["p_leak_near"]
+        g = float(rng.uniform(*(c["leak_near_db"] if near else c["leak_db"])))
+        d = int(rng.integers(c["leak_delay"][0], c["leak_delay"][1] + 1))
+        ref += _shift(clean, d) * 10 ** (g / 20); tr.update(leak_db=g, delay=d)
+    else:
+        raise ValueError(kind)
+    np.clip(ref, -1.0, 1.0, out=ref)   # the reference ADC saturates like any other
+    return out.astype(np.float32), avail, tr
+
+
+def corrupt_reference(rng, mixed, clean, c):
+    """Draw whether and how to corrupt this item. Same rng seed -> same trace, whatever model width consumes it."""
+    kinds = list(c["weights"]); w = np.asarray([c["weights"][k] for k in kinds], float)
+    u = rng.random(); k = int(rng.choice(len(kinds), p=w / w.sum()))   # both drawn always: a fixed-length stream
+    if u < c["p_absent"]:
+        return apply_ref_fault(rng, mixed, clean, "dropout", c)
+    if u >= c["p_absent"] + c["p"] or w[k] <= 0:
+        return mixed, np.ones(mixed.shape[1], bool), None
+    return apply_ref_fault(rng, mixed, clean, kinds[k], c)
+
+
 class DynamicMixDataset(Dataset):
     def __init__(self, manifest_paths, split, bank_path, cfg: MixConfig, crop_s=4.0, epoch_len=20000, seed=0,
-                 with_dsp=False, controller_on=True, dsp_cfg=None, pack_root=None):
+                 with_dsp=False, controller_on=True, dsp_cfg=None, pack_root=None, ref_corrupt=None):
         df = pd.concat([manifests.read(p) for p in manifest_paths])
         df = df[df.split == split]
         self.speech = df[df.kind == "speech"].reset_index(drop=True)
@@ -63,6 +161,7 @@ class DynamicMixDataset(Dataset):
         self.cfg, self.n, self.epoch_len, self.seed = cfg, int(crop_s * SR), epoch_len, seed
         # with_dsp: run NLMS+features here so the ~150 ms/clip DSP lands in DataLoader workers, not the trainer
         self.with_dsp, self.controller_on, self.dsp_cfg = with_dsp, controller_on, dsp_cfg
+        self.ref_corrupt = ref_corrupt_config(ref_corrupt)
         assert len(self.speech) and len(self.cont), "empty manifest split"
 
     @property
@@ -106,11 +205,18 @@ class DynamicMixDataset(Dataset):
             noise_class = "impulsive+stationary" if noise_class == "stationary" else "impulsive"
         mixed, clean, meta = mix(rng, s, noises, imp, onsets, self.bank, self.cfg)
         meta["noise_class"] = "clean" if meta["clean_bucket"] else noise_class
+        avail = None
+        if self.ref_corrupt is not None:
+            mixed, avail, tr = corrupt_reference(np.random.default_rng([self.seed, epoch, i, REF_SEED]), mixed, clean, self.ref_corrupt)
+            meta["ref_fault"] = tr
         out = {"mix": torch.from_numpy(mixed), "clean": torch.from_numpy(clean), "meta": meta}
         if self.with_dsp:
-            r = pipeline.run(mixed, controller_on=self.controller_on, dsp_cfg=self.dsp_cfg)
+            r = pipeline.run(mixed, controller_on=self.controller_on, dsp_cfg=self.dsp_cfg, ref_avail=avail)
             out["n_hat"] = torch.from_numpy(r["n_hat"]); out["feats"] = torch.from_numpy(r["features"])
             out["mix"] = torch.from_numpy(r["mix"])   # the limited signal when the limiter is on
+            if avail is not None:   # capture-path label per model frame, with or without a DSP ref_policy
+                fa = r["ref_avail"] if "ref_avail" in r else pipeline.frame_avail(avail, r["features"].shape[0])
+                out["ref_avail"] = torch.from_numpy(fa)
         return out
 
 
@@ -152,7 +258,7 @@ class RenderedDataset(Dataset):
 def collate(batch):
     out = {"mix": torch.stack([b["mix"] for b in batch]), "clean": torch.stack([b["clean"] for b in batch]),
            "meta": [b["meta"] for b in batch]}
-    for k in ("twin", "n_hat", "feats"):
+    for k in ("twin", "n_hat", "feats", "ref_avail"):
         if k in batch[0]:
             out[k] = torch.stack([b[k] for b in batch])
     return out
