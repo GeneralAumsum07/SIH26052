@@ -8,13 +8,29 @@ from pathlib import Path
 import argparse
 import hashlib
 import json
+import subprocess
 import numpy as np
 import soundfile as sf
 
 from vaani.dsp import pipeline
 
+R7_CKPT, R7_ONNX = "results_r2/runs/r7_e256_wr64_refiner/best.pt", "deploy/r7/cascade.onnx"
+
+
+def _sha(p):
+    return hashlib.sha256(Path(p).read_bytes()).hexdigest()
+
+
+def _git(*a):
+    try:
+        return subprocess.run(["git", *a], capture_output=True, text=True, check=True).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None  # a tarball without .git still regenerates; provenance says so
+
+
 ap = argparse.ArgumentParser(description=__doc__)
-ap.add_argument("--checkpoint", help="Read controller/DSP configuration from the deployed checkpoint")
+ap.add_argument("--checkpoint", help=f"Read controller/DSP configuration from the deployed checkpoint (shipping: {R7_CKPT})")
+ap.add_argument("--onnx", help=f"Record the graph this checkpoint was exported to (shipping: {R7_ONNX})")
 ap.add_argument("--out", help="Separate output directory; legacy vectors are preserved by default")
 args = ap.parse_args()
 cfg = {}
@@ -22,8 +38,12 @@ if args.checkpoint:
     import torch
     ck = torch.load(args.checkpoint, map_location="cpu", weights_only=True)["config"]
     cfg = {"controller_on": ck.get("controller_on", True), "dsp": ck.get("dsp", {}),
-           "checkpoint": Path(args.checkpoint).as_posix(),
-           "checkpoint_sha256": hashlib.sha256(Path(args.checkpoint).read_bytes()).hexdigest()}
+           "checkpoint": Path(args.checkpoint).as_posix(), "checkpoint_sha256": _sha(args.checkpoint)}
+    if args.onnx:
+        cfg.update(onnx=Path(args.onnx).as_posix(), onnx_sha256=_sha(args.onnx))
+    status = _git("status", "--porcelain", "--", "vaani/dsp")
+    # dirty counts only the code that computes the arrays; the inputs are the committed wavs themselves
+    cfg.update(git_sha=_git("rev-parse", "HEAD"), git_dirty_dsp=None if status is None else bool(status))
 out = Path(args.out or ("deploy/dsp_reference/vectors_cascade" if args.checkpoint else "deploy/dsp_reference/vectors"))
 out.mkdir(parents=True, exist_ok=True)
 if cfg:

@@ -37,3 +37,18 @@ def test_export_parity_r3_architecture(tmp_path):
     onnx = export.export(ck, tmp_path / "r3.onnx")
     r = export.parity_and_timing(ck, onnx, seconds=1)
     assert r["max_abs_err"] < 1e-4 and r["ms_per_frame_mean"] > 0
+
+
+def test_tracked_r7_checkpoint_reexports_to_the_shipped_graph(tmp_path):
+    # a clone has only results_r2/runs/, so the default must load from there with the backbone embedded
+    import hashlib, onnx
+    from vaani.models import cascade
+    ck = export.SHIPPING_CKPT
+    assert hashlib.sha256(open(ck, "rb").read()).hexdigest().startswith("121f0c3d")
+    v, _ = export._load_batch_model(ck)
+    assert isinstance(v, cascade.FrozenCascade)
+    got = onnx.load(export.export(ck, tmp_path / "r7.onnx")); shipped = onnx.load(export.SHIPPING_ONNX)
+    # bytes differ across torch versions (folded conv weights in the last ulp); topology must not
+    assert [n.SerializeToString() for n in got.graph.node] == [n.SerializeToString() for n in shipped.graph.node]
+    r = export.parity_and_timing(ck, export.SHIPPING_ONNX, seconds=1)
+    assert r["max_abs_err"] < 1e-4

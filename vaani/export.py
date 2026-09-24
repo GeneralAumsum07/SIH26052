@@ -193,16 +193,24 @@ def parity_and_timing(ckpt_path, onnx_path, seconds=10):
     return {"max_abs_err": float(np.abs(got - ref).max()), **timing_stats(times)}
 
 
+SHIPPING_CKPT = "results_r2/runs/r7_e256_wr64_refiner/best.pt"  # tracked r7 cascade; embeds its backbone
+SHIPPING_ONNX = "deploy/r7/cascade.onnx"
+
+
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument("ckpt"); ap.add_argument("--out", default=None)
+    ap.add_argument("ckpt", nargs="?", default=SHIPPING_CKPT); ap.add_argument("--out", default=None)
     ap.add_argument("--seconds", type=float, default=10)
     ap.add_argument("--report-json", help="Save timing, checkpoint/ONNX hashes and per-stage parameter/MAC estimates")
+    ap.add_argument("--overwrite", action="store_true", help="Allow the default --out to replace an existing graph")
     a = ap.parse_args()
     if a.out is None:   # the cascade never overwrites the shipped first-stage graph
         kind = torch.load(a.ckpt, map_location="cpu", weights_only=True)["config"]["model"]
-        a.out = "deploy/tier46/cascade.onnx" if kind == cascade.MODEL_NAME else "deploy/model.onnx"
+        a.out = SHIPPING_ONNX if kind == cascade.MODEL_NAME else "deploy/model.onnx"
+        # a re-export on another torch differs in the last ulp of folded weights, so never replace a sha-pinned graph silently
+        if Path(a.out).exists() and not a.overwrite:
+            ap.error(f"{a.out} exists; pass --out <path> or --overwrite")
     p = export(a.ckpt, a.out)
     r = deployment_report(a.ckpt, p, a.seconds) if a.report_json else parity_and_timing(a.ckpt, p, a.seconds)
     if a.report_json:
