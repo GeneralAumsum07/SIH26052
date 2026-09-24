@@ -1,0 +1,119 @@
+{
+  "budget": {
+    "total_entries": 60000,
+    "matrix_mmac_per_second": 90.706
+  },
+  "counting": "vaani.export.layer_macs on StreamCascade, one hop",
+  "command": "python scripts/audit_budget.py",
+  "rows": [
+    {
+      "name": "r7 (shipping)",
+      "trained_weights_exist": true,
+      "model_cfg": {
+        "channels": 16,
+        "coh": true,
+        "df_order": 3,
+        "film": false,
+        "noise_floor": false
+      },
+      "refiner_cfg": {},
+      "total_entries": 52747,
+      "learnable_entries": 28171,
+      "buffer_entries": 1134,
+      "state_entries": 28842,
+      "ref_extension_entries": 0,
+      "matrix_macs_per_hop": 1319360,
+      "matrix_mmac_per_second": 82.46,
+      "ref_extension_macs_per_hop": 0,
+      "within_budget": true
+    },
+    {
+      "name": "refvalid Mini (C16 + ref_validity + r7 refiner)",
+      "trained_weights_exist": false,
+      "model_cfg": {
+        "channels": 16,
+        "coh": true,
+        "df_order": 3,
+        "film": false,
+        "noise_floor": false,
+        "ref_validity": true
+      },
+      "refiner_cfg": {},
+      "total_entries": 53147,
+      "learnable_entries": 28571,
+      "buffer_entries": 1134,
+      "state_entries": 28842,
+      "ref_extension_entries": 400,
+      "matrix_macs_per_hop": 1369936,
+      "matrix_mmac_per_second": 85.621,
+      "ref_extension_macs_per_hop": 26000,
+      "within_budget": true
+    },
+    {
+      "name": "C32 + ref_validity (untrained projection)",
+      "trained_weights_exist": false,
+      "model_cfg": {
+        "channels": 32,
+        "coh": true,
+        "df_order": 3,
+        "film": false,
+        "noise_floor": false,
+        "ref_validity": true
+      },
+      "refiner_cfg": {},
+      "total_entries": 110683,
+      "learnable_entries": 86107,
+      "buffer_entries": 1710,
+      "state_entries": 46890,
+      "ref_extension_entries": 800,
+      "matrix_macs_per_hop": 2433024,
+      "matrix_mmac_per_second": 152.064,
+      "ref_extension_macs_per_hop": 52000,
+      "within_budget": false
+    },
+    {
+      "name": "C64 + ref_validity (untrained projection)",
+      "trained_weights_exist": false,
+      "model_cfg": {
+        "channels": 64,
+        "coh": true,
+        "df_order": 3,
+        "film": false,
+        "noise_floor": false,
+        "ref_validity": true
+      },
+      "refiner_cfg": {},
+      "total_entries": 320219,
+      "learnable_entries": 295643,
+      "buffer_entries": 2862,
+      "state_entries": 82986,
+      "ref_extension_entries": 1600,
+      "matrix_macs_per_hop": 6201952,
+      "matrix_mmac_per_second": 387.622,
+      "ref_extension_macs_per_hop": 104000,
+      "within_budget": false
+    },
+    {
+      "name": "C96 + ref_validity (untrained projection)",
+      "trained_weights_exist": false,
+      "model_cfg": {
+        "channels": 96,
+        "coh": true,
+        "df_order": 3,
+        "film": false,
+        "noise_floor": false,
+        "ref_validity": true
+      },
+      "refiner_cfg": {},
+      "total_entries": 655707,
+      "learnable_entries": 631131,
+      "buffer_entries": 4014,
+      "state_entries": 119082,
+      "ref_extension_entries": 2400,
+      "matrix_macs_per_hop": 12161216,
+      "matrix_mmac_per_second": 760.076,
+      "ref_extension_macs_per_hop": 156000,
+      "within_budget": false
+    }
+  ]
+}
