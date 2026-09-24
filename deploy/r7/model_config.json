@@ -17,5 +17,7 @@
     "df_order": 3,
     "film": false,
     "noise_floor": false
-  }
+  },
+  "onnx_sha256": "e67a2c42a2fd53ec4d7e6c4dfbf9cef920c249e499a509a2b40af401c5cefe3c",
+  "onnx": "deploy/r7/cascade.onnx"
 }
