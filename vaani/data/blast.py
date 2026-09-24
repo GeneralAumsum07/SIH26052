@@ -88,7 +88,8 @@ def blast(rng: np.random.Generator, sr: int = 16000, kind: str | None = None,
         L = rng.uniform(0.15e-3, 0.4e-3)
         lead = int(rng.uniform(0.5e-3, 4e-3) * osr)   # N-wave precedes the muzzle blast
         nw = _n_wave(L, n, osr) * rng.uniform(0.4, 1.0)
-        y = y + np.concatenate([nw[lead:], np.zeros(lead)])
+        # N-wave at t=0, muzzle blast delayed by `lead`; the old nw[lead:] slice dropped it, since lead > L always
+        y = np.concatenate([np.zeros(lead), y[:n - lead]]) + nw
 
     # ground reflection: delayed, inverted, slightly softened
     d = int(rng.uniform(1e-3, 9e-3) * osr)
@@ -104,7 +105,8 @@ def blast(rng: np.random.Generator, sr: int = 16000, kind: str | None = None,
     peak = float(np.abs(y).max()) + 1e-12
     y = (y / peak).astype(np.float32)
     return y, {"kind": kind, "distance": distance, "positive_phase_ms": T * 1e3,
-               "ballistic": bool(ballistic), "onsets_s": [0.0]}
+               "ballistic": bool(ballistic), "ballistic_lead_ms": lead / osr * 1e3 if ballistic else None,
+               "onsets_s": [0.0]}
 
 
 if __name__ == "__main__":

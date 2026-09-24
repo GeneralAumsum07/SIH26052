@@ -16,11 +16,12 @@ def _decay(rng, sr, tau_s):
     return (x * np.exp(-t / tau_s)).astype(np.float32)
 
 
-def generate(rng: np.random.Generator, sr: int = 16000, kind: str | None = None):
+def generate(rng: np.random.Generator, sr: int = 16000, kind: str | None = None, blast_kind: str | None = None):
+    """blast_kind pins the blast sub-kind ("small_arms" | "artillery"); None draws it, as training does."""
     kind = kind or rng.choice(KINDS)
     if kind == "blast":
         from vaani.data import blast as _blast
-        x, m = _blast.blast(rng, sr)
+        x, m = _blast.blast(rng, sr, kind=blast_kind)
         pre = int(rng.uniform(0.05, 0.3) * sr)  # same silent lead-in as burst so the onset is inside the clip
         x = np.concatenate([np.zeros(pre, np.float32), x]); onsets = [pre / sr]
     elif kind == "burst":
