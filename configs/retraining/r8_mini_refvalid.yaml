@@ -1,0 +1,86 @@
+# r8 fallback Mini (spec 6.2/6.3): the r7 C16 backbone warm-started with the reference-validity input and
+# trained under reference-failure augmentation. Everything else is r7_e256_wr64's recipe byte for byte:
+# data, loss, controller, optimiser, epoch budget. Changes: init (r7 best, pinned), model_cfg.ref_validity,
+# data.ref_corrupt (M9 rates), dsp.ref_policy, a fresh seed and the name. Budget: 53,147 entries,
+# 85.621 MMAC/s (results_r2/r8/budget.md). Not launched here; the r8 retrain runs it.
+amp: true
+batch_size: 32
+controller_on: true
+data:
+  bank: data/rirs/bank_r3.npz
+  crop_s: 4.0
+  epoch_len: 20000
+  manifests:
+  - data/manifests/librispeech_100h.parquet
+  - data/manifests/ears.parquet
+  - data/manifests/cv_hi.parquet
+  - data/manifests/esc50.parquet
+  - data/manifests/dns_datasets_fullband.noise_fullband.freesound_000.tar.parquet
+  - data/manifests/mad.parquet
+  - data/manifests/gunshots.parquet
+  - data/manifests/drone.parquet
+  - data/manifests/noisex92.parquet
+  mix:
+    impulse_kinds:
+    - blast
+    - blast
+    - burst
+    - click_train
+    impulse_peak_db:
+    - 15
+    - 45
+    impulse_room: true
+    overload_softclip: true
+    speech_rms_db:
+    - -32
+    - -18
+  ref_corrupt:          # vaani/data/dataset.py REF_CORRUPT_DEFAULTS for the fault shapes
+    p: 0.15             # M9: 10-15% reference faults (dropout, burst, delay, gain, polarity, clip, noise, lowpass, leak)
+    p_absent: 0.15      # M9: ~15% reference absent for the whole crop, validity 0
+device: cuda
+dsp:
+  blocking: true
+  controller:
+    block_margin_db: 10.0
+    diff_jump_max_db: 3.0
+  limiter: true
+  ref_policy:           # absent samples reach no NLMS/feature/model input; ramp back over 12 frames
+    nlms: true          # robust NLMS (vaani/dsp/nlms.py ROBUST_DEFAULTS; delay 0)
+    absent: freeze
+    ramp_frames: 12
+init_from: results_r2/runs/r7_e256_wr64/best.pt
+init_sha256: 0bea98181cf7846d64fdd14e6fc16ec9d45c0028d5feb08f76279f5947b81106
+early_stopping:
+  min_delta: 0.0
+  patience: null
+epochs: 64
+loss: hybrid
+loss_cfg:
+  p: 0.5
+  snr_max_db: 30
+  w_complex: 50
+  w_mag: 50
+  w_snr: 0.2
+model: vaani
+model_cfg:
+  channels: 16
+  coh: true
+  df_order: 3
+  film: false
+  noise_floor: false
+  ref_validity: true    # +400 zero-init params; at availability 1 the warm start equals r7 exactly
+name: r8_mini_refvalid
+num_workers: auto
+optim:
+  clip: 5.0
+  clip_df: 1.0
+  lr: 0.00025
+  lr_df: 0.0025
+  lr_new: 0.0005
+  warmup: 200
+resume: true
+seed: 2
+val:
+  dynamic_items: 200
+  eval_root: data/eval_r2
+  split: val

@@ -1,0 +1,20 @@
+# Second stage for r8_mini_refvalid: the r7 ResidualRefiner recipe on the frozen refvalid backbone.
+# The data recipe (ref_corrupt and ref_policy included) comes from the base checkpoint's own config, and the
+# refiner's reference input is gated by the availability label (vaani/models/cascade.py). seed/epochs/optim
+# match r7_e256_wr64_refiner. Pin base_checkpoint_sha256 once the backbone exists (TBD: its sha256).
+name: r8_mini_refvalid_refiner
+model: vaani_cascade
+base_checkpoint: runs/r8_mini_refvalid/best.pt
+seed: 4606
+epochs: 32
+batch_size: 32
+num_workers: auto
+amp: true
+optim:
+  lr: 0.001
+  warmup: 200
+  clip: 1.0
+  weight_decay: 0.0001
+val:
+  eval_root: data/eval_r2
+  split: val

@@ -16,6 +16,7 @@ from vaani.models.residual_refiner import init_refine_cache
 from vaani.models.vaani_net import VaaniNet, StreamVaaniNet, init_caches, N_REL
 from vaani.train import build_param_groups
 
+ROOT = Path(__file__).resolve().parents[1]
 R7 = Path("results_r2/runs/r7_e256_wr64/best.pt")
 MC = dict(channels=16, coh=True, df_order=3, film=False, noise_floor=False)   # r7's model_cfg
 SR, HOP = 16000, 256
@@ -220,3 +221,49 @@ def test_dataset_mixture_stream_is_unchanged_and_labels_ride_along(tmp_path):
     assert "ref_avail" not in a and b["ref_avail"].shape == (b["feats"].shape[0],) and float(b["ref_avail"].sum()) == 0
     assert b["meta"]["ref_fault"]["kind"] == "dropout"
     batch = dataset.collate([cor[0], cor[1]]); assert batch["ref_avail"].shape[0] == 2
+
+
+# --- scripts/eval_refvalid.py and the r8 config ---
+
+def _eval_mod():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("eval_refvalid", ROOT / "scripts" / "eval_refvalid.py")
+    mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+    return mod
+
+
+def test_eval_conditions_touch_only_the_reference():
+    ev = _eval_mod(); rng = np.random.default_rng(0); n = 8000
+    clean = (0.1 * rng.standard_normal(n)).astype(np.float32)
+    mix = np.stack([clean + 0.05 * rng.standard_normal(n), 0.05 * rng.standard_normal(n)]).astype(np.float32)
+    for cond in ev.CONDITIONS:
+        m, avail, edges = ev.apply_condition(cond, mix, clean)
+        assert np.array_equal(m[0], mix[0]) and m.shape == mix.shape
+        assert (avail is None) == (cond not in ("absent", "burst_dropout"))
+        if cond == "burst_dropout":
+            assert len(edges) == 4 and not m[1][~avail].any() and avail.sum() < n
+    assert not ev.apply_condition("absent", mix, clean)[0][1].any()
+    with pytest.raises(ValueError):
+        ev.apply_condition("bogus", mix, clean)
+
+
+def test_eval_speech_loss_bounds():
+    ev = _eval_mod(); rng = np.random.default_rng(1); n = 16000
+    clean = (0.1 * rng.standard_normal(n)).astype(np.float32); prim = clean + 0.01
+    assert ev.frame_stats(clean, clean, prim)["speech_loss"] == 0.0
+    s = ev.frame_stats(clean, np.zeros_like(clean), prim)
+    assert s["speech_loss"] == 1.0 and s["longest_lost_s"] == pytest.approx(n // ev.F * ev.F / ev.SR)
+
+
+def test_r8_refvalid_config_parses_and_pins_r7():
+    import hashlib, yaml
+    c = yaml.safe_load(open(ROOT / "configs" / "retraining" / "r8_mini_refvalid.yaml"))
+    r7 = yaml.safe_load(open(ROOT / "configs" / "retraining" / "r7_e256_wr64.yaml"))
+    rc = dataset.ref_corrupt_config(c["data"]["ref_corrupt"]); assert rc["p"] == 0.15 and rc["p_absent"] == 0.15
+    assert c["model_cfg"] == {**r7["model_cfg"], "ref_validity": True}
+    assert {k: v for k, v in c["data"].items() if k != "ref_corrupt"} == r7["data"]
+    assert c["loss_cfg"] == r7["loss_cfg"] and c["optim"] == r7["optim"] and c["epochs"] == r7["epochs"]
+    assert c["dsp"]["ref_policy"]["absent"] in ("freeze", "reset")
+    p = ROOT / c["init_from"]
+    if p.exists():
+        assert hashlib.sha256(p.read_bytes()).hexdigest() == c["init_sha256"]
