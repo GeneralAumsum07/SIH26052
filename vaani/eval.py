@@ -1,10 +1,10 @@
 """Per-clip metrics over a rendered split. One CSV row per clip."""
 import argparse, csv
 from collections import deque
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from contextlib import nullcontext
-import os
-from multiprocessing import Pool
+import os, sys
 from pathlib import Path
 
 import numpy as np, torch
@@ -179,6 +179,42 @@ def _work(i):
         return _nan_row(meta), None
 
 
+def _ordered(ex, fn, items, window):
+    """In-order results with at most `window` tasks in flight; a dead worker raises BrokenProcessPool, never hangs."""
+    items, pending = iter(items), deque()
+    for i in items:
+        pending.append(ex.submit(fn, i))
+        if len(pending) >= window: break
+    while pending:
+        r = pending.popleft().result()
+        for i in items:
+            pending.append(ex.submit(fn, i)); break
+        yield r
+
+
+def _stream(ex, idx, window):
+    return _ordered(ex, _work, idx, window) if ex is not None else map(_work, idx)
+
+
+def _key(p):
+    return p.parent.name, p.name[: -len(".mix.wav")]
+
+
+def resume_rows(out, cols):
+    """(bucket, id) keys already in `out`; a torn last line (killed mid-write) is cut off so appends stay parseable."""
+    p = Path(out)
+    if not p.exists() or p.stat().st_size == 0:
+        return None
+    raw = p.read_bytes()
+    if not raw.endswith(b"\n"):
+        raw = raw[: raw.rfind(b"\n") + 1]; p.write_bytes(raw)
+    with open(p, encoding="utf-8", newline="") as fh:
+        r = csv.DictReader(fh)
+        if r.fieldnames != cols:
+            raise SystemExit(f"--resume: {out} header {r.fieldnames} != expected {cols}")
+        return {(row["bucket"], row["id"]) for row in r}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--system", required=True); ap.add_argument("--split", default="test")
@@ -188,8 +224,9 @@ def main():
     ap.add_argument("--workers", type=int, default=8, help="CPU processes for DSP+metrics (0 = in-process, for debugging); Whisper stays in this process")
     ap.add_argument("--asr-threads", type=int, default=4, help="concurrent Whisper decodes (GPU batches them)")
     ap.add_argument("--dnsmos", action="store_true", help="also score DNSMOS P.835 SIG/BAK/OVRL (deploy/dnsmos/sig_bak_ovr.onnx)")
+    ap.add_argument("--resume", action="store_true", help="keep the rows already in --out, score only the missing clips and append them")
     a = ap.parse_args()
-    root = Path(a.eval_root); n = len(RenderedDataset(root / a.split))
+    root = Path(a.eval_root); ds_items = RenderedDataset(root / a.split).items; n = len(ds_items)
     asr = None
     if a.asr:
         try:
@@ -201,9 +238,14 @@ def main():
             "snr_out", "si_sdr", "stoi", "pesq_wb", "dnsmos_sig", "dnsmos_bak", "dnsmos_ovrl", "recovery_s", "asr_text"]
     index = read_index(root / a.split)
     if index: cols += EXTRA_COLS
-    with open(a.out, "w", encoding="utf-8", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore"); w.writeheader()
-        # imap keeps CSV order deterministic; results stream back so ASR overlaps the workers' DSP/PESQ
+    done = resume_rows(a.out, cols) if a.resume else None
+    idx = [i for i in range(n) if done is None or _key(ds_items[i]) not in done]
+    if done is not None: print(f"--resume: {len(done)} rows kept, {len(idx)} to score")
+    last = None   # (bucket, id) of the last row written, named if a worker dies
+    with open(a.out, "a" if done is not None else "w", encoding="utf-8", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore")
+        if done is None: w.writeheader()
+        # ordered results keep CSV order deterministic; they stream back so ASR overlaps the workers' DSP/PESQ
         if a.workers == 0: _init(a.system, root, a.split, a.dnsmos)
         # One BLAS/OpenMP thread per worker. _init caps torch and vaani/dnsmos.py caps onnxruntime,
         # but numpy's BLAS has its own pool and reads the environment at import, so it has to be set
@@ -214,31 +256,42 @@ def main():
                                   "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS")}
         _saved = {k: os.environ.get(k) for k in _caps}
         os.environ.update(_caps)
+        # ProcessPoolExecutor spawns workers on demand, so the caps stay set until the run ends;
+        # unlike Pool.imap it raises BrokenProcessPool when a worker dies (e.g. OOM) instead of waiting forever
+        pool_cm = ProcessPoolExecutor(a.workers, initializer=_init, initargs=(a.system, root, a.split, a.dnsmos)) if a.workers else nullcontext()
+        def transcribe(item):
+            row, est = item
+            if asr is not None and est is not None:
+                try:
+                    row["asr_text"] = whisper_text(asr, est)
+                except Exception as e:
+                    print(f"asr {row['id']} failed: {e!r}")
+            return fill_extra(row, index)
+        def put(row):
+            nonlocal last
+            w.writerow(row); last = (row["bucket"], row["id"]); bar.update()
+        # executor.map would drain the whole stream before yielding; a bounded deque keeps ~2x threads in flight
+        pending, bar, broken = deque(), tqdm(total=len(idx), desc=a.system), None
         try:
-            pool_cm = Pool(a.workers, initializer=_init, initargs=(a.system, root, a.split, a.dnsmos)) if a.workers else nullcontext()
+            with pool_cm as pool, ThreadPoolExecutor(a.asr_threads) as tp:
+                try:
+                    for item in _stream(pool, idx, 4 * max(a.workers, 1)):
+                        pending.append(tp.submit(transcribe, item))
+                        if len(pending) >= 2 * a.asr_threads:
+                            put(pending.popleft().result())
+                except BrokenProcessPool as e:
+                    broken = e
+                # rows finished before a worker died are still valid and in order
+                while pending:
+                    put(pending.popleft().result())
         finally:
+            bar.close()
             for _k, _v in _saved.items():
                 if _v is None: os.environ.pop(_k, None)
                 else: os.environ[_k] = _v
-        with pool_cm as pool, ThreadPoolExecutor(a.asr_threads) as tp:
-            stream = pool.imap(_work, range(n)) if pool else map(_work, range(n))
-            def transcribe(item):
-                row, est = item
-                if asr is not None and est is not None:
-                    try:
-                        row["asr_text"] = whisper_text(asr, est)
-                    except Exception as e:
-                        print(f"asr {row['id']} failed: {e!r}")
-                return fill_extra(row, index)
-            # executor.map would drain the whole stream before yielding; a bounded deque keeps ~2x threads in flight
-            pending, bar = deque(), tqdm(total=n, desc=a.system)
-            for item in stream:
-                pending.append(tp.submit(transcribe, item))
-                if len(pending) >= 2 * a.asr_threads:
-                    w.writerow(pending.popleft().result()); bar.update()
-            while pending:
-                w.writerow(pending.popleft().result()); bar.update()
-            bar.close()
+    if broken is not None:
+        print(f"a worker process died ({broken!r}); last row written: {last}; rerun with --resume to finish", file=sys.stderr)
+        sys.exit(3)
 
 if __name__ == "__main__":
     main()

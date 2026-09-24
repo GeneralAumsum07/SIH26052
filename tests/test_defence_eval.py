@@ -54,3 +54,51 @@ def test_meta_tags_win_over_the_index(tmp_path):
     row = E.fill_extra({"bucket": "gunshot_0", "id": "0000", "category": "from_meta", "noise_source": None},
                        {("gunshot_0", "0000"): {"category": "idx", "noise_source": "mad:x/1", "impulse_source": "s"}})
     assert row["category"] == "from_meta" and row["noise_source"] == "mad:x/1" and row["impulse_source"] == "s"
+
+
+def test_resume_appends_only_missing_rows_and_cuts_a_torn_line(tmp_path, monkeypatch):
+    root = _set(tmp_path / "e"); full, part = tmp_path / "full.csv", tmp_path / "part.csv"
+    _run(root, full, monkeypatch)
+    lines = full.read_bytes().splitlines(keepends=True)
+    part.write_bytes(b"".join(lines[:2]) + lines[2][:10])   # header, one row, a row killed mid-write
+    monkeypatch.setattr(sys, "argv", ["eval", "--system", "raw", "--eval-root", str(root), "--out", str(part),
+                                      "--workers", "0", "--asr-threads", "1", "--resume"])
+    E.main()
+    assert part.read_bytes() == full.read_bytes()
+
+
+def test_dead_worker_exits_nonzero_and_resume_finishes(tmp_path, monkeypatch):
+    from concurrent.futures.process import BrokenProcessPool
+    import pytest
+    root = _set(tmp_path / "e"); full, out = tmp_path / "full.csv", tmp_path / "r.csv"
+    _run(root, full, monkeypatch)
+    real = E._stream
+
+    def dies_after_one(ex, idx, window):
+        it = real(ex, idx, window); yield next(it); raise BrokenProcessPool("worker died")
+    monkeypatch.setattr(E, "_stream", dies_after_one)
+    monkeypatch.setattr(sys, "argv", ["eval", "--system", "raw", "--eval-root", str(root), "--out", str(out),
+                                      "--workers", "0", "--asr-threads", "1"])
+    with pytest.raises(SystemExit) as ex:
+        E.main()
+    assert ex.value.code == 3 and len(out.read_bytes().splitlines()) == 2
+    monkeypatch.setattr(E, "_stream", real)
+    monkeypatch.setattr(sys, "argv", sys.argv + ["--resume"])
+    E.main()
+    assert out.read_bytes() == full.read_bytes()
+
+
+def test_ordered_raises_when_a_real_worker_dies():
+    import os
+    from concurrent.futures import ProcessPoolExecutor
+    from concurrent.futures.process import BrokenProcessPool
+    import pytest
+    with ProcessPoolExecutor(1) as ex:
+        with pytest.raises(BrokenProcessPool):
+            list(E._ordered(ex, os._exit, [1, 1, 1], 2))
+
+
+def test_ordered_keeps_order_with_a_bounded_window():
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(3) as ex:
+        assert list(E._ordered(ex, lambda i: i * i, range(10), 3)) == [i * i for i in range(10)]
