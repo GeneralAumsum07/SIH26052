@@ -16,6 +16,14 @@ MAX_SABINE_ATTEMPTS = 50
 ARMOURED_DIMS = (1.5, 2.5)
 ARMOURED_RT60 = (0.4, 0.9)
 ARMOURED_RAYS = 10000
+# M6 (plan 11.5): the legacy 0.3 m receiver sphere is wider than the 0.12 m mic spacing, so both mics integrate the
+# same rays. Opt-in radius below half the spacing keeps the spheres disjoint; rays scale by (0.3 / r)^2 so the hit
+# count per sphere, and with it the tail's variance, stays that of the legacy setting.
+LEGACY_RECEIVER_RADIUS = 0.3
+M6_RECEIVER_RADIUS = 0.05
+# eval banks draw from their own SeedSequence namespace: an eval bank built with seed k no longer shares its draw
+# stream with a training bank built with any seed (plan 3.5: 28 % of eval rooms were bit-identical to training rooms)
+EVAL_SEED_NAMESPACE = 0x4556414C   # "EVAL"
 
 
 def draw_room_params(rng: np.random.Generator, n_noise: int = 2, armoured: bool = False) -> dict:
@@ -54,12 +62,14 @@ def draw_room_params(rng: np.random.Generator, n_noise: int = 2, armoured: bool 
             "noise_pos": noise_pos, "armoured": armoured}
 
 
-def simulate_from_params(prm: dict, sr: int = SR, max_len: int = MAX_LEN) -> dict:
-    """The deterministic half: build the room from drawn parameters and run the image-source method."""
+def simulate_from_params(prm: dict, sr: int = SR, max_len: int = MAX_LEN, receiver_radius: float | None = None) -> dict:
+    """The deterministic half: build the room from drawn parameters and run the image-source method.
+    receiver_radius: armoured ray tracer only; None = the legacy 0.3 m (bit-identical banks)."""
     dims, e_abs, head, yaw, armoured = prm["dims"], prm["e_abs"], prm["head"], prm["yaw"], prm["armoured"]
     if armoured:
         room = pra.ShoeBox(dims, fs=sr, materials=pra.Material(e_abs), max_order=3, ray_tracing=True, air_absorption=True)
-        room.set_ray_tracing(receiver_radius=0.3, n_rays=ARMOURED_RAYS)
+        rr = LEGACY_RECEIVER_RADIUS if receiver_radius is None else float(receiver_radius)
+        room.set_ray_tracing(receiver_radius=rr, n_rays=int(round(ARMOURED_RAYS * (LEGACY_RECEIVER_RADIUS / rr) ** 2)))
     else:
         room = pra.ShoeBox(dims, fs=sr, materials=pra.Material(e_abs), max_order=min(prm["max_order"], 12))
     fwd = np.array([np.cos(yaw), np.sin(yaw), 0.0])
@@ -84,19 +94,30 @@ def simulate_from_params(prm: dict, sr: int = SR, max_len: int = MAX_LEN) -> dic
 
 
 def simulate_pair_set(rng: np.random.Generator, sr: int = SR, n_noise: int = 2, armoured: bool = False,
-                      max_len: int = MAX_LEN) -> dict:
-    return simulate_from_params(draw_room_params(rng, n_noise, armoured), sr, max_len)
+                      max_len: int = MAX_LEN, receiver_radius: float | None = None) -> dict:
+    return simulate_from_params(draw_room_params(rng, n_noise, armoured), sr, max_len, receiver_radius)
+
+
+def bank_rng(seed: int, seed_namespace: str | None = None) -> np.random.Generator:
+    """None = the legacy stream (default_rng(seed)); "eval" = a disjoint namespace for eval-only banks."""
+    if seed_namespace is None:
+        return np.random.default_rng(seed)
+    if seed_namespace != "eval":
+        raise ValueError(f"unknown seed_namespace {seed_namespace!r}")
+    return np.random.default_rng(np.random.SeedSequence([EVAL_SEED_NAMESPACE, int(seed)]))
 
 
 def _sim(args):
-    prm, max_len = args
-    return simulate_from_params(prm, max_len=max_len)
+    prm, max_len, rr = args
+    return simulate_from_params(prm, max_len=max_len, receiver_radius=rr)
 
 
 def build_bank(path: Path, n: int = 5000, seed: int = 0, n_noise: int = 3, armoured_frac: float = 0.0,
-               max_len: int = MAX_LEN, workers: int | None = None) -> None:
+               max_len: int = MAX_LEN, workers: int | None = None, receiver_radius: float | None = None,
+               seed_namespace: str | None = None) -> None:
+    """receiver_radius / seed_namespace (M6) are opt-in; with both None the bank is byte-identical to before."""
     # armoured entries are drawn per index so the share is exact and the file order is still seed-reproducible
-    rng = np.random.default_rng(seed)
+    rng = bank_rng(seed, seed_namespace)
     arm = np.zeros(n, bool); arm[:int(round(n * armoured_frac))] = True; rng.shuffle(arm)
     # all draws happen here, sequentially, so the parallel simulation below cannot change the bank's content
     params = [draw_room_params(rng, n_noise, bool(a)) for a in arm]
@@ -110,17 +131,22 @@ def build_bank(path: Path, n: int = 5000, seed: int = 0, n_noise: int = 3, armou
         saved = {k: os.environ.get(k) for k in caps}; os.environ.update(caps)
         try:
             with get_context("spawn").Pool(workers) as pool:
-                sims = pool.map(_sim, [(p, max_len) for p in params], chunksize=8)
+                sims = pool.map(_sim, [(p, max_len, receiver_radius) for p in params], chunksize=8)
         finally:
             for k, v in saved.items():
                 if v is None: os.environ.pop(k, None)
                 else: os.environ[k] = v
     else:
-        sims = [simulate_from_params(p, max_len=max_len) for p in params]
+        sims = [simulate_from_params(p, max_len=max_len, receiver_radius=receiver_radius) for p in params]
     sp, nz, rt = [s["speech"] for s in sims], [s["noise"] for s in sims], [s["rt60"] for s in sims]
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     # "armoured" is bank metadata only: RirBank reads KEYS and ignores it, so older banks without it still load
-    np.savez_compressed(path, speech=np.stack(sp), noise=np.stack(nz), rt60=np.array(rt, np.float32), armoured=arm)
+    extra = {}   # M6 provenance, only when used, so a legacy bank's file is unchanged
+    if receiver_radius is not None:
+        extra["receiver_radius"] = np.float32(receiver_radius)
+    if seed_namespace is not None:
+        extra["seed_namespace"] = np.array(seed_namespace)
+    np.savez_compressed(path, speech=np.stack(sp), noise=np.stack(nz), rt60=np.array(rt, np.float32), armoured=arm, **extra)
 
 
 class RirBank:

@@ -1,3 +1,4 @@
+import pytest
 import numpy as np
 from vaani.data import rirs
 
@@ -68,3 +69,33 @@ def test_bank_armoured_share_is_exact_and_ignored_by_loader(tmp_path):
     assert z["armoured"].sum() == 2 and z["speech"].shape == (5, 2, 8000)
     b = rirs.RirBank(p)
     assert len(b) == 5 and b.sample(np.random.default_rng(0))["speech"].shape == (2, 8000)
+
+
+def test_m6_defaults_unchanged_and_eval_namespace_disjoint(tmp_path):
+    # default stream and file layout are the legacy ones
+    assert rirs.bank_rng(3).random() == np.random.default_rng(3).random()
+    rirs.build_bank(tmp_path / "a.npz", n=2, seed=0, n_noise=1, max_len=4000, workers=1)
+    assert set(np.load(tmp_path / "a.npz").files) == {"speech", "noise", "rt60", "armoured"}
+    # an eval bank with the same seed shares no room with the training stream
+    tr, ev = rirs.bank_rng(0), rirs.bank_rng(0, "eval")
+    dims_tr = {tuple(np.round(rirs.draw_room_params(tr)["dims"], 9)) for _ in range(200)}
+    dims_ev = {tuple(np.round(rirs.draw_room_params(ev)["dims"], 9)) for _ in range(200)}
+    assert not dims_tr & dims_ev
+    with pytest.raises(ValueError):
+        rirs.bank_rng(0, "test")
+
+
+def test_m6_receiver_radius_below_half_spacing_scales_rays(monkeypatch):
+    assert rirs.M6_RECEIVER_RADIUS < rirs.MIC_SPACING / 2
+    seen = {}
+    orig = rirs.pra.ShoeBox.set_ray_tracing
+
+    def spy(self, n_rays=None, receiver_radius=0.5, **kw):
+        seen.update(n_rays=n_rays, receiver_radius=receiver_radius)
+        return orig(self, n_rays=2000, receiver_radius=receiver_radius, **kw)   # cheap run, the request is what we check
+    monkeypatch.setattr(rirs.pra.ShoeBox, "set_ray_tracing", spy)
+    rirs.simulate_pair_set(np.random.default_rng(1), n_noise=1, armoured=True, max_len=4000,
+                           receiver_radius=rirs.M6_RECEIVER_RADIUS)
+    assert seen["receiver_radius"] == rirs.M6_RECEIVER_RADIUS and seen["n_rays"] == 360000
+    rirs.simulate_pair_set(np.random.default_rng(1), n_noise=1, armoured=True, max_len=4000)
+    assert seen["receiver_radius"] == 0.3 and seen["n_rays"] == rirs.ARMOURED_RAYS
