@@ -97,12 +97,18 @@ class StreamEngine:
                    same factor, and NLMS + blocking adaptation stay frozen until the ramp ends (the pre-dropout
                    weights are used meanwhile, then adaptation recalibrates them).
     With every hop valid none of this runs: the default path is the pre-contract engine, operation for operation.
+
+    guards= (default off; True or a `vaani.guards.Guards` config dict) turns on the plan 11.3 runtime guards: a
+    duplicated-mono reference or a vanished output crossfades the reference to zero over `fade_hops` (for r7 the
+    reference-absent path is the zeroed reference), through the same weight as the reconnect ramp, and each verdict
+    change is a fallback event in `self.telemetry`. Guard state is not part of `export_state` (it re-converges in
+    0.5 s).
     """
 
     def __init__(self, onnx_path, controller_on: bool = True, dsp: dict | None = None, threads: int = 1,
                  left_context: np.ndarray | None = None, *, backend=None, onnx_sha256: str | None = None,
                  allow_hash_mismatch: bool = False, ref_ramp_hops: int = REF_RAMP_HOPS, ms_window: int = 4096,
-                 stage_timing: bool = False, profile_id: str | None = None):
+                 stage_timing: bool = False, profile_id: str | None = None, guards: dict | bool | None = None):
         from vaani import backend as bk
         dsp = dsp or {}
         self.controller_on, self.dsp = controller_on, dsp
@@ -121,6 +127,12 @@ class StreamEngine:
         self.telemetry = bk.Telemetry()                 # whole-hop timing over the whole run (DSP + model + synthesis)
         self.skipped = 0        # hops not processed (overload bypass or dropped input)
         self.ref_invalid_hops = 0
+        self.guards_cfg = guards                        # plan 11.3 runtime guards; None/False = off (r7 default path)
+        self._new_guards()
+
+    def _new_guards(self) -> None:
+        from vaani.guards import Guards
+        self.guards = Guards(self.guards_cfg, self.telemetry) if self.guards_cfg else None
 
     # ---------------------------------------------------------------------------------------------- lifecycle
     def _init_dsp(self, keep=None):
@@ -147,6 +159,7 @@ class StreamEngine:
         keep = (self.nlms.w.copy(), self.blk.f.w.copy() if self.blk is not None else None) if keep_adaptation else None
         self._left_context = None               # the parity-test left context belongs to the first stream start only
         self._init_dsp(keep)
+        self._new_guards()
         self.backend.reset(self.state)
         self.state.discontinuity_flags |= bk.DISC_RESET
 
@@ -166,6 +179,7 @@ class StreamEngine:
             self.hist[2] = 0.0
         self.prev_hit = False
         self.skipped += 1
+        self.telemetry.event("bypass" if prim is not None else "gap", sample=self.state.sample_counter - HOP)
 
     # ---------------------------------------------------------------------------------------------- state I/O
     _DSP_OBJS = ("nlms", "ff", "ctl", "lim", "blk_f")
@@ -244,6 +258,10 @@ class StreamEngine:
         if prim.shape != (HOP,) or ref.shape != (HOP,):
             raise ValueError(f"process() takes exactly {HOP} samples per channel, got {prim.shape}, {ref.shape}")
         a = self._ref_ramp(bool(ref_valid))
+        if self.guards is not None:                 # guard crossfade (decided on the raw hop) composes with the ramp
+            gw = self.guards.pre(prim, ref)
+            if gw is not None:
+                a = gw if a is None else a * gw
         if not ref_valid:
             ref = np.zeros(HOP, np.float32)
             self.ref_invalid_hops += 1
@@ -271,11 +289,12 @@ class StreamEngine:
         Nh = np.fft.rfft(fn * WINDOW).astype(np.complex64)
         if marks is not None: marks.append(("stft", time.perf_counter()))
 
-        if a is not None and not ref_valid:         # hold the reference trackers across the dropout
+        hold = a is not None and not a.any()        # reference fully off (dropout or guard fallback)
+        if hold:                                    # hold the reference trackers across it
             held = (None if self.ff.sub_hist_r is None else self.ff.sub_hist_r.copy(), self.ff.ratio_floor)
         f = self.ff.compute(fp, fr, P, R, health, self.gate)       # step 2: features (gate = previous frame's)
         if a is not None:
-            if not ref_valid:
+            if hold:
                 self.ff.sub_hist_r, self.ff.ratio_floor = held
             w = float(a.mean())
             f[_COH] *= w; f[_CLIP_REF] *= w
@@ -293,7 +312,10 @@ class StreamEngine:
         spec6 = np.stack([P.real, P.imag, R.real, R.imag, Nh.real, Nh.imag], -1).astype(np.float32)[None, :, None, :]
         out0 = self.backend.step(spec6, feats[None, None, :], self.state)   # step 4 (+5, refiner inside)
         if marks is not None: marks.append(("model", time.perf_counter()))
-        y = np.fft.irfft(out0[0, :, 0, 0] + 1j * out0[0, :, 0, 1], n=N_FFT) * WINDOW   # step 6: iSTFT + OLA
+        Y = out0[0, :, 0, 0] + 1j * out0[0, :, 0, 1]
+        if self.guards is not None:                 # never-vanish verdict for the next hop
+            self.guards.post(P, Y)
+        y = np.fft.irfft(Y, n=N_FFT) * WINDOW       # step 6: iSTFT + OLA
         self.ola += y
         res = self.ola[:HOP].astype(np.float32)
         self.ola[:HOP] = self.ola[HOP:]; self.ola[HOP:] = 0.0
@@ -312,6 +334,10 @@ class StreamEngine:
         self.ms.append(dt); self.telemetry.add(dt)
         self.last = {"gate": float(self.gate), "burst": bool(burst), "reliability": float(rel), "limiter": bool(hit),
                      "ms": dt, "ref_valid": bool(ref_valid), "ref_weight": 1.0 if a is None else float(a[-1])}
+        if self.guards is not None:
+            g = self.guards
+            self.last.update(ref_informative=g.informative, never_vanish=g.fallback, guard_weight=g.g,
+                             vad_speech=bool(g.nv.speech) if g.nv is not None else None)
         if marks is not None:
             prev, stages = t0, {}
             for name, t in marks:

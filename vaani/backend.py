@@ -119,6 +119,13 @@ class Telemetry:
         self.hist = np.zeros(int(self.MAX_MS / self.BIN_MS) + 1, np.int64)   # last bin collects >= MAX_MS
         self.recent = collections.deque(maxlen=window)
         self.count, self.total_ms, self.max_ms, self.misses = 0, 0.0, 0.0, 0
+        self.events = collections.deque(maxlen=window)   # fallback events, last `window` (bounded)
+        self.event_counts = collections.Counter()
+
+    def event(self, kind: str, **info) -> None:
+        """A fallback event (guard verdict change, overload bypass, ...): counted over the run, kept in a ring."""
+        self.event_counts[kind] += 1
+        self.events.append({"kind": kind, **info})
 
     def add(self, ms: float) -> None:
         self.hist[min(int(ms / self.BIN_MS), len(self.hist) - 1)] += 1
@@ -136,7 +143,8 @@ class Telemetry:
     def summary(self) -> dict:
         return {"steps": self.count, "mean_ms": self.total_ms / self.count if self.count else float("nan"),
                 "p50_ms": self.quantile(.5), "p95_ms": self.quantile(.95), "p99_ms": self.quantile(.99),
-                "max_ms": self.max_ms, "deadline_ms": self.deadline_ms, "deadline_misses": self.misses}
+                "max_ms": self.max_ms, "deadline_ms": self.deadline_ms, "deadline_misses": self.misses,
+                "fallback_events": dict(self.event_counts)}
 
 
 # ------------------------------------------------------------------------------------------------ backends
