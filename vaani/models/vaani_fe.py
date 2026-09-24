@@ -17,13 +17,14 @@ Tensor layouts (B batch, T frames, 257 = rfft bins of the 512/256 STFT in vaani/
     feats      (B,T,18) DSP features: accepted for signature compatibility, unused
     ref_avail  (B,T) reference validity in {0,1} from the capture path; None = all valid
   step(spec, valid, state) -> (spec_out, state_out)                streaming, export
-    spec       (B,257,1,n) one raw frame, same channel order
+    spec       (B,n_raw,257) one raw frame, channels-first in the same channel order
     valid      (B,1) this frame's validity (ignored when inputs == "p")
-    state      (B,S) flat float32: K blocks of F*C2 hidden (block-major, token-major), then
+    state      (B,S) flat float32: K blocks of F*C2 GRU hidden (block-major, token-major), then
                (df_taps-1) cached compressed primary low-band frames of 2*DF_BINS (oldest first)
-    spec_out   (B,257,1,2) enhanced raw STFT frame (decompressed)
+    spec_out   (B,2,257) enhanced raw STFT frame [re, im] (decompressed)
+  Channels-first step I/O keeps the exported graph free of input/output transposes.
 
-Inputs option (ablation 2); every plane is 256 bins, compressed RI = X*|X|^(0.3-1):
+Inputs option (ablation 2); every plane is 257 bins, compressed RI = X*|X|^(0.3-1):
   p        P RI                                  n_in 2 (mono; no validity plane)
   pr       P RI, R RI*v, v plane                 n_in 5 (default)
   pr_nhat  + NLMS output RI*v                    n_in 7
@@ -33,10 +34,14 @@ spectrum, after PLDNet's PLD guidance (our bounded variant, not PLDNet's exact f
 Reference-derived planes are multiplied by validity inside the model, so validity 0 means the
 reference is ignored even if the backend passes stale samples (the trained mono fallback).
 
-Bin 256 (Nyquist): the net sees bins 0..255; bin 256 is masked with bin 255's mask (edge copy).
+Bin 256 (Nyquist) is part of the network, not dropped: the stride-4 pre-conv's last window
+(bins 250..257, right-padded) covers it, and the transposed conv's output_padding=1 emits its
+mask as a learned 257th output. Parameters and MACs equal the 256-bin prototype's.
 Mask (ablation 4): unbounded complex mask (default) or bounded, |M| = tanh(|m|) with m's phase.
 df_taps D > 0 (ablation 4): bins 0..DF_BINS-1 are replaced by a D-tap complex filter over the
 current and D-1 past compressed primary frames. The refiner is dropped (ablation 5 not built).
+Pair sums, channel swaps and mask broadcasts use fixed 0/+-1 1x1 convs (exact in FP32) instead
+of Slice/Concat, to keep G2's layout-op share down; they carry no parameters and no counted MACs.
 """
 from __future__ import annotations
 
@@ -48,8 +53,7 @@ import torch.nn.functional as F
 
 HOPS_PER_S = 62.5
 N_BINS = 257
-NET_BINS = 256        # bins 0..255 enter the network; bin 256 reuses bin 255's mask
-COARSE = 64           # pre-conv stride 4: 256 -> 64 coarse bins
+COARSE = 64           # pre-conv stride 4: 257 -> 64 coarse bins
 DF_BINS = 64          # low band for the deep-filter ablation (0-2 kHz)
 ALPHA = 0.3           # power-law compression exponent
 EPS = 1e-12           # keeps pow finite at |X| = 0; FP32 only (underflows in FP16)
@@ -67,14 +71,15 @@ TIER_STATUS = {"mini": "to be trained in r8", "mid": "projection, untrained",
 
 
 def gru_cell(x, h, rnn: nn.GRU):
-    """One nn.GRU step as Gemm ops: gate order r,z,n; b_hn inside r*(...) as PyTorch does."""
-    gi = F.linear(x, rnn.weight_ih_l0, rnn.bias_ih_l0)
-    gh = F.linear(h, rnn.weight_hh_l0, rnn.bias_hh_l0)
-    ir, iz, i_n = gi.chunk(3, -1)
-    hr, hz, h_n = gh.chunk(3, -1)
-    r = torch.sigmoid(ir + hr)
-    z = torch.sigmoid(iz + hz)
-    n = torch.tanh(i_n + r * h_n)
+    """One nn.GRU step as per-gate Gemms: gate order r,z,n; b_hn inside r*(...) as PyTorch does.
+    Weight slices are initializers, so they fold away and no Split node is exported."""
+    c = rnn.hidden_size
+    wi, wh, bi, bh = rnn.weight_ih_l0, rnn.weight_hh_l0, rnn.bias_ih_l0, rnn.bias_hh_l0
+    g = [(F.linear(x, wi[j * c:(j + 1) * c], bi[j * c:(j + 1) * c]),
+          F.linear(h, wh[j * c:(j + 1) * c], bh[j * c:(j + 1) * c])) for j in range(3)]
+    r = torch.sigmoid(g[0][0] + g[0][1])
+    z = torch.sigmoid(g[1][0] + g[1][1])
+    n = torch.tanh(g[2][0] + r * g[2][1])
     return n + z * (h - n)  # == (1-z)*n + z*h with one fewer op
 
 
@@ -89,14 +94,14 @@ class FreqAttn(nn.Module):
         self.qkv = nn.Linear(c, 3 * c, bias=False)
         self.last_macs = 0
 
-    def forward(self, x):  # (N, F, C)
-        n, f, c = x.shape
+    def forward(self, x, n, f):  # x (n*f, C) or (n, f, C)
+        c = x.shape[-1]
         d = c // self.h
-        q, k, v = self.qkv(x).reshape(n, f, 3, self.h, d).permute(2, 0, 3, 1, 4)
+        q, k, v = self.qkv(x).reshape(n, f, 3 * self.h, d).transpose(1, 2).split(self.h, 1)
         # explicit softmax attention: exports as MatMul/Softmax, no fused-attention op
         a = torch.softmax(q @ k.transpose(-1, -2) * d ** -0.5, dim=-1)
         self.last_macs = 2 * n * f * f * c  # QK^T + AV, invisible to Linear hooks
-        return (a @ v).transpose(1, 2).reshape(n, f, c)
+        return (a @ v).transpose(1, 2).reshape(x.shape)
 
 
 class Block(nn.Module):
@@ -109,8 +114,8 @@ class Block(nn.Module):
         self.mix = FreqAttn(c, heads)
         self.mix_fc = nn.Linear(c, c)
 
-    def freq(self, x):  # (N, F, C) per-frame part
-        return x + self.mix_fc(self.mix(x))
+    def freq(self, x, n, f):  # per-frame part
+        return x + self.mix_fc(self.mix(x, n, f))
 
 
 def _cbr(cin, cout, k, norm, **kw):
@@ -119,6 +124,10 @@ def _cbr(cin, cout, k, norm, **kw):
     if norm == "bn":
         layers.append(nn.BatchNorm1d(cout))
     return nn.Sequential(*layers, nn.ReLU())
+
+
+def _fixed(rows):
+    return torch.tensor(rows, dtype=torch.float32)[..., None]  # (out, in, 1) conv weight
 
 
 class VaaniFE(nn.Module):
@@ -139,7 +148,7 @@ class VaaniFE(nn.Module):
         self.inputs, self.mask_kind, self.df_taps = inputs, mask, df_taps
         self.n_in, self.n_raw = INPUTS[inputs], RAW[inputs]
         self.uses_ref = inputs != "p"
-        self.pre = _cbr(self.n_in, c1, 8, norm, stride=4, padding=2)            # 256 -> 64 bins
+        self.pre = _cbr(self.n_in, c1, 8, norm, stride=4, padding=2)            # 257 -> 64 bins
         self.enc = nn.ModuleList(_cbr(c1, c1, 3, norm, padding=1) for _ in range(l))
         self.rf_pre_lin, self.rf_pre_conv = nn.Linear(COARSE, f, bias=False), nn.Conv1d(c1, c2, 1)
         self.pe = nn.Parameter(torch.zeros(f, c2))
@@ -148,9 +157,21 @@ class VaaniFE(nn.Module):
         self.dec = nn.ModuleList(nn.Sequential(_cbr(2 * c1, c1, 1, norm), _cbr(c1, c1, 3, norm, padding=1))
                                  for _ in range(l))
         self.post = _cbr(2 * c1, c1, 1, norm)
-        self.up = nn.ConvTranspose1d(c1, 2, 8, stride=4, padding=2)            # 64 -> 256 bins, complex mask
+        # 64 -> 257 bins (output_padding emits the Nyquist bin), complex mask
+        self.up = nn.ConvTranspose1d(c1, 2, 8, stride=4, padding=2, output_padding=1)
         if df_taps:  # DF taps from the lowest 16 coarse bins -> 64 fine bins
             self.df = nn.ConvTranspose1d(c1, 2 * df_taps, 8, stride=4, padding=2)
+        # fixed exact 0/+-1 maps (non-persistent: not weights, not in checkpoints)
+        self.register_buffer("w_pair", _fixed([[1 if i // 2 == o // 2 else 0 for i in range(self.n_raw)]
+                                              for o in range(self.n_raw)]), persistent=False)
+        self.register_buffer("w_pair2", _fixed([[1, 1], [1, 1]]), persistent=False)
+        self.register_buffer("w_rr", _fixed([[1, 0], [1, 0]]), persistent=False)
+        self.register_buffer("w_ii", _fixed([[0, 1], [0, 1]]), persistent=False)
+        self.register_buffer("w_j", _fixed([[0, -1], [1, 0]]), persistent=False)
+        self.register_buffer("g_p", torch.tensor([1.0, 1.0] + [0.0] * (self.n_raw - 2))[None, :, None], persistent=False)
+        self.register_buffer("g_r", 1 - self.g_p, persistent=False)
+        if inputs == "pr_pld":
+            self.register_buffer("w_pld", _fixed([[1, 1, -1, -1], [1, 1, 1, 1]]), persistent=False)
 
     # ---- sizes -------------------------------------------------------------------------------
     @property
@@ -170,22 +191,19 @@ class VaaniFE(nn.Module):
 
     # ---- shared per-frame parts --------------------------------------------------------------
     def _planes(self, x, v):
-        """x (N, n_raw, 257) raw RI, v (N,1) -> (N, n_in, 256) network planes, (N,2,257) compressed P."""
-        n = x.shape[0]
-        re, im = x[:, 0::2], x[:, 1::2]                                         # (N, n_raw/2, 257)
-        s = (re * re + im * im + EPS) ** ((ALPHA - 1) / 2)
-        xc = torch.stack([re * s, im * s], 2).reshape(n, self.n_raw, N_BINS)   # compressed RI, same order
+        """x (N, n_raw, 257) raw RI, v (N,1) -> (N, n_in, 257) network planes, (N,2,257) compressed P."""
+        s = (F.conv1d(x * x, self.w_pair) + EPS) ** ((ALPHA - 1) / 2)       # |X|^(alpha-1) per channel
+        xc = x * s
         pc = xc[:, :2]
         if not self.uses_ref:
-            return pc[..., :NET_BINS], pc
-        vb = v.reshape(n, 1, 1)
-        planes = [pc, xc[:, 2:] * vb]                                          # ref (and n_hat) gated by validity
+            return xc, pc
+        vb = v.reshape(-1, 1, 1)
+        planes = [xc * (self.g_p + self.g_r * vb)]                         # reference (and n_hat) gated by validity
         if self.inputs == "pr_pld":
-            p2 = xc[:, 0:1] ** 2 + xc[:, 1:2] ** 2
-            r2 = xc[:, 2:3] ** 2 + xc[:, 3:4] ** 2
-            planes.append((p2 - r2) / (p2 + r2 + EPS) * vb)
+            nd = F.conv1d(xc * xc, self.w_pld)                             # [|Pc|^2-|Rc|^2, |Pc|^2+|Rc|^2]
+            planes.append(nd[:, :1] / (nd[:, 1:] + EPS) * vb)
         planes.append(torch.zeros(1, 1, N_BINS, dtype=x.dtype, device=x.device) + vb)
-        return torch.cat(planes, 1)[..., :NET_BINS], pc
+        return torch.cat(planes, 1), pc
 
     def _encode(self, planes):
         x = self.pre(planes)
@@ -202,13 +220,11 @@ class VaaniFE(nn.Module):
         for d in self.dec:
             x = d(torch.cat([x, skips.pop()], 1))
         x = self.post(torch.cat([x, skips.pop()], 1))
-        m = self.up(x)                                                         # (N, 2, 256)
-        m = torch.cat([m, m[..., -1:]], -1)                                    # bin 256 := bin 255's mask
+        m = self.up(x)                                                         # (N, 2, 257)
         if self.mask_kind == "bounded":
-            mag = torch.sqrt(m[:, :1] ** 2 + m[:, 1:] ** 2 + EPS)
+            mag = torch.sqrt(F.conv1d(m * m, self.w_pair2) + EPS)
             m = m * (torch.tanh(mag) / mag)
-        mr, mi, pr_, pi_ = m[:, 0], m[:, 1], pc[:, 0], pc[:, 1]
-        y = torch.stack([pr_ * mr - pi_ * mi, pr_ * mi + pi_ * mr], 1)
+        y = F.conv1d(m, self.w_rr) * pc + F.conv1d(m, self.w_ii) * F.conv1d(pc, self.w_j)  # complex M*Pc
         if self.df_taps:
             w = self.df(x[..., :DF_BINS // 4]).reshape(-1, self.df_taps, 2, DF_BINS)
             wr, wi, hr, hi = w[:, :, 0], w[:, :, 1], pc_hist[:, :, 0], pc_hist[:, :, 1]
@@ -216,11 +232,9 @@ class VaaniFE(nn.Module):
             y = torch.cat([low, y[..., DF_BINS:]], -1)
         return y
 
-    @staticmethod
-    def _decompress(y):
+    def _decompress(self, y):
         """Compressed RI -> raw RI: Y * |Y|^(1/alpha - 1)."""
-        g = (y[:, :1] ** 2 + y[:, 1:] ** 2 + EPS) ** ((1 / ALPHA - 1) / 2)
-        return y * g
+        return y * (F.conv1d(y * y, self.w_pair2) + EPS) ** ((1 / ALPHA - 1) / 2)
 
     # ---- offline -----------------------------------------------------------------------------
     def forward(self, spec6, feats=None, ref_avail=None):
@@ -233,7 +247,7 @@ class VaaniFE(nn.Module):
         for blk in self.blocks:
             seq = tok.reshape(b, t, self.f, self.c2).transpose(1, 2).reshape(b * self.f, t, self.c2)
             y = blk.rnn(seq)[0].reshape(b, self.f, t, self.c2).transpose(1, 2).reshape(n, self.f, self.c2)
-            tok = blk.freq(tok + blk.rnn_fc(y))
+            tok = blk.freq(tok + blk.rnn_fc(y), n, self.f)
         hist = None
         if self.df_taps:
             low = pc[..., :DF_BINS].reshape(b, t, 2, DF_BINS)
@@ -244,17 +258,16 @@ class VaaniFE(nn.Module):
 
     # ---- streaming ---------------------------------------------------------------------------
     def step(self, spec, valid, state):
-        b, nb = spec.shape[0], spec.shape[1]
-        x = spec[..., 0, :self.n_raw].transpose(1, 2)                           # (B, n_raw, 257)
-        v = spec.new_ones(b, 1) if valid is None else valid.reshape(b, 1)
-        planes, pc = self._planes(x, v)
+        b = spec.shape[0]
+        v = spec.new_ones(b, 1) if valid is None else valid
+        planes, pc = self._planes(spec if spec.shape[1] == self.n_raw else spec[:, :self.n_raw], v)
         tok, skips = self._encode(planes)
+        tok = tok.reshape(b * self.f, self.c2)                                  # 2-D tokens: every Linear is a Gemm
         fc, new = self.f * self.c2, []
         for i, blk in enumerate(self.blocks):
-            h = state[:, i * fc:(i + 1) * fc].reshape(b * self.f, self.c2)
-            h = gru_cell(tok.reshape(b * self.f, self.c2), h, blk.rnn)
+            h = gru_cell(tok, state[:, i * fc:(i + 1) * fc].reshape(b * self.f, self.c2), blk.rnn)
             new.append(h.reshape(b, fc))
-            tok = blk.freq(tok + blk.rnn_fc(h.reshape(b, self.f, self.c2)))
+            tok = blk.freq(tok + blk.rnn_fc(h), b, self.f)
         hist = None
         if self.df_taps:
             cur = pc[..., :DF_BINS].reshape(b, 2 * DF_BINS)
@@ -262,8 +275,8 @@ class VaaniFE(nn.Module):
             frames = [cur] + [cache[:, j * 2 * DF_BINS:(j + 1) * 2 * DF_BINS] for j in range(self.df_taps - 2, -1, -1)]
             hist = torch.stack(frames, 1).reshape(b, self.df_taps, 2, DF_BINS)
             new.append(torch.cat([cache[:, 2 * DF_BINS:], cur], 1))             # Slice+Concat, no ScatterND
-        out = self._decompress(self._decode(tok, skips, pc, hist))
-        return out.reshape(b, 2, nb, 1).permute(0, 2, 3, 1), torch.cat(new, 1)
+        out = self._decompress(self._decode(tok.reshape(b, self.f, self.c2), skips, pc, hist))
+        return out, torch.cat(new, 1)
 
 
 class StepGraph(nn.Module):
@@ -283,10 +296,19 @@ class StepGraph(nn.Module):
 
     def example_inputs(self, seed=0):
         g = torch.Generator().manual_seed(seed)
-        spec = torch.randn(1, N_BINS, 1, self.m.n_raw, generator=g) * 0.1
+        spec = torch.randn(1, self.m.n_raw, N_BINS, generator=g) * 0.1
         state = self.m.init_state(1)
         return (spec, torch.ones(1, 1), state) if self.m.uses_ref else (spec, state)
 
+
+def frame_to_step(spec_frame):
+    """(B,257,1,n) offline-layout frame -> (B,n,257) step layout."""
+    return spec_frame[:, :, 0].transpose(1, 2)
+
+
+def step_to_frame(out):
+    """(B,2,257) step output -> (B,257,1,2) offline layout."""
+    return out.transpose(1, 2)[:, :, None]
 
 # ---- helpers ---------------------------------------------------------------------------------
 def build(tier="mini", **overrides):

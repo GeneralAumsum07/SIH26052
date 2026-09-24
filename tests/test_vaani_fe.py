@@ -16,8 +16,8 @@ def _rand(b, t, n=6, seed=0):
 def _stream(m, spec, avail):
     st, outs = m.init_state(spec.shape[0]), []
     for t in range(spec.shape[2]):
-        o, st = m.step(spec[:, :, t:t + 1], None if avail is None else avail[:, t:t + 1], st)
-        outs.append(o)
+        o, st = m.step(V.frame_to_step(spec[:, :, t:t + 1]), None if avail is None else avail[:, t:t + 1], st)
+        outs.append(V.step_to_frame(o))
     return torch.cat(outs, 2), st
 
 
@@ -36,8 +36,8 @@ def test_shapes_every_tier(tier):
     m = V.build(tier).eval()
     with torch.no_grad():
         y = m(_rand(2, 5))
-        o, st = m.step(_rand(2, 1), torch.ones(2, 1), m.init_state(2))
-    assert y.shape == (2, 257, 5, 2) and o.shape == (2, 257, 1, 2)
+        o, st = m.step(V.frame_to_step(_rand(2, 1)), torch.ones(2, 1), m.init_state(2))
+    assert y.shape == (2, 257, 5, 2) and o.shape == (2, 2, 257)
     assert st.shape == (2, m.state_size) and m.state_size == m.k * m.f * m.c2
 
 
@@ -118,13 +118,12 @@ def test_training_signature_matches_prepare_batch():
     assert all(p.grad is not None for n, p in m.named_parameters() if not n.startswith("df."))
 
 
-def test_nyquist_bin_reuses_bin_255_mask():
+def test_nyquist_bin_is_processed_not_dropped():
     m = V.build("mini", norm="none").eval()
-    spec = _rand(1, 3)
-    spec[:, 256, :, :2] = spec[:, 255, :, :2]
+    a = _rand(1, 3); b = a.clone(); b[:, 256, :, :2] += 1.0
     with torch.no_grad():
-        y = m(spec)
-    assert torch.allclose(y[:, 256], y[:, 255])
+        ya, yb = m(a), m(b)
+    assert ya.shape[1] == 257 and not torch.equal(ya[:, 256], yb[:, 256])
 
 
 def test_from_arch_and_invalid_options():

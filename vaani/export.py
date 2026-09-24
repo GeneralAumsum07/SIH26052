@@ -193,6 +193,135 @@ def parity_and_timing(ckpt_path, onnx_path, seconds=10):
     return {"max_abs_err": float(np.abs(got - ref).max()), **timing_stats(times)}
 
 
+# ---- VaaniFE (plan 11.3/11.4): step-graph export, ORT folding, carried-state parity ------------
+FE_OPSET = 17
+FE_PARITY_TOL = 1e-5  # spec 8: FP32 max abs spectral error on the bounded parity corpus
+
+
+def fe_untrained(arch, seed=0):
+    """Seeded random-weight VaaniFE for projection exports; arch is a tier name or an arch dict."""
+    from vaani.models import vaani_fe
+    torch.manual_seed(seed)  # same seed -> same weights, so a gate can rebuild the torch twin
+    m = vaani_fe.build(arch) if isinstance(arch, str) else vaani_fe.from_arch(arch)
+    return m.eval()
+
+
+def fe_load(ckpt_path):
+    """Trained VaaniFE from a train.py checkpoint ({'model': state_dict, 'config': {'model_cfg': ...}})."""
+    from vaani.models import vaani_fe
+    ck = torch.load(ckpt_path, map_location="cpu", weights_only=True)
+    m = vaani_fe.from_arch(ck["config"].get("model_cfg", {}))
+    m.load_state_dict(ck["model"])
+    return m.eval()
+
+
+def fe_fold(onnx_path, out_path, level="basic"):
+    """Save ORT's offline-optimised graph. 'basic' is provider-independent (constant folding, Conv+BN
+    fusion, redundant-node removal); 'extended' may add CPU-only contrib ops, so it is not portable."""
+    so = ort.SessionOptions()
+    so.graph_optimization_level = {"basic": ort.GraphOptimizationLevel.ORT_ENABLE_BASIC,
+                                   "extended": ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED}[level]
+    so.optimized_model_filepath = str(out_path)
+    so.log_severity_level = 3
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    ort.InferenceSession(str(onnx_path), sess_options=so, providers=["CPUExecutionProvider"])
+    return Path(out_path)
+
+
+def fe_parity_corpus(model, streams=3, hops=200, seed=0):
+    """Bounded random carried-state corpus: randn*0.1 spectra (the r7 protocol scale), validity
+    held in random runs of 10-60 hops so both present and absent reference states carry over."""
+    g = np.random.default_rng(seed)
+    out = []
+    for _ in range(streams):
+        spec = (g.standard_normal((1, 257, hops, model.n_raw)) * 0.1).astype(np.float32)
+        valid, t = np.ones((1, hops), np.float32), 0
+        while t < hops:
+            run = int(g.integers(10, 61)); valid[:, t:t + run] = float(g.random() > 0.3); t += run
+        out.append((spec, valid))
+    return out
+
+
+def fe_stream_ort(sess, model, spec, valid):
+    """Carry the flat state through ORT hop by hop. spec (1,257,T,n) offline layout, valid (1,T);
+    returns (1,257,T,2) and the final state."""
+    state = np.zeros((1, model.state_size), np.float32)
+    outs = []
+    for t in range(spec.shape[2]):
+        feeds = {"spec": np.ascontiguousarray(spec[:, :, t].transpose(0, 2, 1)), "state": state}
+        if model.uses_ref:
+            feeds["valid"] = valid[:, t:t + 1]
+        o, state = sess.run(["spec_out", "state_out"], feeds)
+        outs.append(o.transpose(0, 2, 1)[:, :, None])  # (1,2,257) -> (1,257,1,2)
+    return np.concatenate(outs, 2), state
+
+
+def fe_parity(model, onnx_path, streams=3, hops=200, seed=0):
+    """ORT vs torch step (carried state) and torch step vs torch offline, on the same corpus."""
+    from vaani.models import vaani_fe
+    sess = load_session(onnx_path)
+    err, rel, state_err, off_err = 0.0, 0.0, 0.0, 0.0
+    for spec, valid in fe_parity_corpus(model, streams, hops, seed):
+        got, st_ort = fe_stream_ort(sess, model, spec, valid)
+        s, v = torch.from_numpy(spec), torch.from_numpy(valid)
+        with torch.no_grad():
+            st, ref = model.init_state(1), []
+            for t in range(s.shape[2]):
+                o, st = model.step(vaani_fe.frame_to_step(s[:, :, t:t + 1]), v[:, t:t + 1], st)
+                ref.append(vaani_fe.step_to_frame(o))
+            ref = torch.cat(ref, 2).numpy()
+            off = model(s, None, v).numpy()
+        d = np.abs(got - ref)
+        err, off_err = max(err, float(d.max())), max(off_err, float(np.abs(ref - off).max()))
+        rel = max(rel, float(d.max() / max(np.abs(ref).max(), 1e-12)))
+        state_err = max(state_err, float(np.abs(st_ort - st.numpy()).max()))
+    return {"ort_vs_torch_max_abs": err, "ort_vs_torch_max_rel": rel, "state_max_abs": state_err,
+            "stream_vs_offline_max_abs": off_err, "streams": streams, "hops_per_stream": hops, "seed": seed,
+            "corpus": "randn*0.1 raw spectra, validity in random 10-60 hop runs (p_valid 0.7)",
+            "pass": err <= FE_PARITY_TOL and off_err <= FE_PARITY_TOL}
+
+
+def fe_timing(onnx_path, model, hops=500, warm=50, seed=0):
+    """1-thread ORT CPU per-hop step time with carried state; model only (no DSP/STFT/I/O)."""
+    sess = load_session(onnx_path, threads=1)
+    spec, valid = fe_parity_corpus(model, 1, hops + warm, seed)[0]
+    state, times = np.zeros((1, model.state_size), np.float32), []
+    for t in range(hops + warm):
+        feeds = {"spec": np.ascontiguousarray(spec[:, :, t].transpose(0, 2, 1)), "state": state}
+        if model.uses_ref:
+            feeds["valid"] = valid[:, t:t + 1]
+        t0 = time.perf_counter()
+        _, state = sess.run(["spec_out", "state_out"], feeds)
+        if t >= warm:
+            times.append((time.perf_counter() - t0) * 1000)
+    return {"ms_per_hop_mean": float(np.mean(times)), "ms_per_hop_p99": float(np.percentile(times, 99)),
+            "hops": hops, "warmup": warm, "intra_op_num_threads": 1, "provider": "CPUExecutionProvider"}
+
+
+def export_fe(model, out_path, folded_path=None, level="basic", parity=True, streams=3, hops=200, seed=0):
+    """Export VaaniFE.step (opset 17, static batch one, flat state, named I/O), save ORT's folded graph
+    and check ORT-vs-torch parity over carried-state hops. Returns a report dict."""
+    from vaani.models.vaani_fe import StepGraph, summary
+    model = model.eval()
+    wrap = StepGraph(model).eval()
+    ins, outs = wrap.io_names()
+    out_path = Path(out_path)
+    folded_path = Path(folded_path) if folded_path else out_path.with_name(out_path.stem + ".folded.onnx")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")  # tracer warnings on static batch-one shapes; parity below is the proof
+        torch.onnx.export(wrap, wrap.example_inputs(seed), str(out_path), opset_version=FE_OPSET,
+                          input_names=ins, output_names=outs, dynamo=False, do_constant_folding=True)
+    fe_fold(out_path, folded_path, level)
+    rep = {"onnx": out_path.as_posix(), "folded": folded_path.as_posix(), "fold_level": level, "opset": FE_OPSET,
+           "inputs": ins, "outputs": outs, "onnx_sha256": hashlib.sha256(out_path.read_bytes()).hexdigest(),
+           "folded_sha256": hashlib.sha256(folded_path.read_bytes()).hexdigest(), **summary(model),
+           "torch": torch.__version__, "onnxruntime": ort.__version__}
+    if parity:
+        rep["parity"] = fe_parity(model, folded_path, streams, hops, seed)
+    return rep
+
+
 SHIPPING_CKPT = "results_r2/runs/r7_e256_wr64_refiner/best.pt"  # tracked r7 cascade; embeds its backbone
 SHIPPING_ONNX = "deploy/r7/cascade.onnx"
 
