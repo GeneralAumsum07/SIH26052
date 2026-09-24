@@ -9,10 +9,12 @@ recording made in noise. --faults adds reliability-fault buckets (clipping,
 reference-mic faults, over-range bursts) at fixed SNRs; report.py keeps
 them out of the nominal envelope. --defence renders the PS defence-noise set
 instead (DEFENCE below: recorded gunshots, Friedlander blasts, MAD
-helicopter/vehicle, ESC-50 siren) with r7's training mix block. Writes an
-eval-set hash for run.json.
+helicopter/vehicle, ESC-50 siren) with r7's training mix block. --r8-test
+renders the pre-registered r8 test set (plan 11.2 G6, ex-B3; results_r2/r8/testset/PROTOCOL.md): v1 nominal,
+defence, held-out drone/NOISEX, EARS loud, faults and mixer-v2 scenes, from the held-out groups that
+--write-heldout records in configs/data/r8_heldout_exclude.json. Writes an eval-set hash for run.json.
 """
-import argparse, csv, hashlib, json
+import argparse, csv, hashlib, json, re
 from pathlib import Path
 
 import numpy as np
@@ -20,9 +22,9 @@ import pandas as pd
 import soundfile as sf
 from scipy.signal import lfilter
 
-from vaani.data import impulses, manifests
+from vaani.data import impulses, manifests, rirs, scenes
 from vaani.data.dataset import BUCKET_SNRS, SR, _load
-from vaani.data.mixer import MixConfig, mix
+from vaani.data.mixer import MixConfig, concat_xfade, fit_xfade, mix
 from vaani.data.rirs import RirBank
 
 # bucket -> (continuous noise class, impulse source); None = no burst
@@ -245,10 +247,292 @@ def main_defence(a, bank):
     _stamp(root)
 
 
+# --- r8 test set (plan 11.2 G6, ex-B3): held-out groups, then one pre-registered render ---
+HELDOUT_SCHEMA = "vaani.heldout_exclude/1"
+# NOISEX-92 is one long file per noise type: hold out whole files, each with a same-type sibling left in training
+NOISEX_HELDOUT = {"noisex92:buccaneer2": "buccaneer1", "noisex92:m109": "leopard", "noisex92:destroyerengine": "destroyerops"}
+DRONE_HOLDOUT_MOD = 5   # stable_hash(recording) % 5 == 0: about 20 % of recordings
+R8_V1_CORPORA = ("esc50", "mad")   # plus every dns_* corpus: eval_r2's nominal pools, MAD swapped for the video-grouped cut
+R8_SPEECH_CORPORA = ("librispeech", "cv_hi")
+R8_SUBSET_SIZES = {"v1": 20, "defence": 16, "heldout": 16, "loud": 16, "fault": 16, "v2": 48}
+# test scenes are physical draws: the out-of-physics reference tail is a training augmentation (ablation 3b), not a condition
+R8_V2 = {"tail_share": 0.0}
+R8_INDEX_COLS = INDEX_COLS + ["subset", "scene"]
+
+
+def drone_recording(source_id: str) -> str:
+    """DroneAudioDataset rows are 1 s chunks "<recording>_NNN_"; the recording is the unit that must not straddle splits."""
+    return re.sub(r"_\d+_?$", "", source_id)
+
+
+def _ears_style(source_id: str) -> str:
+    return source_id.split("/", 1)[1]
+
+
+def heldout_spec(man_dir="data/manifests") -> dict:
+    """The r8 held-out groups, per source. Matching is on source_id, which survives manifest re-cuts (mad vs mad_v2)."""
+    md = Path(man_dir)
+    drone = manifests.read(md / "drone.parquet"); noisex = manifests.read(md / "noisex92.parquet")
+    ears = manifests.read(md / "ears.parquet"); mad = manifests.read(md / "mad_v2.parquet")
+    drone = drone.assign(rec=drone.source_id.map(drone_recording))
+    recs = sorted(r for r in drone.rec.unique() if manifests.stable_hash(r) % DRONE_HOLDOUT_MOD == 0)
+    d_rows = drone[drone.rec.isin(recs)]
+    missing = sorted(set(NOISEX_HELDOUT) - set(noisex.source_id))
+    if missing:
+        raise ValueError(f"NOISEX held-out files not in the manifest: {missing}")
+    n_rows = noisex[noisex.source_id.isin(list(NOISEX_HELDOUT))]
+    spk = min(sorted(ears[ears.split == "train"].group_id.unique()), key=manifests.stable_hash)
+    e_rows = ears[ears.group_id == spk]
+    m_rows = mad[mad.split == "test"]
+
+    def entry(rows, **kw):
+        return {**kw, "n_rows": int(len(rows)), "hours": round(float(rows.duration_s.sum()) / 3600, 4),
+                "source_ids": sorted(rows.source_id)}
+    return {
+        "schema": HELDOUT_SCHEMA,
+        "apply": ("r8 training and val pools drop every manifest row whose source_id is listed under any source below. "
+                  "These rows exist only for data/eval_r8_test (results_r2/r8/testset/PROTOCOL.md)."),
+        "generated_by": f"python scripts/render_eval_sets.py --write-heldout configs/data/r8_heldout_exclude.json --manifest-dir {man_dir}",
+        "sources": {
+            "drone": entry(d_rows, manifest="drone.parquet", group="recording: source_id minus its trailing _NNN_ chunk index",
+                           rule=f"hold out recordings with manifests.stable_hash(recording) % {DRONE_HOLDOUT_MOD} == 0",
+                           caveat=("inferred: adjacent recordings of one family may share a flight session, and the mixed_* "
+                                   "families may reuse clean drone audio; independence holds at the recording-file level only"),
+                           group_ids=recs),
+            "noisex92": entry(n_rows, manifest="noisex92.parquet", group="file (one recording per noise type)",
+                              rule="hold out three defence recordings whose same-type sibling stays in training: "
+                                   + ", ".join(f"{k.split(':')[1]} (sibling {v})" for k, v in NOISEX_HELDOUT.items()),
+                              group_ids=sorted(n_rows.group_id)),
+            "ears": entry(e_rows, manifest="ears.parquet", group="speaker",
+                          rule="hold out the whole train-split speaker with the smallest manifests.stable_hash(group_id); "
+                               "the test set uses its *_loud clips (the val speaker stays in val)",
+                          group_ids=[spk], test_clips=sorted(e_rows.source_id[e_rows.source_id.map(_ears_style).str.endswith("_loud")])),
+            "mad": entry(m_rows, manifest="mad_v2.parquet", group="YouTube video (mad-yt-<id>)",
+                         rule=("the video-grouped, speech-filtered mad_v2 test split; the older folder-grouped mad.parquet "
+                               "put some of these videos in train, so they are excluded from any MAD manifest by source_id"),
+                         group_ids=sorted(m_rows.group_id.unique())),
+        },
+    }
+
+
+def read_heldout(path) -> tuple[dict, set]:
+    spec = json.loads(Path(path).read_text(encoding="utf-8"))
+    if spec.get("schema") != HELDOUT_SCHEMA:
+        raise ValueError(f"{path}: schema {spec.get('schema')!r} != {HELDOUT_SCHEMA!r}")
+    return spec, {s for v in spec["sources"].values() for s in v["source_ids"]}
+
+
+def _r8_seed(a, subset, name, snr, i):
+    return [a.seed, manifests.stable_hash(subset) % 1000, manifests.stable_hash(name) % 1000, int(snr) + 100, i]
+
+
+def _drone_loader(rows):
+    """Whole held-out recordings (their chunks joined in chunk order), drawn uniformly per recording, not per chunk."""
+    rows = rows.assign(rec=rows.source_id.map(drone_recording)).sort_values("source_id")
+    recs = {r: list(g.path) for r, g in rows.groupby("rec", sort=True)}
+    names = sorted(recs)
+
+    def load(rng, n):
+        r = names[int(rng.integers(len(names)))]
+        x = concat_xfade([sf.read(p, dtype="float32")[0] for p in recs[r]], int(0.05 * SR))
+        return fit_xfade(x, n, rng, int(0.05 * SR)), r
+    return load, recs
+
+
+def _file_loader(rows):
+    def load(rng, n):
+        r = rows.iloc[int(rng.integers(len(rows)))]
+        return _load(r.path, n, rng), str(r.source_id)
+    return load
+
+
+def render_heldout_item(seed, speech_df, load_noise, n, snr, bank, cfg=None):
+    """Bed-only v1 clip whose noise comes from a loader (a held-out recording) rather than a manifest row."""
+    rng = np.random.default_rng(seed)
+    sp = speech_df.iloc[int(rng.integers(len(speech_df)))]
+    x = _load(sp.path, n, rng); s = np.pad(x, (0, n - len(x)))
+    nz, src = load_noise(rng, n)
+    cfg = cfg or MixConfig(snr_range=(snr, snr), p_clean=0.0)
+    m, c, meta = mix(np.random.default_rng(seed), s, [np.pad(nz, (0, n - len(nz)))], None, [], bank, cfg)
+    meta.update(impulse_source=None, speech_source=str(sp.get("source_id", sp.path)), noise_source=src)
+    return m, c, meta, None
+
+
+def _scene_pool(noise, drone_rows):
+    """ScenePool over the test noise rows; scenes.noise_tags gives drone rows no tag (v2 training drops the corpus), so
+    the held-out recordings are indexed under "drone" here, one group per recording."""
+    df = pd.concat([noise, drone_rows]).reset_index(drop=True)
+    pool = scenes.ScenePool(df)
+    is_d = (df.corpus == "drone").to_numpy()
+    if is_d.any():
+        rec = df.source_id.map(drone_recording).to_numpy()
+        pool.index["drone"] = [np.flatnonzero(is_d & (rec == r)) for r in sorted(set(rec[is_d]))]
+    return pool
+
+
+def render_scene_item(seed, speech_df, pool, n, scene_name, bank, drone_recs=None, cfg=None):
+    """One mixer-v2 scene clip: scene levels set the SNR (an output), no twin. drone_recs maps a drone recording to
+    its chunk paths so a drawn drone row plays its whole recording instead of a looped 1 s chunk."""
+    rng = np.random.default_rng(seed)
+    sp = speech_df.iloc[int(rng.integers(len(speech_df)))]
+    x = _load(sp.path, n, rng); s = np.pad(x, (0, n - len(x)))
+    scene = scenes.sample_scene(rng, name=scene_name, crop_s=n / SR)
+    rows, imp_row = pool.draw(rng, scene)
+    noises = []
+    for r in rows:
+        if r is None:
+            noises.append(np.zeros(n, np.float32))
+        elif r.corpus == "drone" and drone_recs:
+            noises.append(concat_xfade([sf.read(p, dtype="float32")[0] for p in drone_recs[drone_recording(r.source_id)]],
+                                       int(0.05 * SR)))
+        else:
+            noises.append(_load(r.path, n, rng))
+    imp, on, src = None, [], None
+    ev = scene.get("event")
+    if ev is not None and ev.get("fired"):
+        if imp_row is None:   # no recorded impulsive row for the event's tags: physics-v2 synthetic blast
+            kind = "artillery" if scene_name == "artillery" else "small_arms"
+            imp, mt = impulses.generate(rng, kind="blast", blast_kind=kind, physics="v2")
+            on, src = mt["onsets_s"], f"synthetic:blast:{mt['blast_kind']}"
+        elif imp_row.corpus in GUNSHOT_CORPORA:
+            imp, on, src = _peak_window(imp_row)
+        else:
+            imp = _load(imp_row.path, 2 * SR, rng); imp = (imp / (np.abs(imp).max() + 1e-9)).astype(np.float32)
+            on, src = impulses.detect_onsets(imp, SR), str(imp_row.source_id)
+    cfg = cfg or MixConfig(version=2, p_clean=0.0, v2=dict(R8_V2))
+    m, c, meta = mix(rng, s, noises, imp, on, bank, cfg, scene=scene)
+    meta.update(impulse_source=src, speech_source=str(sp.get("source_id", sp.path)), scene_params=scene,
+                noise_source="+".join(x["source_id"] for x in scene["sources"] if x.get("source_id")) or None)
+    return m, c, meta, None
+
+
+def r8_pools(df, held_ids, spec):
+    """Every pool of the r8 test set, from test-split rows plus the held-out rows the spec names. Fails loudly on a
+    MAD row that is not in the video-grouped cut (the folder-grouped manifest leaks videos into train)."""
+    # held-out drone/NOISEX/EARS rows keep their train/val split labels: the spec, not the split column, selects them
+    allmad = df[df.corpus == "mad"]
+    test = df[df.split == "test"]
+    mad = test[test.corpus == "mad"]
+    stray = sorted(set(mad.source_id) - set(spec["sources"]["mad"]["source_ids"]))
+    if stray or not allmad.group_id.str.startswith("mad-yt-").any():   # the folder-grouped cut has no mad-yt- group
+        raise ValueError(f"{len(stray)} MAD test rows outside the held-out mad_v2 split, or folder-grouped MAD rows: "
+                         f"pass data/manifests/mad_v2.parquet, not mad.parquet")
+    if allmad.source_id.duplicated().any():
+        raise ValueError("MAD rows from more than one manifest: pass data/manifests/mad_v2.parquet only")
+    speech = test[(test.kind == "speech") & test.corpus.isin(R8_SPEECH_CORPORA)]
+    noise = test[test.kind == "noise"]
+    v1 = noise[noise.corpus.isin(R8_V1_CORPORA) | noise.corpus.str.startswith("dns_")]
+    held = df[df.source_id.isin(held_ids)].drop_duplicates("source_id")
+    drone = held[held.corpus == "drone"]; noisex = held[held.corpus == "noisex92"]
+    loud = held[held.source_id.isin(spec["sources"]["ears"]["test_clips"])]
+    for k, v in {"speech": speech, "v1 noise": v1, "drone": drone, "noisex92": noisex, "ears loud": loud}.items():
+        if v.empty:
+            raise ValueError(f"no rows for r8 pool {k!r}")
+    return dict(speech=speech, noise=noise, v1=v1, drone=drone, noisex=noisex, loud=loud)
+
+
+def main_r8(a, bank):
+    """The pre-registered r8 test set: labelled subsets in one split root, index.csv per item (category = subset/name)."""
+    spec, held_ids = read_heldout(a.heldout)
+    df = pd.concat([manifests.read(p) for p in a.manifests])
+    P = r8_pools(df, held_ids, spec)
+    # --r8-size shrinks every subset to one count (tests, smoke); the pre-registered set uses R8_SUBSET_SIZES
+    sizes = {k: (getattr(a, "r8_size", None) or v) for k, v in R8_SUBSET_SIZES.items()}
+    root = Path(a.out) / a.split; n = int(a.clip_s * SR); rows = []
+
+    def emit(subset, name, bucket, i, item, scene=None):
+        m, c, meta, twin = item
+        meta["category"] = f"{subset}/{name}"; meta["subset"] = subset
+        d = root / bucket; d.mkdir(parents=True, exist_ok=True)
+        _write(d, i, m, c, meta, twin)
+        rows.append({**{k: meta.get(k) for k in INDEX_COLS}, "bucket": bucket, "id": f"{i:04d}", "subset": subset,
+                     "scene": scene})
+
+    # v1 nominal: eval_r2's classes and mix defaults on fresh seeds and the video-grouped MAD
+    impd = P["v1"][P["v1"].noise_class == "impulsive"]
+    for cls, (cont, impulse) in CLASSES.items():
+        pool = P["v1"][P["v1"].noise_class == cont]
+        for snr in BUCKET_SNRS:
+            for i in range(sizes["v1"]):
+                it = render_bucket_item(_r8_seed(a, "v1", cls, snr, i), P["speech"], pool, n, snr, impulse, bank,
+                                        imp_df=impd, tag_noise=True)
+                it[2]["noise_class"] = cls
+                emit("v1", cls, f"{cls}_{snr}", i, it)
+    for i in range(sizes["v1"]):
+        rng = np.random.default_rng(_r8_seed(a, "v1", "clean", 0, i))
+        sp = P["speech"].iloc[int(rng.integers(len(P["speech"])))]
+        s = np.pad((x := _load(sp.path, n, rng)), (0, n - len(x)))
+        m, c, meta = mix(rng, s, [np.zeros(n, np.float32)], None, [], bank, MixConfig(p_clean=1.0))
+        meta.update(noise_class="clean", speech_source=str(sp.get("source_id", sp.path)))
+        emit("v1", "clean", "clean_inf", i, (m, c, meta, None))
+
+    # defence: plan A3 categories at r7's training transient levels, physics-v2 blasts
+    beds, shots = defence_pools(P["noise"])
+    for cat, (bed, impulse) in DEFENCE.items():
+        for snr in BUCKET_SNRS:
+            cfg = MixConfig(snr_range=(snr, snr), p_clean=0.0, **DEFENCE_MIX)
+            for i in range(sizes["defence"]):
+                it = render_bucket_item(_r8_seed(a, "defence", cat, snr, i), P["speech"], beds[bed], n, snr, impulse,
+                                        bank, imp_df=shots, cfg=cfg, tag_noise=True)
+                it[2]["noise_class"] = "impulsive+stationary" if impulse else CLASS_OF_BED[bed]
+                emit("defence", cat, f"{cat}_{snr}", i, it)
+
+    # held-out recordings (never in any training pool): drone, NOISEX-92
+    d_load, d_recs = _drone_loader(P["drone"])
+    for name, load, cls in (("drone", d_load, "stationary"), ("noisex92", _file_loader(P["noisex"]), "stationary")):
+        for snr in BUCKET_SNRS:
+            for i in range(sizes["heldout"]):
+                it = render_heldout_item(_r8_seed(a, "heldout", name, snr, i), P["speech"], load, n, snr, bank)
+                it[2]["noise_class"] = cls
+                emit("heldout", name, f"heldout_{name}_{snr}", i, it)
+
+    # loud speech from the held-out EARS speaker over the MAD stationary bed (Lombard GRID is not on disk)
+    for snr in BUCKET_SNRS:
+        for i in range(sizes["loud"]):
+            it = render_bucket_item(_r8_seed(a, "loud", "ears_loud", snr, i), P["loud"], beds["mad_stationary"], n, snr,
+                                    None, bank, tag_noise=True)
+            it[2]["noise_class"] = "stationary"
+            emit("loud", "ears_loud", f"loud_ears_{snr}", i, it)
+
+    # reliability faults, as eval_r2 test: one seed per (snr, i) shared by all faults
+    st = P["v1"][P["v1"].noise_class == "stationary"]
+    for fault in FAULTS:
+        for snr in FAULT_SNRS:
+            for i in range(sizes["fault"]):
+                it = render_fault_item(_r8_seed(a, "fault", "shared", snr, i), P["speech"], st, n, snr, fault, bank)
+                it[2]["noise_class"] = "impulsive+stationary" if "burst" in fault else "stationary"
+                emit("fault", fault, f"{fault}_{snr}", i, it)
+
+    # mixer-v2 scenes (M1-M4, M7, M10, M11): SPL-calibrated, SNR is an output; windy_ridge is the gusty-wind bucket
+    pool = _scene_pool(P["noise"], P["drone"])
+    for name in scenes.SCENE_WEIGHTS:
+        for i in range(sizes["v2"]):
+            it = render_scene_item(_r8_seed(a, "v2", name, 0, i), P["speech"], pool, n, name, bank, drone_recs=d_recs)
+            emit("v2", name, f"v2_{name}", i, it, scene=name)
+
+    with open(root / "index.csv", "w", encoding="utf-8", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=R8_INDEX_COLS); w.writeheader(); w.writerows(rows)
+    _stamp(root)
+
+
+def ensure_eval_bank(path, n, seed, workers):
+    """Eval-only RIR bank (mixer2 M6 seed namespace): its rooms share no draw stream with any training bank. Room mode
+    is image-source only, so the M6 receiver radius (ray tracer) does not apply; no armoured entries (RirBank.sample
+    cannot select them, so they would leak into every room scene)."""
+    if Path(path).exists():
+        return
+    rirs.build_bank(Path(path), n=n, seed=seed, seed_namespace="eval", workers=workers)
+    print("wrote eval bank", path)
+
+
 def main(a):
     guard_frozen(a)   # before the manifests are read: a guard that fires after minutes of work is not a guard
+    if getattr(a, "build_eval_bank", None):
+        ensure_eval_bank(a.bank, a.build_eval_bank, a.bank_seed, a.bank_workers)
     bank_path = guard_bank(a)
     bank = RirBank(bank_path) if bank_path else None
+    if getattr(a, "r8_test", False):
+        return main_r8(a, bank)
     if getattr(a, "defence", False):
         return main_defence(a, bank)
     classes = CLASSES if not a.classes else {k: CLASSES[k] for k in a.classes}
@@ -307,8 +591,8 @@ def main(a):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--manifests", nargs="+", required=True)
-    ap.add_argument("--split", choices=["val", "test"], required=True)
+    ap.add_argument("--manifests", nargs="+", default=None, help="required except with --write-heldout")
+    ap.add_argument("--split", choices=["val", "test"], default=None, help="required except with --write-heldout")
     ap.add_argument("--out", default="data/eval")
     ap.add_argument("--bank", default="data/rirs/bank.npz")
     ap.add_argument("--per-bucket", type=int, default=40)
@@ -325,4 +609,24 @@ if __name__ == "__main__":
                     help="render the DEFENCE categories (gunshot, blast, MAD helicopter/vehicle, siren) instead of CLASSES")
     ap.add_argument("--force", action="store_true",
                     help="overwrite an already-frozen eval set (one carrying EVALSET_HASH); invalidates every result that cites its hash")
-    main(ap.parse_args())
+    ap.add_argument("--r8-test", action="store_true",
+                    help="render the pre-registered r8 test set (results_r2/r8/testset/PROTOCOL.md) instead of CLASSES; needs --heldout")
+    ap.add_argument("--heldout", default="configs/data/r8_heldout_exclude.json", help="held-out spec that --r8-test draws from")
+    ap.add_argument("--r8-size", type=int, default=None, help="one per-bucket count for every r8 subset (smoke only)")
+    ap.add_argument("--write-heldout", default=None, metavar="PATH",
+                    help="write the r8 held-out spec (drone, NOISEX-92, EARS, MAD groups) to PATH and exit")
+    ap.add_argument("--manifest-dir", default="data/manifests", help="where --write-heldout reads the manifests")
+    ap.add_argument("--build-eval-bank", type=int, default=None, metavar="N",
+                    help="build --bank as an N-room eval-only bank (rirs seed namespace 'eval') when it does not exist")
+    ap.add_argument("--bank-seed", type=int, default=0, help="seed of --build-eval-bank")
+    ap.add_argument("--bank-workers", type=int, default=3, help="simulation processes of --build-eval-bank")
+    a = ap.parse_args()
+    if a.write_heldout:
+        Path(a.write_heldout).parent.mkdir(parents=True, exist_ok=True)
+        Path(a.write_heldout).write_text(json.dumps(heldout_spec(a.manifest_dir), indent=1) + "\n", encoding="utf-8")
+        raise SystemExit(f"wrote {a.write_heldout}")
+    if a.split is None:
+        ap.error("--split is required")
+    if not a.manifests:
+        ap.error("--manifests is required")
+    main(a)
