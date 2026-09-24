@@ -1,0 +1,47 @@
+{
+ "vad": "silero (faster-whisper bundle)",
+ "threshold": 0.5,
+ "flag_rule": "speech_s >= 0.5 and speech_frac >= 0.1",
+ "clips": 6483,
+ "clips_flagged": 477,
+ "hours": 9.512704548611113,
+ "hours_flagged": 0.6010014583333334,
+ "flagged_by_class": {
+  "shooting": 222,
+  "footsteps": 95,
+  "shelling": 93,
+  "vehicle": 31,
+  "fighter": 23,
+  "helicopter": 13
+ },
+ "clips_by_class": {
+  "shooting": 1573,
+  "vehicle": 1032,
+  "helicopter": 1025,
+  "fighter": 991,
+  "shelling": 987,
+  "footsteps": 875
+ },
+ "videos": 500,
+ "videos_with_comm_clips": 171,
+ "videos_flagged": 171,
+ "videos_flagged_and_with_comm": 101,
+ "flag_rate_videos_with_comm": 0.11231884057971014,
+ "flag_rate_videos_without_comm": 0.044856298683857106,
+ "speech_s_p50_p90_p99": [
+  0.0,
+  0.0,
+  2.368
+ ],
+ "v2_manifest": {
+  "path": "data/manifests/mad_v2.parquet",
+  "rows": 6006,
+  "groups": 518,
+  "split_rows": {
+   "train": 5113,
+   "test": 557,
+   "val": 336
+  }
+ },
+ "seconds": 0.2
+}
