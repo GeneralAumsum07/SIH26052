@@ -12,6 +12,13 @@ Backends:
                 device; the CUDA/TensorRT EPs themselves are UNTESTED here (no onnxruntime-gpu in .venv).
   TorchBackend  the StreamVaaniNet / StreamCascade twin on cpu or cuda, caches as persistent device tensors.
                 Dev machine only (needs torch); the laptop GPU comparison in scripts/hop_benchmark.py.
+  FeOrtBackend  ONNX Runtime over a VaaniFE step graph (vaani.export.export_fe: spec, [valid], state -> spec_out,
+                state_out). One flat state tensor (1, S) per stream, sized by the tier; the same IO-binding path.
+  FeTorchBackend  VaaniFE.step (vaani/models/vaani_fe.py) on cpu or cuda, the flat state as one device tensor.
+  `open_onnx` picks OrtBackend or FeOrtBackend from the graph's input names (numpy + onnxruntime only).
+
+Models with a validity input (VaaniFE, inputs != "p") set `takes_valid`; `step(..., valid=v)` then feeds v, the
+capture-path reference validity of this frame. Validity 0 is the trained reference-absent (mono) path.
 
 Width/profile changes happen only by building a new backend and a new state: `check_state` refuses a state whose
 cache shapes differ from the backend's, so hidden state is never resized or reused across widths.
@@ -154,6 +161,8 @@ class Backend:
 
     name = "backend"
     tested = True
+    kind = "cascade"
+    takes_valid = False            # True: the graph has a per-frame reference validity input
 
     def __init__(self, profile_id: str, cache_specs: dict, deadline_ms: float = DEADLINE_MS):
         self.profile_id = profile_id
@@ -185,9 +194,9 @@ class Backend:
                 if tuple(a.shape) != s or np.dtype(a.dtype) != d:
                     raise ValueError(f"cache {k!r} is {tuple(a.shape)} {a.dtype}; backend expects {s} {d}")
 
-    def step(self, spec6: np.ndarray, feats: np.ndarray, state: StreamState) -> np.ndarray:
+    def step(self, spec6: np.ndarray, feats: np.ndarray, state: StreamState, valid: float = 1.0) -> np.ndarray:
         t0 = time.perf_counter()
-        out = self._step(spec6, feats, state)
+        out = self._step(spec6, feats, state, valid) if self.takes_valid else self._step(spec6, feats, state)
         self.telemetry.add((time.perf_counter() - t0) * 1000)
         return out
 
@@ -214,16 +223,7 @@ class OrtBackend(Backend):
 
     def __init__(self, onnx_path, threads: int = 1, providers=None, io_binding: bool | None = None,
                  device: str | None = None, profile_id: str | None = None, deadline_ms: float = DEADLINE_MS):
-        import onnxruntime as ort
-        self.ort = ort
-        providers = list(providers or ["CPUExecutionProvider"])
-        missing = [p if isinstance(p, str) else p[0] for p in providers]
-        missing = [p for p in missing if p not in ort.get_available_providers()]
-        if missing:
-            raise RuntimeError(f"execution provider(s) {missing} not available; this onnxruntime has "
-                               f"{ort.get_available_providers()}")
-        opts = ort.SessionOptions(); opts.intra_op_num_threads = threads; opts.log_severity_level = 3
-        self.sess = ort.InferenceSession(str(onnx_path), sess_options=opts, providers=providers)
+        self.ort, self.sess, providers = _ort_session(onnx_path, threads, providers)
         ins, outs = self.sess.get_inputs(), self.sess.get_outputs()
         if [i.name for i in ins[:2]] != ["spec6", "feats"]:
             raise ValueError(f"{onnx_path}: expected inputs spec6, feats first; got {[i.name for i in ins[:2]]}")
@@ -280,6 +280,18 @@ class OrtBackend(Backend):
         y = b.copy_outputs_to_cpu()[0]
         state._spare, state.caches = state.caches, spare
         return y
+
+
+def _ort_session(onnx_path, threads, providers):
+    import onnxruntime as ort
+    providers = list(providers or ["CPUExecutionProvider"])
+    missing = [p if isinstance(p, str) else p[0] for p in providers]
+    missing = [p for p in missing if p not in ort.get_available_providers()]
+    if missing:
+        raise RuntimeError(f"execution provider(s) {missing} not available; this onnxruntime has "
+                           f"{ort.get_available_providers()}")
+    opts = ort.SessionOptions(); opts.intra_op_num_threads = threads; opts.log_severity_level = 3
+    return ort, ort.InferenceSession(str(onnx_path), sess_options=opts, providers=providers), providers
 
 
 class TorchBackend(Backend):
@@ -339,3 +351,160 @@ class TorchBackend(Backend):
             out = self.module(self._spec_dev, self._feat_dev, *[state.caches[n] for n in self.cache_names])
             state.caches = dict(zip(self.cache_names, out[1:]))
             return out[0].cpu().numpy()          # .cpu() synchronises a CUDA step, so telemetry covers the kernel time
+
+
+# ------------------------------------------------------------------------------------------------ VaaniFE
+FE_KIND = "vaani_fe"
+FE_INPUTS = (["spec", "valid", "state"], ["spec", "state"])      # vaani.models.vaani_fe.StepGraph.io_names
+FE_OUTPUTS = ["spec_out", "state_out"]
+
+
+def fe_profile_id(profile: str | None, state_floats: int) -> str:
+    """Profile id of a VaaniFE stream: the tier name when known ("vaani_fe-mini"), else the state size."""
+    return f"{FE_KIND}-{profile}" if profile else f"{FE_KIND}-s{int(state_floats)}"
+
+
+def _fe_frame(spec6: np.ndarray, n_raw: int) -> np.ndarray:
+    """(1,257,1,6) engine frame -> (1,n_raw,257) channels-first step input (the first n_raw raw RI channels)."""
+    return np.ascontiguousarray(spec6[0, :, 0, :n_raw].T[None], np.float32)
+
+
+class FeOrtBackend(Backend):
+    """ONNX Runtime over a VaaniFE step graph. The whole recurrent state is one flat (1, S) float32 tensor named
+    "state" (K*F*C2 GRU hidden, plus the deep-filter frame cache when df_taps > 0), so a stream's state is sized
+    by its tier and a state from another tier is refused by `check_state`. Output (1,257,1,2) like OrtBackend."""
+
+    kind = FE_KIND
+
+    def __init__(self, onnx_path, threads: int = 1, providers=None, io_binding: bool | None = None,
+                 device: str | None = None, profile_id: str | None = None, profile: str | None = None,
+                 deadline_ms: float = DEADLINE_MS):
+        self.ort, self.sess, providers = _ort_session(onnx_path, threads, providers)
+        ins, outs = self.sess.get_inputs(), self.sess.get_outputs()
+        names = [i.name for i in ins]
+        if names not in FE_INPUTS or [o.name for o in outs] != FE_OUTPUTS:
+            raise ValueError(f"{onnx_path}: not a VaaniFE step graph (inputs {names}, outputs {[o.name for o in outs]})")
+        shp = {i.name: i.shape for i in ins}
+        for n, s in shp.items():
+            if any(not isinstance(d, int) for d in s):
+                raise ValueError(f"input {n!r} has a dynamic shape {s}; export is static batch-1")
+        if shp["spec"][0] != 1 or shp["spec"][2] != 257 or shp["state"][0] != 1:
+            raise ValueError(f"{onnx_path}: spec {shp['spec']} / state {shp['state']} are not batch-1 (1,n,257) / (1,S)")
+        self.takes_valid = "valid" in names
+        self.n_raw = int(shp["spec"][1])
+        self.state_floats = int(shp["state"][1])
+        gpu = any((p if isinstance(p, str) else p[0]) != "CPUExecutionProvider" for p in providers)
+        self.io_binding = gpu if io_binding is None else bool(io_binding)
+        self.device = device or ("cuda" if gpu else "cpu")
+        self.providers = self.sess.get_providers()
+        self.name = "ort-" + ("cpu" if not gpu else providers[0] if isinstance(providers[0], str) else providers[0][0])
+        self.tested = not gpu
+        self.onnx_path = str(onnx_path)
+        self._valid = np.ones((1, 1), np.float32)                    # reused host buffer: no per-hop alloc
+        super().__init__(profile_id or fe_profile_id(profile, self.state_floats),
+                         {"state": ((1, self.state_floats), np.float32)}, deadline_ms)
+
+    _zeros = OrtBackend._zeros
+    _host = OrtBackend._host
+    _device = OrtBackend._device
+
+    def _step(self, spec6, feats, state, valid=1.0):
+        x = _fe_frame(spec6, self.n_raw)
+        self._valid[0, 0] = valid
+        if not self.io_binding:
+            feeds = {"spec": x, "state": state.caches["state"]}
+            if self.takes_valid:
+                feeds["valid"] = self._valid
+            y, s = self.sess.run(FE_OUTPUTS, feeds)
+            state.caches = {"state": s}
+            return y.transpose(0, 2, 1)[:, :, None]                 # (1,2,257) -> (1,257,1,2)
+        # device-resident flat state, double-buffered per stream as in OrtBackend
+        spare = getattr(state, "_spare", None)
+        if spare is None:
+            spare = {"state": self._zeros(*self._specs["state"])}
+        b = self.sess.io_binding()
+        b.bind_cpu_input("spec", x)
+        if self.takes_valid:
+            b.bind_cpu_input("valid", self._valid)
+        b.bind_ortvalue_input("state", state.caches["state"])
+        b.bind_output("spec_out", "cpu")
+        b.bind_ortvalue_output("state_out", spare["state"])
+        self.sess.run_with_iobinding(b)
+        y = b.copy_outputs_to_cpu()[0]
+        state._spare, state.caches = state.caches, spare
+        return y.transpose(0, 2, 1)[:, :, None]
+
+
+class FeTorchBackend(Backend):
+    """VaaniFE.step on cpu or cuda; the flat state is one tensor that stays on `device` between hops."""
+
+    kind = FE_KIND
+
+    def __init__(self, model, device: str = "cpu", profile_id: str | None = None, profile: str | None = None,
+                 deadline_ms: float = DEADLINE_MS):
+        import torch
+        self.torch = torch
+        self.module = model.to(device).eval()
+        self.device = device
+        self.takes_valid = bool(model.uses_ref)
+        self.n_raw, self.state_floats = int(model.n_raw), int(model.state_size)
+        self._spec_dev = torch.zeros(1, self.n_raw, 257, device=device)
+        self._valid_dev = torch.ones(1, 1, device=device)
+        self.name = f"torch-{device}"
+        super().__init__(profile_id or fe_profile_id(profile or _tier_of(model), self.state_floats),
+                         {"state": ((1, self.state_floats), np.float32)}, deadline_ms)
+
+    @classmethod
+    def from_arch(cls, arch, seed: int = 0, device: str = "cpu", profile_id: str | None = None):
+        """An UNTRAINED tier (name or arch dict), seeded exactly as vaani.export.fe_untrained: cost only."""
+        from vaani import export
+        return cls(export.fe_untrained(arch, seed), device, profile_id)
+
+    @classmethod
+    def from_checkpoint(cls, ckpt_path, device: str = "cpu", profile_id: str | None = None):
+        from vaani import export
+        return cls(export.fe_load(ckpt_path), device, profile_id)
+
+    _zeros = TorchBackend._zeros
+    _host = TorchBackend._host
+    _device = TorchBackend._device
+
+    def _step(self, spec6, feats, state, valid=1.0):
+        torch = self.torch
+        with torch.inference_mode():
+            self._spec_dev.copy_(torch.from_numpy(_fe_frame(spec6, self.n_raw)))
+            self._valid_dev.fill_(float(valid))
+            y, s = self.module.step(self._spec_dev, self._valid_dev if self.takes_valid else None, state.caches["state"])
+            state.caches = {"state": s}
+            return y.transpose(1, 2)[:, :, None].cpu().numpy()
+
+
+def _tier_of(model) -> str | None:
+    """Tier name when the model's sizes are exactly a named tier's, else None."""
+    from vaani.models.vaani_fe import TIERS
+    c = model.cfg
+    for t, d in TIERS.items():
+        if all(c[k] == v for k, v in d.items()):
+            return t
+    return None
+
+
+def graph_kind(onnx_path) -> str:
+    """FE_KIND for a VaaniFE step graph, "cascade" for the r7-style spec6/feats/caches graph (input names only)."""
+    import onnxruntime as ort
+    so = ort.SessionOptions(); so.log_severity_level = 3
+    so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
+    names = [i.name for i in ort.InferenceSession(str(onnx_path), sess_options=so,
+                                                  providers=["CPUExecutionProvider"]).get_inputs()]
+    return FE_KIND if names in FE_INPUTS else "cascade"
+
+
+def open_onnx(onnx_path, kind: str | None = None, profile: str | None = None, **kw) -> Backend:
+    """The backend for an exported graph: FeOrtBackend for a VaaniFE step graph, else OrtBackend (unchanged r7
+    path). `kind` (model_config.json) is checked against the graph when given."""
+    got = graph_kind(onnx_path)
+    if kind is not None and kind != got:
+        raise ValueError(f"{onnx_path}: model_config kind {kind!r} but the graph is a {got!r} graph")
+    if got == FE_KIND:
+        return FeOrtBackend(onnx_path, profile=profile, **kw)
+    return OrtBackend(onnx_path, **kw)

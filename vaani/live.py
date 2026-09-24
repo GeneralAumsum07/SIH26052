@@ -57,8 +57,23 @@ def load_model_config(path) -> dict:
     cfg = json.loads(Path(path).read_text(encoding="utf-8"))
     if "controller_on" not in cfg:
         raise ValueError(f"{path}: missing 'controller_on'")
+    # kind: "cascade" (r7 spec6/feats/caches graph) or "vaani_fe" (step graph); profile: the VaaniFE tier name
+    kind = cfg.get("kind") or ("vaani_fe" if cfg.get("model") == "vaani_fe" else "cascade")
     return {"controller_on": bool(cfg["controller_on"]), "dsp": cfg.get("dsp") or {},
-            "onnx_sha256": cfg.get("onnx_sha256")}
+            "onnx_sha256": cfg.get("onnx_sha256"), "kind": kind,
+            "profile": cfg.get("profile") or (cfg.get("model_cfg") or {}).get("tier")}
+
+
+def write_fe_model_config(out_path, onnx_path, profile: str | None, controller_on: bool = True,
+                          dsp: dict | None = None, model_cfg: dict | None = None, **extra) -> dict:
+    """model_config.json for a VaaniFE step graph without a checkpoint (e.g. an untrained tier export): kind,
+    profile, DSP front end and the graph's sha256. `extra` is recorded as-is (e.g. note="untrained")."""
+    import hashlib
+    cfg = {"kind": "vaani_fe", "model": "vaani_fe", "profile": profile, "controller_on": bool(controller_on),
+           "dsp": dsp or {}, "model_cfg": model_cfg, "onnx": Path(onnx_path).as_posix(),
+           "onnx_sha256": hashlib.sha256(Path(onnx_path).read_bytes()).hexdigest(), **extra}
+    Path(out_path).write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
+    return cfg
 
 
 def write_model_config(ckpt_path, out_path, onnx_path=None) -> dict:
@@ -71,6 +86,8 @@ def write_model_config(ckpt_path, out_path, onnx_path=None) -> dict:
     cfg = {"checkpoint": Path(ckpt_path).as_posix(), "checkpoint_sha256": sha, "model": c["model"],
            "controller_on": bool(c["controller_on"]),
            "dsp": c.get("dsp") or {}, "model_cfg": c.get("model_cfg")}
+    if c["model"] == "vaani_fe":
+        cfg["kind"], cfg["profile"] = "vaani_fe", (c.get("model_cfg") or {}).get("tier")
     if onnx_path is not None:
         cfg["onnx_sha256"] = hashlib.sha256(Path(onnx_path).read_bytes()).hexdigest()
     Path(out_path).write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
@@ -103,21 +120,37 @@ class StreamEngine:
     reference-absent path is the zeroed reference), through the same weight as the reconnect ramp, and each verdict
     change is a fallback event in `self.telemetry`. Guard state is not part of `export_state` (it re-converges in
     0.5 s).
+
+    Models with a validity input (VaaniFE; `backend.takes_valid`) also get a per-frame validity, the training
+    convention of vaani.dsp.pipeline.frame_avail: 1 only when both hops of the frame had a valid reference and the
+    guards trust it. Their reference-absent path is validity 0 with the reference zeroed (the same network is the
+    mono fallback): validity drops to 0 at once on a dropout or a guard verdict (as at a trained dropout onset) and
+    returns to 1 once both hops are valid, while the reference itself ramps back in (as at a trained reconnect).
+    For those models the reconnect ramp defaults to dsp["ref_policy"]["ramp_frames"] when the config has one.
     """
 
     def __init__(self, onnx_path, controller_on: bool = True, dsp: dict | None = None, threads: int = 1,
                  left_context: np.ndarray | None = None, *, backend=None, onnx_sha256: str | None = None,
-                 allow_hash_mismatch: bool = False, ref_ramp_hops: int = REF_RAMP_HOPS, ms_window: int = 4096,
-                 stage_timing: bool = False, profile_id: str | None = None, guards: dict | bool | None = None):
+                 allow_hash_mismatch: bool = False, ref_ramp_hops: int | None = None, ms_window: int = 4096,
+                 stage_timing: bool = False, profile_id: str | None = None, guards: dict | bool | None = None,
+                 kind: str | None = None, profile: str | None = None):
         from vaani import backend as bk
         dsp = dsp or {}
         self.controller_on, self.dsp = controller_on, dsp
-        self.ref_ramp_hops = max(1, int(ref_ramp_hops))
         self.stage_timing = stage_timing
         self.onnx_sha256 = None
         if onnx_path is not None:
             self.onnx_sha256 = verify_onnx(onnx_path, onnx_sha256, allow_hash_mismatch)
-        self.backend = backend if backend is not None else bk.OrtBackend(onnx_path, threads=threads, profile_id=profile_id)
+        if backend is None:     # graph kind from its input names; an r7-style graph gets the same OrtBackend as before
+            backend = bk.open_onnx(onnx_path, kind=kind, profile=profile, threads=threads, profile_id=profile_id)
+        elif kind is not None and getattr(backend, "kind", "cascade") != kind:
+            raise ValueError(f"model_config kind {kind!r} but the backend runs a {backend.kind!r} model")
+        self.backend = backend
+        self.takes_valid = bool(getattr(backend, "takes_valid", False))
+        if ref_ramp_hops is None:
+            pol = dsp.get("ref_policy") if self.takes_valid else None
+            ref_ramp_hops = (pol or {}).get("ramp_frames", REF_RAMP_HOPS)
+        self.ref_ramp_hops = max(1, int(ref_ramp_hops))
         self.config_hash = bk.config_hash(controller_on, dsp)
         self._left_context = None if left_context is None else np.asarray(left_context, np.float32).reshape(3, HOP).copy()
         self.state = self.backend.new_state(self.config_hash)
@@ -148,6 +181,7 @@ class StreamEngine:
                 self.blk.f.w[:] = keep[1]
         self.gate, self.prev_hit, self.frames = 1.0, False, 0
         self._ramp_pos = self.ref_ramp_hops     # fully ramped: the reference is trusted
+        self._prev_ref_valid = True             # previous hop's reference was valid (frame validity, VaaniFE)
         # the left half of the next frame: the previous hop of limited primary, limited reference and n_hat
         self.hist = (np.zeros((3, HOP), np.float32) if self._left_context is None else self._left_context.copy())
         self.ola = np.zeros(N_FFT, np.float64)
@@ -177,13 +211,14 @@ class StreamEngine:
             self.hist[0] = np.asarray(prim, np.float32)
             self.hist[1] = 0.0 if ref is None else np.asarray(ref, np.float32)
             self.hist[2] = 0.0
+        self._prev_ref_valid = ref is not None  # a missing reference hop leaves the next frame half-absent
         self.prev_hit = False
         self.skipped += 1
         self.telemetry.event("bypass" if prim is not None else "gap", sample=self.state.sample_counter - HOP)
 
     # ---------------------------------------------------------------------------------------------- state I/O
     _DSP_OBJS = ("nlms", "ff", "ctl", "lim", "blk_f")
-    _ENGINE_ATTRS = ("gate", "prev_hit", "frames", "hist", "ola", "_ramp_pos")
+    _ENGINE_ATTRS = ("gate", "prev_hit", "frames", "hist", "ola", "_ramp_pos", "_prev_ref_valid")
 
     def _dsp_obj(self, name):
         if name == "blk_f":
@@ -262,6 +297,11 @@ class StreamEngine:
             gw = self.guards.pre(prim, ref)
             if gw is not None:
                 a = gw if a is None else a * gw
+        v = 1.0
+        if self.takes_valid:                        # frame validity: both hops valid and trusted by the guards
+            ok = ref_valid and self._prev_ref_valid and (self.guards is None or self.guards.ref_ok)
+            v = 1.0 if ok else 0.0
+        self._prev_ref_valid = bool(ref_valid)
         if not ref_valid:
             ref = np.zeros(HOP, np.float32)
             self.ref_invalid_hops += 1
@@ -310,7 +350,10 @@ class StreamEngine:
         if marks is not None: marks.append(("controller", time.perf_counter()))
 
         spec6 = np.stack([P.real, P.imag, R.real, R.imag, Nh.real, Nh.imag], -1).astype(np.float32)[None, :, None, :]
-        out0 = self.backend.step(spec6, feats[None, None, :], self.state)   # step 4 (+5, refiner inside)
+        if self.takes_valid:                                               # step 4 (+5, refiner inside)
+            out0 = self.backend.step(spec6, feats[None, None, :], self.state, v)
+        else:
+            out0 = self.backend.step(spec6, feats[None, None, :], self.state)
         if marks is not None: marks.append(("model", time.perf_counter()))
         Y = out0[0, :, 0, 0] + 1j * out0[0, :, 0, 1]
         if self.guards is not None:                 # never-vanish verdict for the next hop
@@ -334,6 +377,8 @@ class StreamEngine:
         self.ms.append(dt); self.telemetry.add(dt)
         self.last = {"gate": float(self.gate), "burst": bool(burst), "reliability": float(rel), "limiter": bool(hit),
                      "ms": dt, "ref_valid": bool(ref_valid), "ref_weight": 1.0 if a is None else float(a[-1])}
+        if self.takes_valid:
+            self.last["validity"] = v
         if self.guards is not None:
             g = self.guards
             self.last.update(ref_informative=g.informative, never_vanish=g.fallback, guard_weight=g.g,
@@ -350,6 +395,8 @@ class StreamEngine:
         """Engine built from a model_config.json: its controller/DSP settings and its onnx_sha256, verified."""
         cfg = load_model_config(config_path)
         kw.setdefault("onnx_sha256", cfg.get("onnx_sha256"))
+        if cfg["kind"] != "cascade":            # an r7 config builds exactly the engine it always did
+            kw.setdefault("kind", cfg["kind"]); kw.setdefault("profile", cfg.get("profile"))
         return cls(onnx_path, cfg["controller_on"], cfg["dsp"], **kw)
 
 

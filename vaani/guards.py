@@ -136,6 +136,11 @@ class Guards:
         self.informative, self.fallback = True, False
         self.sample = 0
 
+    @property
+    def ref_ok(self) -> bool:
+        """The guards' current target: trust the reference (False = reference-absent path, validity 0)."""
+        return self.informative and not self.fallback
+
     def _event(self, kind: str, **kw) -> None:
         if self.telemetry is not None:
             self.telemetry.event(kind, sample=self.sample, **kw)
