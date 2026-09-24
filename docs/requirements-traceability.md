@@ -7,7 +7,7 @@ rather than paraphrasing the clause back.
 Status key: **met** — implemented and measured · **partial** — implemented, with the limit stated
 in the row · **not met** — no artefact, with the reason.
 
-Numbers quoted here come from `results_r2/matrix.md` (frozen round-2 test split, 2280 items,
+Numbers quoted here come from `results_r2/matrix.md` and `results_r2/matrix_prerelabel.md` (frozen round-2 test split, 2280 items,
 nominal envelope = unclipped, no reference fault, input SNR 0/5/10 dB), `deploy/CONTRACT.md`
 (deployment measurements) and [`results_r2/optim/optimization.md`](../results_r2/optim/optimization.md)
 (quantization and pruning).
@@ -59,7 +59,7 @@ nominal envelope = unclipped, no reference fault, input SNR 0/5/10 dB), `deploy/
 | SNR > 15 dB, STOI > 0.85, PESQ > 2.5 | partial | Shipping system, the r7 cascade (`runs/r7_e256_wr64_refiner/best.pt`, trained from scratch, no external weights), eval_r2 nominal envelope (617 clips): 14.864 dB [14.565, 15.183] · 0.917 STOI [0.911, 0.922] · 2.462 PESQ [2.412, 2.511]. STOI clears on the interval; **SNR and PESQ miss at the point estimate**. On eval_gen (a noise corpus never used in training, 201 clips) it clears all three on the interval: 16.302 dB [15.732, 16.934] · 0.951 [0.944, 0.957] · 2.817 [2.724, 2.915]. The previous candidate, the tier46 cascade, scores 14.753 · 0.915 · 2.473 (eval_r2) and 16.023 · 0.950 · 2.835 (eval_gen); paired, r7 is +0.110 dB [+0.061, +0.163] SNR_out and -0.012 [-0.021, -0.001] PESQ on eval_r2. One refiner seed |
 | Low latency suitable for real-time communication | met | 32 ms algorithmic (one 16 ms hop plus the STFT window's 16 ms lookahead — arithmetic from the framing, not a measurement) and ~1 ms/frame mean compute |
 
-**Which eval render.** The eval_r2 scores in the targets row are from the current render of eval_r2, re-made from the crest-audit relabelled manifests (EVALSET_HASH `17a9414959bb` on Windows, `aa96a28a9955` on Linux: the same audio, the hash digests float text). [`results_r2/matrix.md`](../results_r2/matrix.md) and [`results_r2/optim/optimization.md`](../results_r2/optim/optimization.md) were measured on the earlier frozen render, which differs at 606 of the 617 nominal items: the same tier46 checkpoint scores 15.150 dB there and 14.753 dB here. Comparisons within one render are valid; comparisons across the two are not.
+**Which eval render.** The eval_r2 scores in the targets row are from the current render of eval_r2, re-made from the crest-audit relabelled manifests (EVALSET_HASH `17a9414959bb` on Windows, `aa96a28a9955` on Linux: the same audio, the hash digests float text). [`results_r2/matrix.md`](../results_r2/matrix.md) is on the current render too. [`results_r2/matrix_prerelabel.md`](../results_r2/matrix_prerelabel.md) (which alone has the external baselines and WER) and [`results_r2/optim/optimization.md`](../results_r2/optim/optimization.md) were measured on the earlier frozen render, which differs at 606 of the 617 nominal items: the same tier46 checkpoint scores 15.150 dB there and 14.753 dB here. Comparisons within one render are valid; comparisons across the two are not.
 
 ---
 

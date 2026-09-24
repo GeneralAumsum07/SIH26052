@@ -69,10 +69,11 @@ Details:
 > **Which eval render.** The numbers above are from the current render of eval_r2, re-made from the
 > crest-audit relabelled manifests (EVALSET_HASH `17a9414959bb` on Windows, `aa96a28a9955` on Linux:
 > the same audio, the hash digests float text), which every score in
-> [results_r2/r6/](results_r2/r6/) uses. The [matrix](results_r2/matrix.md), which separates point
-> estimates from interval-supported passes, was measured on the earlier frozen render and is kept for
-> its within-render ablation comparisons. The two renders differ at 606 of the 617 nominal items, so
-> scores are comparable within one render and not across them.
+> [results_r2/r6/](results_r2/r6/) uses. The ablation [matrix](results_r2/matrix.md), which separates
+> point estimates from interval-supported passes, is scored on the same render. The external
+> baselines and WER were measured only on the earlier frozen render and stay in
+> [matrix_prerelabel.md](results_r2/matrix_prerelabel.md). The two renders differ at 606 of the 617
+> nominal items, so scores are comparable within one render and not across them.
 
 Further reading:
 
@@ -181,8 +182,8 @@ nothing appears in two splits, and store posix paths so a manifest built on Wind
 uv run python -m vaani.train configs/exp/vaani_full_r3_e32.yaml
 uv run python -m vaani.eval --system vaani_full_r3_e32 --split test --eval-root data/eval_r2 \
     --workers 8 --asr --asr-device cuda --dnsmos
-uv run python -m vaani.report "results_r2/*.csv" --out results_r2/matrix.md \
-    --asr-ref results_r2/asr/clean.csv --protocol results_r2/tier46_v2/anchor.json
+uv run python -m vaani.report "results_r2/r6_local/*_eval_r2.csv" "results_r2/r6/legacy_*_eval_r2.csv" \
+    results_r2/r6/tier46_eval_r2.csv --out results_r2/matrix.md --note "..."   # the notes as in the file
 ```
 
 - `scripts/run_round.sh [1|2|3|3b|3c|3d|4]` runs a whole ablation wave and drops a `ROUND*_DONE`
