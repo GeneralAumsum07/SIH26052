@@ -141,7 +141,14 @@ class RirBank:
                 # uuid rather than the pid: threads in one process race just as happily.
                 tmp = f.with_suffix(f".{uuid.uuid4().hex}.tmp.npy")
                 try:
-                    np.save(tmp, z[k]); os.replace(tmp, f)   # replace is atomic within a directory
+                    np.save(tmp, z[k])
+                    try:
+                        os.replace(tmp, f)   # replace is atomic within a directory
+                    except PermissionError:
+                        # Windows refuses to replace a file another writer already published and mmapped.
+                        # That file came from the same npz through the same atomic replace, so it is complete: keep it.
+                        if not f.exists():
+                            raise
                 finally:
                     if tmp.exists():
                         tmp.unlink()
