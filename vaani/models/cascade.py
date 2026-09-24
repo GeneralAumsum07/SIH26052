@@ -35,10 +35,10 @@ class FrozenCascade(nn.Module):
         super().train(mode); self.first.eval()   # the frozen stage never leaves eval, whatever the parent does
         return self
 
-    def forward(self, spec6, feats):
+    def forward(self, spec6, feats, ref_avail=None):
         with torch.no_grad():
-            y = self.first(spec6, feats)
-        return self.refiner(spec6[..., 0:2], spec6[..., 2:4], y)
+            y = self.first(spec6, feats) if ref_avail is None else self.first(spec6, feats, ref_avail)
+        return self.refiner(spec6[..., 0:2], _refiner_ref(self.first, spec6, ref_avail), y)
 
     @classmethod
     def from_first_stage(cls, ckpt_path, refiner_cfg=None):
@@ -58,6 +58,13 @@ class FrozenCascade(nn.Module):
         return cls(cfg.get("model_cfg"), cfg.get("refiner_cfg"))
 
 
+def _refiner_ref(first, spec6, ref_avail):
+    # ref_validity: an absent reference reaches no neural input, the refiner's R included
+    if ref_avail is None or not getattr(first, "ref_validity", False):
+        return spec6[..., 2:4]
+    return spec6[..., 2:4] * ref_avail.to(spec6.dtype)[:, None, :, None]
+
+
 class StreamCascade(nn.Module):
     """Streaming twin for export: the existing seven inputs + refine_cache, six outputs + refine_cache_out."""
 
@@ -65,9 +72,10 @@ class StreamCascade(nn.Module):
         super().__init__()
         self.first = StreamVaaniNet(**(first_model_cfg or {})); self.refiner = ResidualRefiner(**(refiner_cfg or {}))
 
-    def forward(self, spec6, feats, *caches):
-        y, *first_caches = self.first(spec6, feats, *caches[:-1])
-        z, refine_cache = self.refiner.step(spec6[..., 0:2], spec6[..., 2:4], y, caches[-1])
+    def forward(self, spec6, feats, *caches, ref_avail=None):
+        kw = {} if ref_avail is None else {"ref_avail": ref_avail}
+        y, *first_caches = self.first(spec6, feats, *caches[:-1], **kw)
+        z, refine_cache = self.refiner.step(spec6[..., 0:2], _refiner_ref(self.first, spec6, ref_avail), y, caches[-1])
         return z, *first_caches, refine_cache
 
 

@@ -3,7 +3,9 @@ first conv), mask on primary only. Encoder/StreamEncoder are re-declared here (v
 files untouched). Architecture flags (`model_cfg` in the experiment config; defaults = r1/r2):
   film      zero-init FiLM shift from the 18 DSP features (r1/r2; measured inert, -0.003 STOI)
   coh       causal magnitude-squared-coherence map primary<->reference as a 10th input channel
-  df_order  deep-filter taps across past frames: out[t] = sum_k M_k[t] * X[t-k]; 1 = plain CRM"""
+  df_order  deep-filter taps across past frames: out[t] = sum_k M_k[t] * X[t-k]; 1 = plain CRM
+  ref_validity  spec 6.2: reference availability (capture path, 0/1 per frame) plus a causal per-band reliability map
+            appended after ERB+SFE; zero-init extra first-conv inputs, so avail=1 at init is the source network exactly"""
 import torch
 import torch.nn as nn
 
@@ -16,6 +18,8 @@ N_SIG = 3  # primary, reference, n_hat
 N_PRIM = 9  # primary's slice of the first-conv input channels (SFE keeps signal order)
 COH_ALPHA = 0.9  # per-frame EMA for the coherence spectra: ~150 ms at a 16 ms hop
 DF_CACHE_MAX = 4  # df_cache is always exported at this depth so the ONNX signature is fixed
+N_REL = 5  # ref_validity inputs: availability, coherence, level cue, reference-clip cue, NLMS-cancellation cue
+REL_FEAT_CLIP, REL_FEAT_HEALTH = 4, 16  # feats slots: clip_frac_reference, nlms_health (vaani.dsp.features order)
 
 
 def _validate_architecture(channels, up=.02, down=.3):
@@ -102,6 +106,38 @@ def _cat_coh(sig, coh):
     return sig if coh is None else torch.cat([sig, coh], dim=1)
 
 
+def _level_cue(state):
+    """Bounded per-bin reference/primary power ratio from the coherence EMA state: +-20 dB -> +-1."""
+    return torch.clamp(torch.log10((state[:, 1] + 1e-8) / (state[:, 0] + 1e-8)) / 2, -1.0, 1.0)
+
+
+def coherence_rel_map(spec6, state=None):
+    """coherence_map plus the level cue from the same EMA state; MSC is bit-identical to coherence_map."""
+    B, F, T, _ = spec6.shape
+    if state is None:
+        state = spec6.new_zeros(B, 4, F)
+    msc, lvl = [], []
+    for t in range(T):
+        m, state = _coh_step(spec6[:, :, t], state); msc.append(m); lvl.append(_level_cue(state))
+    return torch.stack(msc, dim=1)[:, None], torch.stack(lvl, dim=1)[:, None], state
+
+
+def _gate_ref(sig, coh, avail):
+    """Absent reference: zero every reference-derived input (ref and n_hat mag/re/im, coherence); primary untouched."""
+    a = avail[:, None, :, None]
+    return torch.cat([sig[:, :3], sig[:, 3:] * a], 1), coh * a   # _sig_feats: primary is (mag, re, im) = 3 channels
+
+
+def _rel_inputs(erb, msc, lvl, feats, avail):
+    """(B,N_REL,T,129) after ERB: per-bin maps through erb.bm, per-frame cues broadcast over bands."""
+    F = erb.erb_subband_1 + erb.erb_fc.out_features
+    per_bin = erb.bm(torch.cat([msc, lvl], 1)) * avail[:, None, :, None]
+    clip = torch.clamp(20 * feats[..., REL_FEAT_CLIP], 0.0, 1.0)
+    canc = torch.clamp(1 - feats[..., REL_FEAT_HEALTH], 0.0, 1.0) * avail
+    frame = torch.stack([avail, clip, canc], 1)[..., None].expand(-1, -1, -1, F)
+    return torch.cat([frame[:, :1], per_bin, frame[:, 1:]], 1)
+
+
 FEAT_SCALE = [1 / 10.0, 1.0, 1 / 5.0, 1.0, 1.0, 1.0, *([1.0] * 8), 1 / 10.0, 1.0, 1.0, 1.0]
 
 
@@ -129,8 +165,21 @@ def _n_in(coh, noise_floor=False):
     return (N_SIG * 3 + int(coh) + 2 * int(noise_floor)) * 3
 
 
+class _RefConv(nn.Module):
+    """Extra first-conv input slice for ref_validity: the same (1,5)/stride-2 kernel over N_REL channels, no bias, zero init.
+    Summed into en_convs[0].conv before its BN, it is exactly a first conv with N_REL more input channels; kept as a
+    separate summand so the zero init is bit-exact whatever accumulation order the backend uses."""
+    def __init__(self, channels):
+        super().__init__()
+        self.conv = nn.Conv2d(N_REL, channels, (1, 5), stride=(1, 2), padding=(0, 2), bias=False)
+        nn.init.zeros_(self.conv.weight)
+
+    def first_block(self, blk, x, rel):
+        return blk.act(blk.bn(blk.conv(x) + self.conv(rel)))
+
+
 class Encoder(_Encoder):
-    def __init__(self, film=True, coh=False, channels=16, noise_floor=False):
+    def __init__(self, film=True, coh=False, channels=16, noise_floor=False, ref_validity=False):
         super().__init__([
             ConvBlock(_n_in(coh, noise_floor), channels, (1, 5), stride=(1, 2), padding=(0, 2)),
             ConvBlock(channels, channels, (1, 5), stride=(1, 2), padding=(0, 2), groups=2),
@@ -138,11 +187,13 @@ class Encoder(_Encoder):
             GTConvBlock(channels, channels, (3, 3), stride=(1, 1), padding=(0, 1), dilation=(2, 1)),
             GTConvBlock(channels, channels, (3, 3), stride=(1, 1), padding=(0, 1), dilation=(5, 1)),
         ], film, channels)
+        if ref_validity:
+            self.ref_conv = _RefConv(channels)
 
-    def forward(self, x, feats):
+    def forward(self, x, feats, rel=None):
         en_outs = []
         for i, blk in enumerate(self.en_convs):
-            x = blk(x)
+            x = blk(x) if i or rel is None else self.ref_conv.first_block(blk, x, rel)
             if i == 0:
                 x = self._cond(x, feats)
             en_outs.append(x)
@@ -175,15 +226,18 @@ class VaaniNet(nn.Module):
     """forward(spec6 (B,257,T,6), feats (B,T,18)) -> enhanced primary (B,257,T,2)."""
 
     def __init__(self, df_order: int = 1, film: bool = True, coh: bool = False,
-                 channels: int = 16, noise_floor: bool = False, noise_floor_up=.02, noise_floor_down=.3):
+                 channels: int = 16, noise_floor: bool = False, noise_floor_up=.02, noise_floor_down=.3,
+                 ref_validity: bool = False):
         super().__init__()
         assert 1 <= df_order <= DF_CACHE_MAX, df_order
         _validate_architecture(channels, noise_floor_up, noise_floor_down)
+        if ref_validity and not coh:
+            raise ValueError("ref_validity builds its reliability map on the coherence state; it requires coh=True")
         self.channels, self.use_noise_floor = channels, noise_floor
         self.noise_floor_up, self.noise_floor_down = noise_floor_up, noise_floor_down
-        self.df_order, self.use_coh = df_order, coh
+        self.df_order, self.use_coh, self.ref_validity = df_order, coh, ref_validity
         self.erb = ERB(65, 64); self.sfe = SFE(3, 1)
-        self.encoder = Encoder(film, coh, channels, noise_floor)
+        self.encoder = Encoder(film, coh, channels, noise_floor, ref_validity)
         self.dpgrnn1 = DPGRNN(channels, 33, channels); self.dpgrnn2 = DPGRNN(channels, 33, channels)
         self.decoder = _decoder(channels); self.mask = Mask()
         self.df = DeepFilterHead(df_order, channels) if df_order > 1 else None
@@ -197,16 +251,25 @@ class VaaniNet(nn.Module):
         h = x + en_outs[0]
         return d[-1](h), h
 
-    def forward(self, spec6, feats):
+    def forward(self, spec6, feats, ref_avail=None):
+        """ref_avail (B,T) in {0,1} from the capture path; ignored unless ref_validity, None = all present."""
         prim = spec6[..., :2]
-        coh = coherence_map(spec6)[0] if self.use_coh else None
-        feat = _cat_coh(_sig_feats(spec6), coh)
+        rel = None
+        if self.ref_validity:
+            avail = spec6.new_ones(spec6.shape[0], spec6.shape[2]) if ref_avail is None else ref_avail.to(spec6.dtype)
+            coh, lvl, _ = coherence_rel_map(spec6)
+            sig, coh = _gate_ref(_sig_feats(spec6), coh, avail)
+            feat = torch.cat([sig, coh], 1)
+            rel = _rel_inputs(self.erb, coh, lvl, feats, avail)
+        else:
+            coh = coherence_map(spec6)[0] if self.use_coh else None
+            feat = _cat_coh(_sig_feats(spec6), coh)
         if self.use_noise_floor:
             floor, _ = noise_floor_features(spec6, up=self.noise_floor_up, down=self.noise_floor_down)
             feat = torch.cat([feat, floor], 1)
         feat = self.erb.bm(feat)
         feat = self.sfe(feat)                                    # (B,27|30,T,129)
-        feat, en_outs = self.encoder(feat, feats)
+        feat, en_outs = self.encoder(feat, feats, rel)
         feat = self.dpgrnn1(feat); feat = self.dpgrnn2(feat)
         m, h = self._decode(feat, en_outs)
         p = prim.permute(0, 3, 2, 1)                             # (B,2,T,257)
@@ -278,7 +341,7 @@ class VaaniNet(nn.Module):
 
 
 class StreamEncoder(_Encoder):
-    def __init__(self, film=True, coh=False, channels=16, noise_floor=False):
+    def __init__(self, film=True, coh=False, channels=16, noise_floor=False, ref_validity=False):
         super().__init__([
             gs.ConvBlock(_n_in(coh, noise_floor), channels, (1, 5), stride=(1, 2), padding=(0, 2)),
             gs.ConvBlock(channels, channels, (1, 5), stride=(1, 2), padding=(0, 2), groups=2),
@@ -286,10 +349,13 @@ class StreamEncoder(_Encoder):
             gs.StreamGTConvBlock(channels, channels, (3, 3), stride=(1, 1), padding=(0, 1), dilation=(2, 1)),
             gs.StreamGTConvBlock(channels, channels, (3, 3), stride=(1, 1), padding=(0, 1), dilation=(5, 1)),
         ], film, channels)
+        if ref_validity:
+            self.ref_conv = _RefConv(channels)
 
-    def forward(self, x, feats, conv_cache, tra_cache):
+    def forward(self, x, feats, conv_cache, tra_cache, rel=None):
         en_outs = []
-        x = self._cond(self.en_convs[0](x), feats); en_outs.append(x)
+        x0 = self.en_convs[0](x) if rel is None else self.ref_conv.first_block(self.en_convs[0], x, rel)
+        x = self._cond(x0, feats); en_outs.append(x)
         x = self.en_convs[1](x); en_outs.append(x)
         x, conv_cache[:, :, :2, :], tra_cache[0] = self.en_convs[2](x, conv_cache[:, :, :2, :], tra_cache[0]); en_outs.append(x)
         x, conv_cache[:, :, 2:6, :], tra_cache[1] = self.en_convs[3](x, conv_cache[:, :, 2:6, :], tra_cache[1]); en_outs.append(x)
@@ -302,15 +368,18 @@ class StreamVaaniNet(nn.Module):
     df_cache (1,257,DF_CACHE_MAX-1,2): past primary spectra, newest first, and coh_cache (1,4,257)."""
 
     def __init__(self, df_order: int = 1, film: bool = True, coh: bool = False,
-                 channels: int = 16, noise_floor: bool = False, noise_floor_up=.02, noise_floor_down=.3):
+                 channels: int = 16, noise_floor: bool = False, noise_floor_up=.02, noise_floor_down=.3,
+                 ref_validity: bool = False):
         super().__init__()
         assert 1 <= df_order <= DF_CACHE_MAX, df_order
         _validate_architecture(channels, noise_floor_up, noise_floor_down)
+        if ref_validity and not coh:
+            raise ValueError("ref_validity builds its reliability map on the coherence state; it requires coh=True")
         self.channels, self.use_noise_floor = channels, noise_floor
         self.noise_floor_up, self.noise_floor_down = noise_floor_up, noise_floor_down
-        self.df_order, self.use_coh = df_order, coh
+        self.df_order, self.use_coh, self.ref_validity = df_order, coh, ref_validity
         self.erb = gs.ERB(65, 64); self.sfe = gs.SFE(3, 1)
-        self.encoder = StreamEncoder(film, coh, channels, noise_floor)
+        self.encoder = StreamEncoder(film, coh, channels, noise_floor, ref_validity)
         self.dpgrnn1 = gs.DPGRNN(channels, 33, channels); self.dpgrnn2 = gs.DPGRNN(channels, 33, channels)
         self.decoder = _decoder(channels, stream=True); self.mask = gs.Mask()
         self.df = DeepFilterHead(df_order, channels) if df_order > 1 else None
@@ -324,20 +393,28 @@ class StreamVaaniNet(nn.Module):
         h = x + en_outs[0]
         return d[4](h), h, conv_cache, tra_cache
 
-    def forward(self, spec6, feats, conv_cache, tra_cache, inter_cache, df_cache, coh_cache, noise_cache=None):
+    def forward(self, spec6, feats, conv_cache, tra_cache, inter_cache, df_cache, coh_cache, noise_cache=None, ref_avail=None):
+        """ref_avail (B,1): this frame's reference availability; ignored unless ref_validity, None = present."""
         prim = spec6[..., :2]
+        rel = None
         if self.use_coh:
             msc, coh_cache = _coh_step(spec6[:, :, 0], coh_cache); coh = msc[:, None, None, :]
         else:
             coh = None
-        feat = _cat_coh(_sig_feats(spec6), coh)
+        if self.ref_validity:
+            avail = spec6.new_ones(spec6.shape[0], 1) if ref_avail is None else ref_avail.to(spec6.dtype)
+            sig, coh = _gate_ref(_sig_feats(spec6), coh, avail)
+            feat = torch.cat([sig, coh], 1)
+            rel = _rel_inputs(self.erb, coh, _level_cue(coh_cache)[:, None, None, :], feats, avail)
+        else:
+            feat = _cat_coh(_sig_feats(spec6), coh)
         if self.use_noise_floor:
             if noise_cache is None:
                 raise ValueError("noise_floor model requires its per-stream noise_cache")
             floor, noise_cache = _noise_step(spec6[:, :, 0], noise_cache, self.noise_floor_up, self.noise_floor_down)
             feat = torch.cat([feat, floor[:, :, None]], 1)
         feat = self.sfe(self.erb.bm(feat))
-        feat, en_outs, conv_cache[0], tra_cache[0] = self.encoder(feat, feats, conv_cache[0], tra_cache[0])
+        feat, en_outs, conv_cache[0], tra_cache[0] = self.encoder(feat, feats, conv_cache[0], tra_cache[0], rel)
         feat, inter_cache[0] = self.dpgrnn1(feat, inter_cache[0])
         feat, inter_cache[1] = self.dpgrnn2(feat, inter_cache[1])
         m_feat, h, conv_cache[1], tra_cache[1] = self._decode(feat, en_outs, conv_cache[1], tra_cache[1])
