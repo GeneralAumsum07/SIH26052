@@ -1,0 +1,171 @@
+{
+ "version": 2,
+ "split": "train",
+ "seed": 55,
+ "bank": "bank_r3.npz",
+ "v2_overrides": {},
+ "scene_overrides": {},
+ "param": {
+  "items": 48,
+  "n_speech_bins": 574443,
+  "n_noise_bins": 1229603,
+  "auc_ild": 0.7268586754798889,
+  "speech_ild_p10_p50_p90": [
+   -0.6449667811393738,
+   12.194890975952148,
+   17.870205688476563
+  ],
+  "noise_ild_p10_p50_p90": [
+   -6.911308097839355,
+   3.6119813919067383,
+   11.08403835296631
+  ],
+  "ref_speech_gain_db_min_med_max": [
+   -19.85194889802837,
+   -11.713455584048996,
+   2.1128030634042716
+  ],
+  "ref_speech_gain_hist": {
+   "edges": [
+    -30.0,
+    -20.0,
+    -16.9,
+    -8.5,
+    -6.0,
+    3.0,
+    10.0
+   ],
+   "counts": [
+    0,
+    4,
+    29,
+    0,
+    15,
+    0
+   ]
+  },
+  "share_ref_gain_-6_to_+3": 0.3125,
+  "ref_modes": {
+   "low_ild": 8,
+   "mono": 3,
+   "physical": 33,
+   "stereo": 4
+  },
+  "scenes": {
+   "apc": 3,
+   "artillery": 8,
+   "command_post": 10,
+   "drone": 6,
+   "firefight": 3,
+   "helicopter": 4,
+   "patrol": 8,
+   "windy_ridge": 6
+  },
+  "snr_db_p10_p50_p90": [
+   -12.135341835021972,
+   9.085048198699951,
+   21.365747261047368
+  ]
+ },
+ "room": {
+  "items": 48,
+  "n_speech_bins": 563683,
+  "n_noise_bins": 1227043,
+  "auc_ild": 0.6974429488182068,
+  "speech_ild_p10_p50_p90": [
+   -1.0427768945693967,
+   11.320561408996582,
+   18.219390487670896
+  ],
+  "noise_ild_p10_p50_p90": [
+   -7.342851066589356,
+   2.7446603775024414,
+   13.675350189208984
+  ],
+  "ref_speech_gain_db_min_med_max": [
+   -19.851949074094932,
+   -11.71345617436659,
+   2.112802805418074
+  ],
+  "ref_speech_gain_hist": {
+   "edges": [
+    -30.0,
+    -20.0,
+    -16.9,
+    -8.5,
+    -6.0,
+    3.0,
+    10.0
+   ],
+   "counts": [
+    0,
+    4,
+    29,
+    0,
+    15,
+    0
+   ]
+  },
+  "share_ref_gain_-6_to_+3": 0.3125,
+  "ref_modes": {
+   "low_ild": 8,
+   "mono": 3,
+   "physical": 33,
+   "stereo": 4
+  },
+  "scenes": {
+   "apc": 3,
+   "artillery": 8,
+   "command_post": 10,
+   "drone": 6,
+   "firefight": 3,
+   "helicopter": 4,
+   "patrol": 8,
+   "windy_ridge": 6
+  },
+  "snr_db_p10_p50_p90": [
+   -11.875943851470947,
+   9.260435104370117,
+   24.3120626449585
+  ]
+ },
+ "m2_draw": {
+  "n": 20000,
+  "modes": {
+   "low_ild": 0.09925,
+   "mono": 0.10005,
+   "physical": 0.74855,
+   "stereo": 0.05215
+  },
+  "share_-6_to_+3": 0.25145,
+  "min": -19.98353384481944,
+  "max": 2.9925723221729026,
+  "hist": {
+   "edges": [
+    -30.0,
+    -20.0,
+    -16.9,
+    -8.5,
+    -6.0,
+    3.0,
+    10.0
+   ],
+   "counts": [
+    0,
+    744,
+    14227,
+    0,
+    5029,
+    0
+   ]
+  }
+ },
+ "gate_auc_le": 0.75,
+ "gate_pass": true,
+ "spl_round_trip": {
+  "max_abs_err_db": 7.555944847581486e-07,
+  "sine_94dB_peak_dbfs": -25.99970054626465,
+  "full_scale_peak_db_spl": 123.01,
+  "pass": true
+ }
+}

@@ -67,8 +67,8 @@ SCENES = {
                          event=None,
                          wind=dict(p=0.0, speed=(0.0, 0.0))),
 }
-P_NEAR = 0.35             # extra near-field source (equipment, own gear) per item: breaks "noise ILD is 0"
-NEAR_SPL_REL = (-6.0, 6.0)  # near source level re the bed, dB
+P_NEAR = 0.7              # extra near-field source (equipment, own gear) per item: breaks "noise ILD is 0" (G1-tuned)
+NEAR_SPL_REL = (0.0, 8.0)   # near source level re the bed, dB (G1-tuned)
 
 
 def _u(rng, lohi):

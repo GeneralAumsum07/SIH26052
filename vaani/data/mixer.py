@@ -235,8 +235,8 @@ V2_DEFAULTS = dict(
     tail_share=0.25, tail_mix={"mono": 0.4, "stereo": 0.2, "low_ild": 0.4}, low_ild_gain_db=(-6.0, 3.0),
     p_quiet=0.05, quiet_gain_db=(-20.0, -16.9),
     stereo_corr=(0.6, 0.95), stereo_gain_db=(-1.0, 1.0), stereo_delay_ms=(-0.5, 0.5),
-    # M3 noise field
-    mic_spacing_m=0.12, p_cylindrical=0.3, point_ild_db=12.0, near_ild_db=(6.0, 12.0), near_pos_share=0.5, far_ild_db=2.0,
+    # M3 noise field; near_pos_share 0.8 (G1 sweep): speech-like positive-ILD noise is what defeats the ILD shortcut
+    mic_spacing_m=0.12, p_cylindrical=0.3, point_ild_db=12.0, near_ild_db=(6.0, 12.0), near_pos_share=0.8, far_ild_db=2.0,
     stft_n=512, stft_hop=128,
     # M4 wind: level at 5 m/s unprotected (inferred 75-90 dB SPL, TBD), +12 dB per doubling (rho V^2)
     wind_ref_db=(75.0, 90.0), wind_ref_mps=5.0, windscreen_db=0.0, wind_frame_s=0.02,
@@ -317,7 +317,7 @@ def diffuse_pair(rng, x: np.ndarray, gamma=None, d: float = 0.12, model: str = "
     n = len(x)
     f, _, X1 = _stft(x, nfft, hop)
     g = diffuse_coherence(f * SR, d, model) if gamma is None else np.full(len(f), float(gamma))
-    env = np.sqrt(uniform_filter(np.abs(X1) ** 2, size=3, mode="nearest"))
+    env = np.sqrt(np.maximum(uniform_filter(np.abs(X1) ** 2, size=3, mode="nearest"), 0.0))   # the running sum can dip below 0 in silence
     # W is the STFT of real white noise, not i.i.d. complex draws: random STFT coefficients are not a consistent
     # STFT and the ISTFT keeps only ~1/4 of their energy at 75 % overlap (coherence 0.63, not 0.37, at 1 kHz)
     W = _stft(rng.standard_normal(n), nfft, hop)[2]
@@ -327,7 +327,8 @@ def diffuse_pair(rng, x: np.ndarray, gamma=None, d: float = 0.12, model: str = "
 
 
 def _fft_transfer(x: np.ndarray, H_fn) -> np.ndarray:
-    n = len(x); m = n + 256   # zero pad: delays and the shelf's phase must not wrap onto the start
+    from scipy.fft import next_fast_len
+    n = len(x); m = next_fast_len(n + 256)   # zero pad: delays and the shelf's phase must not wrap onto the start
     f = np.fft.rfftfreq(m, 1 / SR)
     return np.fft.irfft(np.fft.rfft(x, m) * H_fn(f), m)[:n].astype(np.float32)
 
@@ -416,9 +417,14 @@ def _level(x, weighting):
     return {"active": calib.active_rms_db, "rms": calib.rms_db, "A": calib.a_weighted_rms_db}[weighting](x)
 
 
+SILENT_DB = -150.0   # float rms dB below which a source is treated as silent
+
+
 def _to_spl(pair: np.ndarray, spl: float, weighting: str) -> np.ndarray:
     """Scale a (2, n) pair so the primary channel sits at spl dB SPL; the inter-mic relation is kept."""
     lvl = _level(pair[0], weighting)
+    if lvl < SILENT_DB:   # digital silence (a muted stretch of a clip): scaling it up would give inf * 0 = NaN
+        return np.zeros_like(pair, dtype=np.float32)
     return (pair * np.float32(10 ** ((calib.spl_to_float_rms_db(spl) - lvl) / 20))).astype(np.float32)
 
 
@@ -487,7 +493,8 @@ def mix_v2(rng, speech, noises, impulse, impulse_onsets_s, bank, cfg: MixConfig,
         s_r_room = fftconvolve(speech, h_s[1])[:n].astype(np.float32)
     else:
         s_p = speech.copy(); s_r_room = None
-    g0 = np.float32(10 ** ((calib.spl_to_float_rms_db(scene["speech_spl"]) - calib.active_rms_db(s_p)) / 20))
+    lvl_s = calib.active_rms_db(s_p)
+    g0 = np.float32(0.0 if lvl_s < SILENT_DB else 10 ** ((calib.spl_to_float_rms_db(scene["speech_spl"]) - lvl_s) / 20))
     s_p = s_p * g0
     if s_r_room is not None:
         s_r_room = s_r_room * g0

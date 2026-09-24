@@ -222,3 +222,13 @@ def test_scene_pool_weights_classes_not_rows_and_drops_v1_only_corpora():
     sc = scenes.sample_scene(rng, "drone", p_near=0.0)
     r, _ = pool.draw(rng, sc)
     assert sc["sources"][-1]["tag"] in ("fallback", None) or r[-1] is None or r[-1]["corpus"] != "drone"
+
+
+def test_silent_sources_stay_finite():
+    rng = np.random.default_rng(9)
+    x = np.concatenate([np.zeros(SR, np.float32), rng.standard_normal(SR).astype(np.float32) * 1e-3])
+    assert np.isfinite(mixer.diffuse_pair(rng, x)).all()          # smoothed power can round below 0 in silence
+    sc = scenes.sample_scene(rng, "command_post")
+    m, c, meta = mixer.mix(rng, _speech(), [np.zeros(3 * SR, np.float32) for _ in sc["sources"]], None, [], None,
+                           mixer.MixConfig(version=2, p_clean=0.0), scene=sc)
+    assert np.isfinite(m).all() and np.isfinite(c).all()

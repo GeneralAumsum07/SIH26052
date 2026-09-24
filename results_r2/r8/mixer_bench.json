@@ -1,0 +1,12 @@
+{
+ "items": 200,
+ "crop_s": 4.0,
+ "numba": true,
+ "bank": true,
+ "label": "smoke: shared, loaded machine; not reportable",
+ "v1_items_per_s": 153.05181492726007,
+ "v1_ms_per_item": 6.533734999975422,
+ "v2_items_per_s": 42.885524190775875,
+ "v2_ms_per_item": 23.317891499973484,
+ "command": "python scripts/data_gates.py --bench 200"
+}
