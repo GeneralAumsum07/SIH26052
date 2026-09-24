@@ -22,7 +22,7 @@ The ONNX files go to `runs/fe_tiers/` (git-ignored); their sha256 are in `tiers.
   running-stat entries (`norm: bn`, the default). The Mini is under the spec budget of 60,000
   entries and 90.706 MMAC/s in both forms (asserted in `tests/test_vaani_fe.py`).
 - **MMAC/s:** `vaani.models.vaani_fe.count_macs` (dense Conv/ConvTranspose/Linear/GRU matrices plus
-  attention QK^T and AV) at 125 hops/s.
+  attention QK^T and AV) at 62.5 hops/s (16 kHz, hop 256).
 - **State:** the only state is the time GRUs' hidden state, K x F x C2 FP32 (`df_taps: 0`).
 - **G2 limits** (`scripts/graph_gate.py`): folded (ORT basic level) node count < 250;
   Loop/Scan/If/GRU/LSTM/RNN = 0; ScatterND = 0; 0 symbolic dims; 0 Shape/Range nodes;
