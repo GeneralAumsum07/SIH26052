@@ -101,25 +101,32 @@ def load_clip(row: dict) -> tuple[np.ndarray, np.ndarray | None]:
     return x, clean
 
 
-def run_engine(mix: np.ndarray, onnx=ONNX, config=CONFIG, threads: int = 1, dsp: dict | None = None):
+def run_engine(mix: np.ndarray, onnx=ONNX, config=CONFIG, threads: int = 1, dsp: dict | None = None,
+               trace: bool = False):
     """(2, T) at 16 kHz through a fresh StreamEngine hop by hop -> ((T,) output aligned to the input, diagnostics).
 
     The input is zero-padded by one hop so the engine's one-hop lag is flushed; the first output hop (the left
-    context) is dropped. `dsp` overrides the config's DSP block (probe use only; None = the shipping config)."""
+    context) is dropped. `dsp` overrides the config's DSP block (probe use only; None = the shipping config).
+    trace=True also returns every hop's `eng.last` dict under diag["trace"] (validity-flag latency, guards)."""
     cfg = live.load_model_config(config)
     eng = live.StreamEngine(onnx, cfg["controller_on"], cfg["dsp"] if dsp is None else dsp, threads=threads)
     mix = np.asarray(mix, np.float32)
     T = mix.shape[1]
     n = -(-T // HOP) + 1
     x = np.pad(mix, ((0, 0), (0, n * HOP - T)))
-    ys, gate, burst, lim = [], [], [], []
+    ys, gate, burst, lim, tr = [], [], [], [], []
     for j in range(n):
         ys.append(eng.process(x[0, j * HOP:(j + 1) * HOP], x[1, j * HOP:(j + 1) * HOP]))
         d = eng.last or {}                             # diagnostics only; NaN if a refactor drops a key
         gate.append(d.get("gate", np.nan)); burst.append(d.get("burst", np.nan)); lim.append(d.get("limiter", np.nan))
+        if trace:
+            tr.append({k: v for k, v in d.items() if k != "stages"})
     y = np.concatenate(ys)[HOP:HOP + T]
     mean = lambda v: float(np.mean(np.asarray(v, float)))
-    return y, {"gate_mean": mean(gate), "burst_frac": mean(burst), "limiter_frac": mean(lim)}
+    diag = {"gate_mean": mean(gate), "burst_frac": mean(burst), "limiter_frac": mean(lim)}
+    if trace:
+        diag["trace"] = tr                             # tr[j] was computed on input hop j (starts at j*HOP)
+    return y, diag
 
 
 def _frames_db(v: np.ndarray, n: int = FRAME) -> np.ndarray:
