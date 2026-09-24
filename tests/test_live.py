@@ -126,3 +126,88 @@ def test_capture_loop_file_mode_is_the_engine(tmp_path):
                           for j in range(x.shape[1] // 256)])[256:]
     ref = np.clip(ref, -1, 1)                                            # the WAV writer clips (the burst, untrained weights)
     assert sr == 16000 and np.abs(out[0, :len(ref)] - ref).max() < 2e-4  # int16 output quantisation
+
+
+def _capture_loop():
+    import importlib.util
+    from pathlib import Path
+    spec = importlib.util.spec_from_file_location("capture_loop", Path(__file__).resolve().parents[1] / "scripts" / "capture_loop.py")
+    cl = importlib.util.module_from_spec(spec); spec.loader.exec_module(cl)
+    return cl
+
+
+def test_capture_loop_file_mode_flushes_the_tail_and_records(tmp_path):
+    ck, onnx = _graph(tmp_path)
+    live.write_model_config(ck, tmp_path / "cfg.json")
+    mix = _mix(1.0, seed=4)[:, :16000 - 100] * 0.5                      # not a whole number of hops
+    live.write_wav(tmp_path / "in.wav", mix, 16000)
+    cl = _capture_loop()
+    cl.main(["--onnx", str(onnx), "--config", str(tmp_path / "cfg.json"), "--record-dir", str(tmp_path / "rec"),
+             "--in-wav", str(tmp_path / "in.wav"), "--out-wav", str(tmp_path / "out.wav")])
+    out, _ = live.read_wav(tmp_path / "out.wav")
+    x, _ = live.read_wav(tmp_path / "in.wav")
+    n = x.shape[1]
+    assert out.shape[1] == n                                             # same length as the input
+    xp = np.concatenate([x, np.zeros((2, -(-(n + 256) // 256) * 256 - n), np.float32)], axis=1)
+    eng = live.StreamEngine(onnx, True, DSP)
+    full = np.concatenate([eng.process(xp[0, j * 256:(j + 1) * 256], xp[1, j * 256:(j + 1) * 256])
+                           for j in range(xp.shape[1] // 256)])[256:256 + n]
+    assert np.abs(out[0] - np.clip(full, -1, 1)).max() < 2e-4
+    assert np.abs(full[-300:]).max() > 1e-4                              # the tail (final overlap-add half) is really there
+    wavs = sorted((tmp_path / "rec").glob("*.wav"))
+    assert len(wavs) == 2
+    cap = next(w for w in wavs if "capture" in w.name)
+    c, _ = live.read_wav(cap)
+    assert c.shape[0] == 2 and c.shape[1] == xp.shape[1]
+
+
+def test_capture_loop_record_limit_and_48k_length(tmp_path):
+    ck, onnx = _graph(tmp_path)
+    live.write_model_config(ck, tmp_path / "cfg.json")
+    x48 = np.repeat(_mix(0.5, seed=5), 3, axis=1)[:, :23000] * 0.3
+    live.write_wav(tmp_path / "in48.wav", x48, 48000)
+    cl = _capture_loop()
+    cl.main(["--onnx", str(onnx), "--config", str(tmp_path / "cfg.json"), "--record-dir", str(tmp_path / "rec"),
+             "--record-max-s", "0.1", "--in-wav", str(tmp_path / "in48.wav"), "--out-wav", str(tmp_path / "o48.wav")])
+    out, sr = live.read_wav(tmp_path / "o48.wav")
+    assert sr == 48000 and out.shape[1] == 23000
+    cap = next(w for w in (tmp_path / "rec").glob("*capture16k.wav"))
+    c, _ = live.read_wav(cap)
+    assert c.shape[1] <= 1600                                            # bounded by --record-max-s
+
+
+def test_capture_loop_helpers():
+    cl = _capture_loop()
+    assert cl.xrun_kind("overrun!!! (at least 12.345 ms long)") == "overrun"
+    assert cl.xrun_kind("underrun!!! (at least 3.0 ms long)") == "underrun"
+    assert cl.xrun_kind("Recording raw data 'stdin' : Signed 32 bit") is None
+    s = cl.Stats(ring=16)
+    for i in range(100):
+        s.add({"ms": float(i), "gate": 1.0, "limiter": False, "burst": False}, np.zeros(4), np.zeros(4))
+        s.add_iter(float(i))
+    assert len(s.all_ms) == 16 and len(s.iter_ms) == 16 and s.frames_total == 100
+    assert s.late_total == 100 - 17 and s.iter_max == 99.0             # totals are exact over the whole run
+    assert "iter" in s.line(1.0, "ENHANCED", " x")
+
+
+def test_engine_ms_is_a_bounded_ring(tmp_path):
+    _, onnx = _graph(tmp_path)
+    eng = live.StreamEngine(onnx, True, DSP, ms_window=8)
+    for _ in range(20):
+        eng.process(np.zeros(256), np.zeros(256))
+    assert len(eng.ms) == 8 and eng.telemetry.count == 20
+
+
+def test_hop_benchmark_smoke(tmp_path):
+    import importlib.util
+    from pathlib import Path
+    _, onnx = _graph(tmp_path)
+    p = Path(__file__).resolve().parents[1] / "scripts" / "hop_benchmark.py"
+    spec = importlib.util.spec_from_file_location("hop_benchmark", p)
+    hb = importlib.util.module_from_spec(spec); spec.loader.exec_module(hb)
+    r = hb.run(["r7"], ["ort-cpu", "ort-trt"], seconds=0.5, warm=5, cold=3, onnx=onnx, scratch=tmp_path, label="test")
+    assert r["skipped"] and r["skipped"][0]["backend"] == "ort-trt"
+    row = r["rows"][0]
+    assert row["hops"] == 31 and row["warm"]["hop"]["n"] == 26 and row["cold"]["hop"]["n"] == 3
+    assert set(row["warm"]) >= {"limiter", "blocking", "nlms", "stft", "features", "controller", "model", "istft", "hop"}
+    assert "deadline_misses" in row["warm"]["hop"] and r["git"]["commit"]

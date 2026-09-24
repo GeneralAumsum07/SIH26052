@@ -1,22 +1,21 @@
-"""Tier 3.1: per-frame timing on the actual target board (Zero 2 W) - model (ONNX Runtime, 1 thread) plus the
-numpy DSP front end, against the 16 ms hop. Needs only numpy + onnxruntime (no torch: 512 MB board), so
-copy the repo, `pip install numpy onnxruntime`, and run:
+"""Tier 3.1: per-hop timing on the actual target board - a thin wrapper over scripts/hop_benchmark.py (the complete
+hop: limiter, blocking, NLMS, features, controller, STFT, ORT model, iSTFT) on ORT CPU, 1 thread, against the 16 ms
+hop. Needs only numpy + onnxruntime (+ numba for the real NLMS cost; no torch: 512 MB board):
 
-    python scripts/board_timing.py deploy/model.onnx --seconds 30 --out deploy/board_timing.json
+    python scripts/board_timing.py deploy/r7/cascade.onnx --seconds 30 --out deploy/board_timing.json
 
-The DSP number is the Python reference (`vaani.dsp.pipeline.run`, pure-Python NLMS when numba is absent),
-which is an upper bound on the C port; the model number is the real ORT cost. p99 < 12 ms -> stay on the
-Zero 2 W (plan 3.2); 12-16 -> stay, no on-device speech-preservation head; > 16 -> faster board.
+p99 < 12 ms -> stay on the board (plan 3.2); 12-16 -> stay, no on-device speech-preservation head; > 16 -> faster
+board. Without numba the NLMS is the pure-Python golden reference, an order of magnitude slower than the numba/C
+port, so the decision then rests on the model stage alone and says so.
 """
-import argparse, json, platform, sys, time
+import argparse, json, platform, sys
 from pathlib import Path
 
-import numpy as np
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from vaani.dsp import pipeline, stft   # noqa: E402  (numpy-only after the lazy torch import)
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import hop_benchmark  # noqa: E402
 
-HOP_MS = stft.HOP / 16.0
+HOP_MS = 16.0
 
 
 def _board_model():
@@ -25,59 +24,35 @@ def _board_model():
     except OSError: return platform.node()
 
 
-def time_model(onnx_path, n_frames, threads=1):
-    import onnxruntime as ort
-    opts = ort.SessionOptions(); opts.intra_op_num_threads = threads; opts.log_severity_level = 3
-    sess = ort.InferenceSession(str(onnx_path), sess_options=opts, providers=["CPUExecutionProvider"])
-    # cache shapes come from the model itself so this stays valid if init_caches changes
-    ins = {i.name: i for i in sess.get_inputs()}
-    caches = {n: np.zeros([d if isinstance(d, int) else 1 for d in ins[n].shape], np.float32)
-              for n in ins if n.endswith("_cache")}
-    rng = np.random.default_rng(0); times = []
-    for t in range(n_frames):
-        inp = {"spec6": (rng.standard_normal((1, 257, 1, 6)) * 0.1).astype(np.float32),
-               "feats": rng.standard_normal((1, 1, 18)).astype(np.float32), **caches}
-        t0 = time.perf_counter(); o = sess.run(None, inp); dt = (time.perf_counter() - t0) * 1000
-        if t > 0: times.append(dt)   # frame 0 is allocator warm-up
-        caches = dict(zip([n for n in ins if n.endswith("_cache")], o[1:]))
-    return np.array(times)
-
-
-def time_dsp(seconds, reps=3):
-    # the reference runs whole-clip; per-frame cost = wall / frames, taken over a few reps for the best (steady) run
-    rng = np.random.default_rng(0)
-    mix = (rng.standard_normal((2, int(seconds * 16000))) * 0.05).astype(np.float32)
-    best = np.inf
-    for _ in range(reps):
-        t0 = time.perf_counter(); out = pipeline.run(mix, dsp_cfg={"limiter": True}); best = min(best, time.perf_counter() - t0)
-    return best * 1000 / out["features"].shape[0]
-
-
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("onnx", nargs="?", default="deploy/model.onnx")
+    ap.add_argument("onnx", nargs="?", default=str(hop_benchmark.R7_ONNX))
+    ap.add_argument("--config", default=str(hop_benchmark.R7_CONFIG))
     ap.add_argument("--seconds", type=float, default=30)
     ap.add_argument("--threads", type=int, default=1)
+    ap.add_argument("--resample48", action="store_true", help="include the 48 kHz resamplers (I2S capture path)")
     ap.add_argument("--out", default=None)
-    a = ap.parse_args()
-    n = int(a.seconds * 16000 / stft.HOP)
-    m = time_model(a.onnx, n, a.threads)
-    d = time_dsp(a.seconds)
-    from vaani.dsp import nlms; nlms_kind = "numba" if nlms._HAVE_NUMBA else "pure-python"
-    r = {"host": platform.machine(), "board": _board_model(), "platform": platform.platform(), "python": platform.python_version(),
-         "onnx": str(a.onnx), "frames": int(len(m)), "threads": a.threads,
-         "model_ms_mean": float(m.mean()), "model_ms_p99": float(np.percentile(m, 99)), "model_ms_max": float(m.max()),
-         "dsp_ms_per_frame": float(d), "dsp_nlms_kernel": nlms_kind,
-         "total_ms_p99": float(np.percentile(m, 99) + d), "hop_ms": HOP_MS,
-         "rtf": float((m.mean() + d) / HOP_MS)}
-    # the pure-Python NLMS is the golden reference, not the port: an order of magnitude slower than numba/C on the
-    # same core, so it must not drive the board call. Then the decision rests on the model alone and says so.
-    budget = r["total_ms_p99"] if nlms_kind == "numba" else r["model_ms_p99"]
-    r["decision_basis"] = "model + dsp (numba kernel)" if nlms_kind == "numba" else "model only; dsp reference kernel excluded"
+    a = ap.parse_args(argv)
+    full = hop_benchmark.run(["r7"], ["ort-cpu"], a.seconds, threads=a.threads, resample48=a.resample48,
+                             config=a.config, onnx=None if Path(a.onnx).resolve() == hop_benchmark.R7_ONNX.resolve() else a.onnx,
+                             label="board_timing", argv=["board_timing.py"] + list(sys.argv[1:] if argv is None else argv))
+    row = full["rows"][0]; w = row["warm"]
+    nlms_kind = full["versions"]["nlms_kernel"]
+    r = {"host": platform.machine(), "board": _board_model(), "platform": platform.platform(),
+         "python": platform.python_version(), "onnx": row["onnx"], "onnx_sha256": row["onnx_sha256"],
+         "frames": w["hop"]["n"], "threads": a.threads, "dsp_nlms_kernel": nlms_kind,
+         "model_ms_mean": w["model"]["mean_ms"], "model_ms_p99": w["model"]["p99_ms"], "model_ms_max": w["model"]["max_ms"],
+         "hop_ms_mean": w["hop"]["mean_ms"], "hop_ms_p99": w["hop"]["p99_ms"], "hop_ms_max": w["hop"]["max_ms"],
+         "hop_deadline_misses": w["hop"]["deadline_misses"], "hop_ms": HOP_MS,
+         "rtf": w["hop"]["mean_ms"] / HOP_MS, "hop_benchmark": full}
+    budget = r["hop_ms_p99"] if nlms_kind == "numba" else r["model_ms_p99"]
+    r["decision_basis"] = "complete hop (numba kernel)" if nlms_kind == "numba" else "model only; dsp reference kernel excluded"
     r["board_decision_3_2"] = ("stay" if budget < 12 else
                                "stay, no on-device speech-preservation head" if budget < 16 else "faster board")
-    print(json.dumps(r, indent=2))
-    if a.out: Path(a.out).write_text(json.dumps(r, indent=2) + "\n")
+    s = json.dumps(r, indent=2)
+    print(s)
+    if a.out: Path(a.out).write_text(s + "\n")
+    return r
 
 
 if __name__ == "__main__":
