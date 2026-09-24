@@ -1,0 +1,18 @@
+# VaaniFE-large_plus architecture (vaani/models/vaani_fe.py, plan 11.3).
+# Orin-tier PROJECTION: untrained. Architecture only; there is no training config for this
+# tier and none is planned (plan 11.3/11.6). Its counts, G2 result and laptop timing are in
+# results_r2/fe_tiers/; no quality claim exists for it.
+# Load with vaani.models.vaani_fe.load_arch(path); ablation knobs (plan 11.6): inputs p|pr|pr_nhat|pr_pld,
+# mask unbounded|bounded, df_taps 0|2|3, norm bn|none.
+model: vaani_fe
+model_cfg:
+  c1: 96
+  c2: 72
+  f: 48
+  k: 4
+  l: 3
+  heads: 4
+  inputs: pr
+  mask: unbounded
+  df_taps: 0
+  norm: bn

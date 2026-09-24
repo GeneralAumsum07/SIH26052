@@ -1,0 +1,17 @@
+# VaaniFE-mini architecture (vaani/models/vaani_fe.py, plan 11.3).
+# Pi-Mini: the only tier trained, in r8 (the training config belongs to the trainer stage,
+# configs/retraining/r8_fe_mini.yaml); this file is architecture only.
+# Load with vaani.models.vaani_fe.load_arch(path); ablation knobs (plan 11.6): inputs p|pr|pr_nhat|pr_pld,
+# mask unbounded|bounded, df_taps 0|2|3, norm bn|none.
+model: vaani_fe
+model_cfg:
+  c1: 32
+  c2: 24
+  f: 16
+  k: 2
+  l: 1
+  heads: 4
+  inputs: pr
+  mask: unbounded
+  df_taps: 0
+  norm: bn
