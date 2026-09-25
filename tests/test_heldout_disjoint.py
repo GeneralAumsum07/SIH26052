@@ -8,8 +8,9 @@ import yaml
 
 from scripts import check_heldout as ch
 
-# r7 backbone recipe; the r7 refiner recipe names no manifests (it inherits the backbone's data)
-RECIPES = ["configs/retraining/r7_e256_wr64.yaml"]
+# backbone recipes (r7 shipping + r8 retrain); refiner recipes name no manifests (they inherit the backbone's data)
+RECIPES = ["configs/retraining/r7_e256_wr64.yaml", "configs/retraining/r8_fe_mini.yaml",
+           "configs/retraining/r8_mini_refvalid.yaml", "configs/retraining/r8_refvalid_v2.yaml"]
 HELDOUT = ["data/manifests/vehicle_interior.parquet"]
 
 
@@ -55,7 +56,7 @@ def test_the_r7_recipe_and_every_manifest_it_names_are_present():
     missing = [r for r in RECIPES if not Path(r).exists()]
     assert not missing, f"recipe(s) not found: {missing}"
     named = [m for r in RECIPES for m in ch.recipe_manifests(r)]
-    assert named, "r7 recipe names no manifests"
+    assert named, "the recipes name no manifests"
     absent = [str(m) for m in named if not m.exists()] + [h for h in HELDOUT if not Path(h).exists()]
     assert not absent, f"manifest(s) not found (scan them on this box first): {absent}"
 
