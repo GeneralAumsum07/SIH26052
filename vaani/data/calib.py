@@ -4,6 +4,11 @@ Everything in mixer v2 is built in dB SPL at each mic and mapped to float sample
 transfer: -26 dBFS (sine-referenced) at 94 dB SPL, so a float signal's rms in dB is SPL - 123.01 and float
 1.0 instantaneous is 28.3 Pa (123.01 dB peak). Clipping, the mic HPF and self-noise then follow from the
 physics instead of being tuned. Sources: ICS-43434 DS-000069, ITU-T P.64, Alghamdi et al. 2018 (JASA EL523).
+
+Level flags (level_flags, results_r2/r8/calib/README.md): past_knee = a sample above soft_knee() (90.7 dB SPL peak, the
+0.2 % THD fit; the v2 meta 'overloaded' is this flag under its old name); past_aop = a 20 ms frame above 120 dB SPL rms
+on either mic (the AOP is a sine level, so it is tested on short-frame rms, not on one sample); past_rails = a sample at
+or past float 1.0 (123.01 dB SPL peak; the meta 'clipped').
 """
 from functools import lru_cache
 
@@ -26,7 +31,11 @@ EFFORT_OFFSETS_DB = {"normal": 0.0, "raised": 6.0, "loud": 12.0, "shout": 20.0}
 # Alghamdi 2018 Table 1 (80 dB SPL noise, 54 talkers): alpha ratio -12.2 -> -7.7 dB. Applied to every non-normal class;
 # a per-class value is not in the source (TBD).
 LOMBARD_ALPHA_DB = 4.5
-LOMBARD_F0_ST = 1.9                   # TBD: no cheap artefact-free F0 shift implemented; recorded, not applied
+# Not applied, by decision (2026-09-25): the only shifter here is torchaudio's phase vocoder + resample, which moves the
+# formants with F0 (Lombard F1 moves +54 Hz only) and smears transients; real Lombard speech (Lombard GRID, EARS loud)
+# carries the F0 change instead
+LOMBARD_F0_ST = 1.9
+AOP_FRAME = 320                       # 20 ms at 16 kHz: frame for the past_aop test
 
 
 def spl_to_float_rms_db(spl_db):
@@ -130,27 +139,89 @@ def soft_knee(spl_db: float = THD_POINT[0], thd: float = THD_POINT[1]) -> float:
     return float((lo + hi) / 2)
 
 
+def _thd_curve(a: float, f, n: int = 4096) -> float:
+    t = np.arange(n) / n
+    Y = np.abs(np.fft.rfft(f(a * np.sin(2 * np.pi * 8 * t)).astype(np.float64))) ** 2
+    return float(np.sqrt(Y[16::8].sum() / Y[8]))
+
+
+AOP_THD_POINT = (AOP_DB_SPL, 0.10)   # datasheet: AOP = 10 % THD at 120 dB SPL
+
+
+@lru_cache(maxsize=4)
+def tanh_scale(spl_db: float = AOP_THD_POINT[0], thd: float = AOP_THD_POINT[1]) -> float:
+    """x_s of y = x_s tanh(x / x_s) such that a sine at spl_db reaches thd (the battlefield_physics s1 recipe, plan M7
+    "soft saturation from 120 dB SPL"); THD falls as x_s rises."""
+    a = np.sqrt(2) * spl_to_float_rms(spl_db)
+    lo, hi = 0.05, 50.0
+    for _ in range(60):
+        mid = np.sqrt(lo * hi)
+        if _thd_curve(a, lambda x: mid * np.tanh(x / mid)) > thd: lo = mid
+        else: hi = mid
+    return float(np.sqrt(lo * hi))
+
+
+def saturate_curve(x, curve: str = "knee105") -> np.ndarray:
+    """knee105: linear to soft_knee() then tanh to the rails (fits 0.2 % THD at 105 dB, under-distorts at 120).
+    tanh120: x_s tanh(x / x_s), fitted to 10 % THD at 120 dB (the AOP). Both are hard-clipped at the rails after."""
+    if curve == "knee105":
+        return softsat(x, soft_knee())
+    if curve == "tanh120":
+        xs = np.float32(tanh_scale()); return (xs * np.tanh(np.asarray(x, np.float32) / xs)).astype(np.float32)
+    raise ValueError(f"unknown front-end curve {curve!r}")
+
+
+def thd_of(spl_db: float, curve: str = "knee105") -> float:
+    """THD of a sine at spl_db through the curve and the rails (README table, tests)."""
+    return _thd_curve(np.sqrt(2) * spl_to_float_rms(spl_db), lambda x: np.clip(saturate_curve(x, curve), -1.0, 1.0))
+
+
+def level_flags(x2, fs_offset_db: float = 0.0) -> dict:
+    """past_knee / past_aop / past_rails and the peak of the signal that reaches the saturator (float, either mic).
+    fs_offset_db: the mic's full-scale SPL re the ICS-43434 (float = SPL - 123.01 - offset); SPL figures stay acoustic,
+    the knee and rails tests stay in float (they belong to the converter)."""
+    x2 = np.atleast_2d(np.asarray(x2, np.float32)); a = np.abs(x2)
+    n = x2.shape[-1] // AOP_FRAME * AOP_FRAME
+    fr = (x2[:, :n].astype(np.float64).reshape(x2.shape[0], -1, AOP_FRAME) ** 2).mean(-1) if n else np.zeros((1, 1))
+    pk = float(a.max(initial=0.0))
+    return {"past_knee": bool(pk > soft_knee()),
+            "past_aop": bool((10 * np.log10(fr + 1e-30) + SPL_TO_FLOAT_RMS_DB > AOP_DB_SPL).any()),
+            "past_rails": bool(pk >= 1.0),
+            "peak_db_spl": float(20 * np.log10(pk + 1e-12) + SPL_TO_FLOAT_RMS_DB + fs_offset_db)}
+
+
 def hpf(x, hz: float = HPF_HZ, sr: int = SR) -> np.ndarray:
     sos = butter(2, hz, "highpass", fs=sr, output="sos")
     return sosfilt(sos, x, axis=-1).astype(np.float32)
 
 
-def front_end_linear(x2, gains_db, sr: int = SR) -> np.ndarray:
-    """Per-mic sensitivity offset then the 60 Hz HPF: the linear half, also applied to the clean target."""
+def front_end_gain(x2, gains_db) -> np.ndarray:
     g = (10 ** (np.asarray(gains_db, float) / 20)).astype(np.float32)
-    return hpf(np.asarray(x2, np.float32) * (g[:, None] if np.ndim(x2) == 2 else g), sr=sr)
+    return np.asarray(x2, np.float32) * (g[:, None] if np.ndim(x2) == 2 else g)
 
 
-def front_end_nonlinear(rng, x2, self_noise_db: float = SELF_NOISE_FLOAT_DB, saturate: bool = True) -> tuple[np.ndarray, dict]:
-    """Soft saturation from the AOP knee, hard clip at the rails (123 dB peak), then self-noise (white; A-shaping TBD).
-    clip_frac counts input samples past the rails, i.e. pressure above 123 dB peak."""
+def front_end_linear(x2, gains_db, sr: int = SR, hz: float = HPF_HZ) -> np.ndarray:
+    """Per-mic sensitivity offset then the 60 Hz HPF: the linear half, also applied to the clean target.
+    mix_v2 runs it before the saturator by default, a model choice: the datasheet's only stated filter is a 24 Hz
+    digital HPF after the sigma-delta ADC (DS-000069 p12); mix.v2 fe_hpf_order "post" is the alternative."""
+    return hpf(front_end_gain(x2, gains_db), hz=hz, sr=sr)
+
+
+def front_end_nonlinear(rng, x2, self_noise_db: float = SELF_NOISE_FLOAT_DB, saturate: bool = True,
+                        curve: str = "knee105") -> tuple[np.ndarray, dict]:
+    """Soft saturation (saturate_curve), hard clip at the rails (123 dB peak), then self-noise (white; A-shaping TBD).
+    The knee105 curve starts at soft_knee() = 90.7 dB SPL peak, not at the AOP. 'saturated' means a sample passed that
+    knee under either curve, so the v2 meta 'overloaded' keeps one meaning; clip_frac counts input samples past the
+    rails, i.e. pressure above 123 dB peak."""
     y = np.asarray(x2, np.float32)
     meta = {"clip_frac": 0.0, "saturated": False}
     if saturate:
         knee = soft_knee()
         a = np.abs(y)
         meta["clip_frac"] = float((a >= 1.0).mean())
-        if a.max(initial=0.0) > knee:
+        if curve != "knee105":
+            meta["saturated"] = bool(a.max(initial=0.0) > knee); y = np.clip(saturate_curve(y, curve), -1.0, 1.0)
+        elif a.max(initial=0.0) > knee:
             y = np.clip(softsat(y, knee), -1.0, 1.0); meta["saturated"] = True
     if self_noise_db is not None:
         y = y + (rng.standard_normal(y.shape) * 10 ** (self_noise_db / 20)).astype(np.float32)

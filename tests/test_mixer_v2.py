@@ -98,7 +98,7 @@ def test_wind_independent_per_mic_with_shared_envelope():
 
 # --- M2: reference speech gain histogram ---
 
-@pytest.mark.parametrize("share", [0.0, 0.10, 0.25])
+@pytest.mark.parametrize("share", [0.0, 0.10, 0.25, 0.40])
 def test_m2_reference_gain_histogram(share):
     rng = np.random.default_rng(4)
     p = {**mixer.V2_DEFAULTS, "tail_share": share}
@@ -107,8 +107,9 @@ def test_m2_reference_gain_histogram(share):
     assert g.min() >= -20.0 - 1e-9 and g.max() <= 3.0 + 1e-9
     band = ((g >= -6) & (g <= 3)).mean()
     assert abs(band - share) < 0.015
-    if share == 0.25:
+    if share == 0.40:   # the default: plan M2's about 10 % mono and 5 % produced stereo
         assert abs((modes == "mono").mean() - 0.10) < 0.01 and abs((modes == "stereo").mean() - 0.05) < 0.01
+        assert abs((modes == "low_ild").mean() - 0.25) < 0.015
     phys = g[modes == "physical"]
     assert ((phys <= -8.5) & (phys >= -20.0)).all()
 

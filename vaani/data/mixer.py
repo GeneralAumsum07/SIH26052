@@ -230,18 +230,21 @@ C_SOUND = 343.0
 V2_DEFAULTS = dict(
     # M2 boom -> reference speech transfer (1/r geometry: r_boom 2-3 cm, r_ref 8-14 cm) plus head shadow
     ild_db=(8.5, 16.9), ref_delay_ms=(0.15, 0.35), hf_shadow_db=(-6.0, 0.0), head_radius_m=0.0875,
-    # M2 out-of-physics tail (diag requirements 1 and 4); tail_share is ablation 3b (0 / 0.10 / 0.25)
-    # tail items all land in -6..+3 dB, so the share of items there equals tail_share (mono 10 %, stereo 5 % at 0.25)
-    tail_share=0.25, tail_mix={"mono": 0.4, "stereo": 0.2, "low_ild": 0.4}, low_ild_gain_db=(-6.0, 3.0),
+    # M2 out-of-physics tail (diag requirements 1 and 4); tail items all land in -6..+3 dB, so the share of items there
+    # equals tail_share. 0.40 with mono 10 % / stereo 5 % / low ILD 25 % of items (G1 c5, results_r2/r8/data_gates/README.md)
+    tail_share=0.40, tail_mix={"mono": 0.25, "stereo": 0.125, "low_ild": 0.625}, low_ild_gain_db=(-6.0, 3.0),
     p_quiet=0.05, quiet_gain_db=(-20.0, -16.9),
     stereo_corr=(0.6, 0.95), stereo_gain_db=(-1.0, 1.0), stereo_delay_ms=(-0.5, 0.5),
-    # M3 noise field; near_pos_share 0.8 (G1 sweep): speech-like positive-ILD noise is what defeats the ILD shortcut
-    mic_spacing_m=0.12, p_cylindrical=0.3, point_ild_db=12.0, near_ild_db=(6.0, 12.0), near_pos_share=0.8, far_ild_db=2.0,
+    # M3 noise field; near_pos_share 0.9, near ILD 8-12 dB (G1 c5): speech-like positive-ILD noise defeats the ILD shortcut
+    mic_spacing_m=0.12, p_cylindrical=0.3, point_ild_db=12.0, near_ild_db=(8.0, 12.0), near_pos_share=0.9, far_ild_db=2.0,
     stft_n=512, stft_hop=128,
     # M4 wind: level at 5 m/s unprotected (inferred 75-90 dB SPL, TBD), +12 dB per doubling (rho V^2)
     wind_ref_db=(75.0, 90.0), wind_ref_mps=5.0, windscreen_db=0.0, wind_frame_s=0.02,
-    # M7 front end
+    # M7 front end. Alternatives (results_r2/r8/calib/README.md, decisions pending): fe_curve "tanh120" (10 % THD at the
+    # AOP), fe_hpf_order "post" (saturate, then HPF: the datasheet filter is digital), mic_fs_spl_db (full-scale sine SPL
+    # of the mic: 120 for the ICS-43434, 130 for a 130 dB AOP part; beds and talkers keep their SPL, the float level drops)
     front_end=True, mic_gain_db=1.0, self_noise_db=-93.0,
+    fe_curve="knee105", fe_hpf_order="pre", fe_hpf_hz=60.0, mic_fs_spl_db=120.0,
     # M10 seams, M11 Lombard
     xfade_s=0.05, lombard=True,
     path=None,   # force "room" or "param" (data gates); None = scene rir + cfg.p_room
@@ -457,9 +460,10 @@ def mix_v2_ref_draw(rng, p: dict) -> tuple[str, float, float, float]:
 
 
 def mix_v2(rng, speech, noises, impulse, impulse_onsets_s, bank, cfg: MixConfig, norm_gain: float | None = None,
-           scene: dict | None = None):
+           scene: dict | None = None, trace: dict | None = None):
     """Returns (mix (2, n), clean (n,), meta) like mix(). clean is the boom speech after the linear front end
-    (mic gain, 60 Hz HPF) at its calibrated level; nothing is peak-normalised, so overload is physical."""
+    (mic gain, 60 Hz HPF) at its calibrated level; nothing is peak-normalised, so overload is physical.
+    trace: a dict to receive the acoustic components (level-chain diagnostics); it never changes the output."""
     from vaani.data import scenes as _scenes
     p = v2_params(cfg)
     n = len(speech); xf = int(p["xfade_s"] * SR)
@@ -545,6 +549,8 @@ def mix_v2(rng, speech, noises, impulse, impulse_onsets_s, bank, cfg: MixConfig,
                 pair = _point_pair(rng, nz, ild, d_mic)
         pair = _to_spl(pair, float(spec["spl"]), spec.get("weighting", "A"))
         noise2 += pair
+        if trace is not None:
+            trace.setdefault("noise", []).append((role, pair.copy()))
         comp.append({"role": role, "spl_db": float(spec["spl"]), "ild_db": ild, "tag": spec.get("tag")})
     meta["noise_sources"] = comp
 
@@ -578,17 +584,32 @@ def mix_v2(rng, speech, noises, impulse, impulse_onsets_s, bank, cfg: MixConfig,
     # --- front end (M7): mic gain, 60 Hz HPF, saturation, rails, self-noise ---
     gains = rng.uniform(-p["mic_gain_db"], p["mic_gain_db"], 2) if p["front_end"] else np.zeros(2)
     acoustic = s2 + noise2 + (imp2 if imp2 is not None else 0.0)
+    fs_off = float(p["mic_fs_spl_db"]) - 120.0   # a less sensitive mic: every float level drops by the same dB
+    if fs_off:
+        acoustic = acoustic * np.float32(10 ** (-fs_off / 20)); s_p = s_p * np.float32(10 ** (-fs_off / 20))
     if p["front_end"]:
-        lin = calib.front_end_linear(acoustic, gains)
-        clean = calib.front_end_linear(s_p[None], gains[:1])[0]
-        out, fe = calib.front_end_nonlinear(rng, lin, p["self_noise_db"])
+        hz = float(p["fe_hpf_hz"])
+        lin = calib.front_end_linear(acoustic, gains, hz=hz)
+        clean = calib.front_end_linear(s_p[None], gains[:1], hz=hz)[0]
+        if p["fe_hpf_order"] == "pre":
+            sat_in = lin
+            out, fe = calib.front_end_nonlinear(rng, lin, p["self_noise_db"], curve=p["fe_curve"])
+        elif p["fe_hpf_order"] == "post":   # the converter sees the LF too; the digital HPF follows it
+            sat_in = calib.front_end_gain(acoustic, gains)
+            out, fe = calib.front_end_nonlinear(rng, sat_in, None, curve=p["fe_curve"])
+            out = calib.hpf(out, hz=hz)
+            out = out + (rng.standard_normal(out.shape) * 10 ** (p["self_noise_db"] / 20)).astype(np.float32)
+        else:
+            raise ValueError(f"fe_hpf_order must be pre or post, got {p['fe_hpf_order']!r}")
     else:
-        lin = acoustic.astype(np.float32); clean = s_p.copy()
+        lin = acoustic.astype(np.float32); clean = s_p.copy(); sat_in = lin
         out, fe = lin.copy(), {"clip_frac": 0.0, "saturated": False}
     if mode == "mono":
         out[1] = out[0]
     meta["mic_gain_db"] = [float(g) for g in gains]
     meta["clip_frac"] = fe["clip_frac"]; meta["clipped"] = fe["clip_frac"] > 0; meta["overloaded"] = fe["saturated"]
+    # explicit level flags (calib.level_flags); 'overloaded' is past_knee under its old name, kept for the frozen metas
+    meta.update(calib.level_flags(sat_in, fs_off))
 
     # SNR is an output here: speech-active boom speech against everything else on the primary, before the nonlinearity
     ps = speech_active_power(clean)
@@ -599,4 +620,7 @@ def mix_v2(rng, speech, noises, impulse, impulse_onsets_s, bank, cfg: MixConfig,
     resid = out[0] - clean
     meta["snr_achieved_db"] = float(10 * np.log10(speech_active_power(clean) / ((resid ** 2).mean() + 1e-20)))
     meta["noise_class"] = "clean" if meta["clean_bucket"] else scene["name"]
+    if trace is not None:   # acoustic parts at the mics; lin = front_end_linear(sum of parts, gains) exactly
+        trace.update(speech=s2, wind=w2 if wind_mps > 0 else None, impulse=imp2, gains=gains, lin=lin,
+                     clean_bucket=meta["clean_bucket"], front_end=bool(p["front_end"]))
     return out.astype(np.float32), clean.astype(np.float32), meta

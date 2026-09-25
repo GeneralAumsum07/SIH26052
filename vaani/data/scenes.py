@@ -67,8 +67,11 @@ SCENES = {
                          event=None,
                          wind=dict(p=0.0, speed=(0.0, 0.0))),
 }
-P_NEAR = 0.7              # extra near-field source (equipment, own gear) per item: breaks "noise ILD is 0" (G1-tuned)
+P_NEAR = 0.9              # extra near-field source (equipment, own gear) per item: breaks "noise ILD is 0" (G1 c5)
 NEAR_SPL_REL = (0.0, 8.0)   # near source level re the bed, dB (G1-tuned)
+# "add": the near source rides on top of the drawn bed level, so bed + near can exceed the scene's dBA range by up to
+# 8.6 dB (results_r2/r8/calib); "split": bed + near together hold the drawn level, near still r dB above the bed
+NEAR_MODE = "add"
 
 
 def _u(rng, lohi):
@@ -77,7 +80,7 @@ def _u(rng, lohi):
 
 
 def sample_scene(rng, name: str | None = None, weights: dict | None = None, crop_s: float = 4.0,
-                 p_near: float = P_NEAR, near_spl_rel: tuple[float, float] = NEAR_SPL_REL) -> dict:
+                 p_near: float = P_NEAR, near_spl_rel: tuple[float, float] = NEAR_SPL_REL, near_mode: str = NEAR_MODE) -> dict:
     """One drawn scene: names, levels, roles. JSON-safe so it can ride in the item meta."""
     w = weights or SCENE_WEIGHTS
     names = list(w)
@@ -94,8 +97,12 @@ def sample_scene(rng, name: str | None = None, weights: dict | None = None, crop
         if rng.random() < pt["p"]:
             sources.append(dict(role="point", tags=list(pt["tags"]), spl=_u(rng, pt["spl"]), weighting="A"))
     if rng.random() < p_near:
-        b = sources[0]
-        sources.append(dict(role="near", tags=list(b["tags"]), spl=b["spl"] + _u(rng, near_spl_rel), weighting="A"))
+        b = sources[0]; rel = _u(rng, near_spl_rel)
+        if near_mode == "split":
+            b["spl"] = b["spl"] - 10 * np.log10(1 + 10 ** (rel / 10))
+        elif near_mode != "add":
+            raise ValueError(f"near_mode must be add or split, got {near_mode!r}")
+        sources.append(dict(role="near", tags=list(b["tags"]), spl=b["spl"] + rel, weighting="A"))
     wind = 0.0
     if rng.random() < sc["wind"]["p"]:
         wind = _u(rng, sc["wind"]["speed"])
