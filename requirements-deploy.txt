@@ -17,6 +17,10 @@
 # manylinux aarch64 wheels for numpy, onnxruntime, numba and llvmlite at these versions, so the board
 # should run Python 3.12 (pi_setup.sh gets one through uv when the system Python differs).
 # Unverified on board: no install or run on a Pi has been recorded yet.
+# A Jetson Orin (JetPack 7.2.1, aarch64) can install the same CPU pins (manylinux_2_28 wheels; inferred, not
+# tried); its GPU/TensorRT path needs JetPack's own wheels and is not covered here. Training-only packages
+# (torch, torch-pesq, faster-whisper, tensorrt) never belong in this file. tests/test_r8_box.py checks every pin
+# below against uv.lock.
 numpy==2.5.3
 onnxruntime==1.30.0
 # onnxruntime's own dependencies, pinned to the same lock so the board resolves what was tested

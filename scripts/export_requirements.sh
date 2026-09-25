@@ -15,6 +15,11 @@ cd "$(dirname "$0")/.."
 OUT=requirements.txt
 {
   echo "# Generated from uv.lock by scripts/export_requirements.sh - do not edit by hand."
+  echo "#"
+  echo "# SCOPE: the x86_64 + CUDA + Python 3.12 TRAINING environment. Not for a target board."
+  echo "# The hashes below were resolved for Windows and Linux x86_64 only, so this file cannot install"
+  echo "# on aarch64 - pip checks hashes all-or-nothing and an ARM wheel will never match. For a"
+  echo "# Raspberry Pi or any inference target use requirements-deploy.txt (numpy + onnxruntime)."
   echo "# Source of truth: pyproject.toml + uv.lock. Regenerate after any dependency change."
   echo "#"
   echo "# torch/torchaudio are CUDA 12.8 builds and are not on PyPI; this index serves them."
