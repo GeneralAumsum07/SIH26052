@@ -227,3 +227,18 @@ def test_exclude_groups_schema_file(tmp_path):
     if real.exists():
         ids = dataset.load_exclude_groups(real)
         assert len(ids) > 100 and all(":" in s for s in ids)
+
+
+def test_cached_scene_pool_draws_identical():
+    from vaani.data.scenes import ScenePool, sample_scene
+    cls = ["shooting", "shelling", "vehicle", "helicopter", "footsteps"]
+    df = pd.DataFrame([dict(corpus="mad", source_id=f"mad:{cls[i % 5]}/v{i // 3}_{i}", group_id=f"v{i // 3}",
+                            noise_class="impulsive" if i % 4 == 0 else "changing") for i in range(60)])
+    a, b = ScenePool(df), dataset.CachedScenePool(df)
+    for k in range(40):
+        ra, rb = np.random.default_rng(k), np.random.default_rng(k)
+        sa, sb = sample_scene(ra, crop_s=4.0), sample_scene(rb, crop_s=4.0)
+        (xa, ia), (xb, ib) = a.draw(ra, sa), b.draw(rb, sb)
+        assert [None if r is None else r.name for r in xa] == [None if r is None else r.name for r in xb]
+        assert (ia is None) == (ib is None) and (ia is None or ia.name == ib.name) and sa == sb
+        assert ra.random() == rb.random()

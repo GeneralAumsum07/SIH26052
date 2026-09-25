@@ -39,7 +39,7 @@ def overfit(cfg, steps=30):
     out = []
     for _ in range(steps):
         loss = loss_fn(model(*inputs).float(), target, fw, is_clean)
-        opt.zero_grad(set_to_none=True); loss.backward(); opt.step(); out.append(float(loss))
+        opt.zero_grad(set_to_none=True); loss.backward(); opt.step(); out.append(loss.item())
     return out
 
 

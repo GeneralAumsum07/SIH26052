@@ -163,6 +163,19 @@ def front_end(mixed, dsp_cfg=None, avail=None):
     return np.stack([prim, ref]).astype(np.float32), pipeline.frame_avail(av, n // stft.HOP + 1)
 
 
+class CachedScenePool(ScenePool):
+    """ScenePool with _groups memoised: it is a pure function of (tag, impulsive), but recomputing it filters
+    every group through pandas per draw (~0.6 s of a ~0.7 s v2 item). Same arrays in the same order, so the rng
+    draws and the mixtures are unchanged."""
+
+    def _groups(self, t, impulsive):
+        c = self.__dict__.setdefault("_gcache", {})
+        k = (t, impulsive)
+        if k not in c:
+            c[k] = super()._groups(t, impulsive)
+        return c[k]
+
+
 def load_exclude_groups(path):
     """data.exclude_groups_file (held-out drone/NOISEX/speaker groups of the r8 test set). Accepts a JSON list, or a
     dict whose (nested) values hold the ids; every string is matched against group_id, speaker_id and source_id.
@@ -227,7 +240,7 @@ class DynamicMixDataset(Dataset):
         # fe_inputs (VaaniFE without n_hat): limiter/ref_policy front end only, validity always emitted
         self.fe_inputs = bool(fe_inputs) and not with_dsp
         # mixer v2 (M8): scenes draw their noise classes; v1 never builds or touches the pool
-        self.scene_pool = ScenePool(self.noise) if cfg.version == 2 else None
+        self.scene_pool = CachedScenePool(self.noise) if cfg.version == 2 else None
         self.scene_weights = scene_weights
         assert len(self.speech) and len(self.cont), "empty manifest split"
 
