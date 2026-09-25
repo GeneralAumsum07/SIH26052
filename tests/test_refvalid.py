@@ -261,7 +261,8 @@ def test_r8_refvalid_config_parses_and_pins_r7():
     r7 = yaml.safe_load(open(ROOT / "configs" / "retraining" / "r7_e256_wr64.yaml"))
     rc = dataset.ref_corrupt_config(c["data"]["ref_corrupt"]); assert rc["p"] == 0.15 and rc["p_absent"] == 0.15
     assert c["model_cfg"] == {**r7["model_cfg"], "ref_validity": True}
-    assert {k: v for k, v in c["data"].items() if k != "ref_corrupt"} == r7["data"]
+    assert {k: v for k, v in c["data"].items() if k not in ("ref_corrupt", "exclude_groups_file")} == r7["data"]
+    assert c["data"]["exclude_groups_file"] == "configs/data/r8_heldout_exclude.json"   # no r8 test-set leak
     assert c["loss_cfg"] == r7["loss_cfg"] and c["optim"] == r7["optim"] and c["epochs"] == r7["epochs"]
     assert c["dsp"]["ref_policy"]["absent"] in ("freeze", "reset")
     p = ROOT / c["init_from"]

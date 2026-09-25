@@ -10,6 +10,8 @@ data:
   bank: data/rirs/bank_r3.npz
   crop_s: 4.0
   epoch_len: 20000
+  # the r8 test set holds out drone/NOISEX/EARS/MAD groups that r7's pools contain: drop them (the one change to r7's data)
+  exclude_groups_file: configs/data/r8_heldout_exclude.json
   manifests:
   - data/manifests/librispeech_100h.parquet
   - data/manifests/ears.parquet
