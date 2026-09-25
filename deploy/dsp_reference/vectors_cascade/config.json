@@ -12,6 +12,6 @@
   "checkpoint_sha256": "121f0c3d15936b810573dc089c597e67fe67f6d09e3d75c2469746decefe2083",
   "onnx": "deploy/r7/cascade.onnx",
   "onnx_sha256": "e67a2c42a2fd53ec4d7e6c4dfbf9cef920c249e499a509a2b40af401c5cefe3c",
-  "git_sha": "0b096c38b0d4dfa3c40d1cafe6d58d13440e718c",
-  "git_dirty_dsp": true
+  "git_sha": "271bc5059ec14c36076b48f69f436ee8dd7bd639",
+  "git_dirty_dsp": false
 }
