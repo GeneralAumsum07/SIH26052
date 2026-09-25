@@ -268,3 +268,18 @@ def test_r8_refvalid_config_parses_and_pins_r7():
     p = ROOT / c["init_from"]
     if p.exists():
         assert hashlib.sha256(p.read_bytes()).hexdigest() == c["init_sha256"]
+
+
+def test_eval_onnx_system_feeds_availability_and_matches_the_checkpoint(tmp_path):
+    from tests.test_export import _refvalid_ckpt
+    from vaani import export
+    ev = _eval_mod(); ck = _refvalid_ckpt(tmp_path / "rv.pt")
+    onnx = export.export_refvalid(ck, tmp_path / "rv.onnx")
+    rng = np.random.default_rng(3); n = 16000
+    clean = (0.1 * rng.standard_normal(n)).astype(np.float32)
+    mix = np.stack([clean + 0.05 * rng.standard_normal(n), 0.3 * rng.standard_normal(n)]).astype(np.float32)
+    m2, avail, _ = ev.apply_condition("burst_dropout", mix, clean)
+    y_ck = ev.make_system(f"ckpt:{ck}")(m2, avail)
+    y_ox = ev.make_system(f"onnx:{onnx}@{ck}")
+    assert np.abs(y_ox(m2, avail) - y_ck).max() < 1e-3
+    assert np.abs(y_ox(m2, None) - y_ox(m2, avail)).max() > 0   # the availability input is live, not ignored

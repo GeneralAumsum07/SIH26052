@@ -16,7 +16,7 @@ Only absent and burst_dropout carry availability 0: every other fault is a prese
 Systems (model-agnostic runner, so r8 candidates plug in unchanged):
   ckpt:<best.pt>             any vaani.train checkpoint (backbone or cascade; build_model decides the class). The
                              model gets ref_avail whenever its forward accepts it; the DSP gets it through ref_policy.
-  onnx:<graph.onnx>@<ckpt>   an exported streaming graph, DSP from the checkpoint's config (no availability input)
+  onnx:<graph.onnx>@<ckpt>   an exported streaming graph, DSP from the checkpoint's config; a ref_avail input gets availability
   py:<module>:<factory>      factory() -> object with enhance(mix (2,n) float32, ref_avail (n,) bool | None) -> (n,)
   <baseline name>            vaani.models.baselines
 
@@ -115,9 +115,7 @@ def make_system(spec):
         mod, fn = spec[3:].rsplit(":", 1); obj = getattr(importlib.import_module(mod), fn)()
         return obj.enhance
     if spec.startswith("onnx:"):
-        from vaani.eval import enhance_fn
-        f = enhance_fn(spec, device="cpu")
-        return lambda mix, avail: f(mix)
+        return _onnx_system(spec)
     if not spec.startswith("ckpt:"):
         from vaani.models import baselines
         b = baselines.get(spec)
@@ -145,6 +143,31 @@ def make_system(spec):
         else:
             out = m(spec6, feats)
         return stft.istft(out, length=mix.shape[1])[0].numpy()
+    return enhance
+
+
+def _onnx_system(spec):
+    """`onnx:<graph>@<ckpt>`: the streamed graph; a ref_validity graph (export_refvalid) gets the per-frame availability."""
+    import torch
+    from vaani import export
+    from vaani.dsp import pipeline, stft
+    graph, ckpt = spec[5:].rsplit("@", 1)
+    cfg = torch.load(ckpt, map_location="cpu", weights_only=True)["config"]
+    sess = export.load_session(graph)
+    names, zero = export.zero_caches(sess)
+    takes_avail = any(i.name == export.REF_AVAIL for i in sess.get_inputs())
+    has_policy = (cfg.get("dsp") or {}).get("ref_policy") is not None
+
+    def enhance(mix, avail):
+        r = pipeline.run(mix, controller_on=cfg["controller_on"], dsp_cfg=cfg.get("dsp"), ref_avail=avail if has_policy else None)
+        x = torch.from_numpy(r["mix"])[None]
+        spec6 = torch.cat([stft.stft(x[:, 0]), stft.stft(x[:, 1]), stft.stft(torch.from_numpy(r["n_hat"])[None])], -1).numpy()
+        feats = np.ascontiguousarray(r["features"][None], dtype=np.float32)
+        fa = None
+        if takes_avail and avail is not None:
+            fa = r["ref_avail"] if "ref_avail" in r else pipeline.frame_avail(avail, feats.shape[1])
+        out, _ = export.stream_onnx(sess, spec6, feats, names, [c.copy() for c in zero], ref_avail=fa)
+        return stft.istft(torch.from_numpy(out), length=mix.shape[1])[0].numpy()
     return enhance
 
 
