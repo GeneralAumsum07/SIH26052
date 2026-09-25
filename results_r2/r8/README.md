@@ -56,3 +56,14 @@ A scratchpad copy of the config with `max_steps: 20`, `num_workers: 2`, `data.ep
 val screen, run as `uv run --with numba python -m vaani.train <copy>` on the RTX 5060: 20 steps, 0 skipped,
 wall 174.4 s by run.json (about 3.7 items/s, loader-bound at 2 workers on a shared, loaded machine: non-reportable).
 The zero-init ref_conv weight moved to norm 0.0018, so gradient reaches the new input. No checkpoint was kept.
+
+## Other files in this folder
+
+| file | what | command / source |
+|---|---|---|
+| `data_gates/{README.md,v1.json,v2.json}` | G1 ILD-shortcut gate: v2 ILD-only AUC 0.727 (param) / 0.697 (room), gate <= 0.75; v1 0.989 / 0.874 | see [data_gates/README.md](data_gates/README.md) |
+| `mad_speech_filter.json` | MAD speech-contamination pass: 477 of 6,483 clips (0.60 h) flagged; writes `data/manifests/mad_v2.parquet` (git-ignored) | `source <diag env.sh> && .venv/Scripts/python.exe scripts/mad_speech_filter.py`; the VAD is Silero (threshold 0.5) from the faster-whisper bundle in the uv cache, reached through the diag env.sh PYTHONPATH |
+| `mixer_bench.json` | mixer v1 vs v2 ms/item (smoke, loaded machine, not reportable) | `python scripts/data_gates.py --bench 200` (in the JSON as `command`) |
+| `loader_bench.json` | dataset items/s per worker for r8_fe_mini / r8_refvalid_v2 / r7 (smoke, laptop RTX 5060 box, not reportable) | embedded in the JSON as `command` |
+| `step_time.json` | GPU train-step time at B 32 x 4 s, bf16 (smoke, laptop RTX 5060, not reportable) | embedded in the JSON as `command` |
+| `testset/` | the pre-registered r8 test set: protocol, hash and index summary | see [testset/README.md](testset/README.md) |
