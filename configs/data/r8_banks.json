@@ -1,0 +1,27 @@
+{
+  "bank": {
+    "file": "data/rirs/bank.npz",
+    "sha256": "dafb2e84e34099ff4a92db4e0941fbceb6aa2ef85c5408c8f3f336c652e1f988",
+    "sidecars": {},
+    "asset": "bank.npz",
+    "built_with": "python scripts/make_rir_bank.py --out data/rirs/bank.npz"
+  },
+  "bank_r3": {
+    "file": "data/rirs/bank_r3.npz",
+    "sha256": "e4e67463072e1dca14b94bef97a99bb85da34ebee7ec657a1f1dc7554df1b59f",
+    "sidecars": {},
+    "asset": "bank_r3.npz",
+    "built_with": "python scripts/make_rir_bank.py --out data/rirs/bank_r3.npz --armoured-frac 0.2 --max-len-s 1.0"
+  },
+  "bank_r8": {
+    "file": "data/rirs/bank_r8.npz",
+    "sha256": "325ef372776de592ed1fb865f0e82a3dec1428ab65ea69d75afc01a680e1e3a7",
+    "sidecars": {
+      "bank_r8.speech.npy": "89d3f4b793a1cc0c21489ee9467d593c4e11d691ca1ffbbb3e669f88d740a687",
+      "bank_r8.noise.npy": "821719936d172e157a23f09ff0ac5418fdb1a4e6313a9cd656057ca3d158daf5",
+      "bank_r8.rt60.npy": "4c33401d4f476e49da544253a4c95b2ddfcba6e2297783723d7679bce6311a10"
+    },
+    "asset": "bank_r8.npz",
+    "built_with": "python scripts/make_rir_bank.py --out data/rirs/bank_r8.npz --n 5000 --seed 8 --seed-namespace train --armoured-frac 0.2 --max-len-s 1.0 --receiver-radius 0.05 --workers 5 --parts-dir data/rirs/bank_r8.parts"
+  }
+}

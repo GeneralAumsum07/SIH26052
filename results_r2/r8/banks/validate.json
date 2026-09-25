@@ -1,0 +1,122 @@
+{
+ "bank": {
+  "bank": "bank_r8",
+  "n": 5000,
+  "armoured": 1000,
+  "armoured_frac": 0.2,
+  "shapes": {
+   "speech": [
+    5000,
+    2,
+    16000
+   ],
+   "noise": [
+    5000,
+    3,
+    2,
+    16000
+   ]
+  },
+  "meta": {
+   "receiver_radius": "0.05000000074505806",
+   "seed_namespace": "train"
+  },
+  "mmap": true,
+  "all_finite": true,
+  "any_zero_rir": 0,
+  "max_abs": 39.045597076416016,
+  "sha256": {
+   "bank_r8.npz": "325ef372776de592ed1fb865f0e82a3dec1428ab65ea69d75afc01a680e1e3a7",
+   "bank_r8.speech.npy": "89d3f4b793a1cc0c21489ee9467d593c4e11d691ca1ffbbb3e669f88d740a687",
+   "bank_r8.noise.npy": "821719936d172e157a23f09ff0ac5418fdb1a4e6313a9cd656057ca3d158daf5",
+   "bank_r8.rt60.npy": "4c33401d4f476e49da544253a4c95b2ddfcba6e2297783723d7679bce6311a10"
+  },
+  "mixer_v2": {
+   "apc": {
+    "items": 40,
+    "room_path": 26,
+    "armoured_rooms_served": 26,
+    "plain_rooms_served": 0
+   },
+   "command_post": {
+    "items": 40,
+    "room_path": 25,
+    "armoured_rooms_served": 0,
+    "plain_rooms_served": 25
+   },
+   "patrol": {
+    "items": 40,
+    "room_path": 0,
+    "armoured_rooms_served": 0,
+    "plain_rooms_served": 0
+   }
+  },
+  "overlap": [
+   {
+    "other": "data\\rirs\\bank.npz",
+    "rt60_matches": 1,
+    "identical_speech_rir": 0
+   },
+   {
+    "other": "data\\rirs\\bank_r3.npz",
+    "rt60_matches": 3,
+    "identical_speech_rir": 0
+   },
+   {
+    "other": "data\\rirs\\bank_eval_r8.npz",
+    "rt60_matches": 0,
+    "identical_speech_rir": 0
+   }
+  ]
+ },
+ "ref": {
+  "bank": "bank_r3",
+  "n": 5000,
+  "armoured": 1000,
+  "armoured_frac": 0.2,
+  "shapes": {
+   "speech": [
+    5000,
+    2,
+    16000
+   ],
+   "noise": [
+    5000,
+    3,
+    2,
+    16000
+   ]
+  },
+  "meta": {},
+  "mmap": true,
+  "all_finite": true,
+  "any_zero_rir": 0,
+  "max_abs": 39.08750915527344,
+  "sha256": {
+   "bank_r3.npz": "99dcfb268a1c6e3a39dd64c845160f6695f9151dba839733bb991700f5a5d69e",
+   "bank_r3.speech.npy": "e3863ea40cffac3535dea1aae7317d6e0d3727b4baad06e202e3a40dd1513685",
+   "bank_r3.noise.npy": "dbb2d60de5e5b0c416c41fd048ddbcbe1bdb102a1d904fa6ffdd20ad8b295fc4",
+   "bank_r3.rt60.npy": "576f9f5fc4b93a740d91e137517649c1316547938a34537902ece3a80e45e23d"
+  },
+  "mixer_v2": {
+   "apc": {
+    "items": 40,
+    "room_path": 26,
+    "armoured_rooms_served": 3,
+    "plain_rooms_served": 23
+   },
+   "command_post": {
+    "items": 40,
+    "room_path": 25,
+    "armoured_rooms_served": 9,
+    "plain_rooms_served": 16
+   },
+   "patrol": {
+    "items": 40,
+    "room_path": 0,
+    "armoured_rooms_served": 0,
+    "plain_rooms_served": 0
+   }
+  }
+ }
+}
