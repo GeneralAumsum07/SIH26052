@@ -1,0 +1,890 @@
+# r8 dataset registry: what the rented box fetches, verifies, extracts and scans (scripts/r8_datasets.py).
+# Human-readable table and box steps: configs/data/R8_DATASETS.md. Sources: the verified access table of 2026-09-26
+# (URLs probed header-only; sizes are probed Content-Lengths or publisher metadata; md5/sha256 only where the
+# publisher states one, otherwise null and `verify` records the sha256 of the first fetch in <dest>/.fetched).
+#
+# datasets: every corpus an r8 config (configs/retraining/r8_*.yaml, r8_ablations/*.yaml) or a box gate (G1 via
+#           scripts/data_gates.py, G4) reads. scripts/r8_box_setup.sh fetches all of them (r8_preflight.py --fetch-order).
+# hosts:    per-host download limits (max_files in flight, connections per file); r8_datasets.py applies them.
+# optional: plan 11.5 candidates and eval re-render corpora. Same schema; fetched only when named with --only (or --all).
+#
+# Per entry (the interface other scripts read): access direct|login|request|manual; credentials = env vars that must be
+# set (values never read from files); urls = landing pages; files[] = {name, url, size_bytes, md5 or sha256 (null when
+# unpublished), mirrors?, laptop_sha256? (advisory: the laptop copy the laptop manifests came from)}; size_gb; dest =
+# data/raw/<name>_src (archives + extracted tree; scanners write data/raw/<corpus>/ beside it, so manifest paths match
+# the laptop's); extract none|tar|zip|zip_split|rar|mat2wav; root or root_find = the scanner root under dest; scanner =
+# vaani.data.sources function (scans[] when one download feeds several manifests); manifest = what the configs name;
+# needed_by = config stems, plus gate:/eval:/filter: tags.
+# Paths are relative to the repo root with --root data (dest data/raw/x -> <root>/raw/x).
+hosts:
+  default: {max_files: 4, connections: 8}
+  zenodo.org: {max_files: 2, connections: 1, note: 'polite: 2 files at a time, one connection each, 429 Retry-After honoured'}
+  tulane.box.com: {max_files: 2, connections: 1, note: 'Box shared links: GET only, no HEAD'}
+  spib.linse.ufsc.br: {max_files: 2, connections: 1, note: small academic server}
+  www.kaggle.com: {max_files: 1, connections: 1, note: 302 to a signed URL}
+  mozilladatacollective.com: {max_files: 1, connections: 4, note: 30 downloads/day per organisation}
+datasets:
+  librispeech:
+    access: direct
+    credentials: []
+    urls: ['https://www.openslr.org/12/']
+    files:
+    - name: train-clean-100.tar.gz
+      url: https://www.openslr.org/resources/12/train-clean-100.tar.gz
+      size_bytes: 6387309499
+      md5: 2a93770f6d5c6c964bc36631d331a522
+      mirrors: ['https://openslr.elda.org/resources/12/train-clean-100.tar.gz', 'https://openslr.trmal.net/resources/12/train-clean-100.tar.gz']
+      laptop_sha256: d4ddd1d5a6ab303066f14971d768ee43278a5f2a0aa43dc716b0e64ecbbbf6e2
+    size_gb: 6.387
+    dest: data/raw/librispeech_src
+    extract: tar
+    scanner: vaani.data.sources.scan_librispeech
+    manifest: data/manifests/librispeech_100h.parquet
+    needed_by: [ab1_fe_mini_s0, ab1_fe_mini_s1, ab1_refvalid_s0, ab1_refvalid_s1, ab2_p_s0, ab2_p_s1, ab2_pr_nhat_s0, ab2_pr_nhat_s1,
+      ab2_pr_pld_s0, ab2_pr_pld_s1, ab3_refdrop00_s0, ab3_refdrop00_s1, ab3_refdrop30_s0, ab3_refdrop30_s1, ab3b_tail00,
+      ab3b_tail10, ab4_bounded_df0, ab4_bounded_df3, ab4_unbounded_df3, ab6_kappa1, ab6_kappa2, ab6_kappa4, r8_fe_mini,
+      r8_mini_refvalid, r8_refvalid_v2, 'gate:G1']
+    licence: CC BY 4.0
+    notes: All of train-clean-100 (28,539 rows on the laptop), what scripts/make_librispeech_100h.py writes. The 20 h librispeech.parquet
+      is r1-r7 only and not rebuilt here.
+    root: .
+    scan_args: {max_hours: null}
+  ears:
+    access: direct
+    credentials: []
+    urls: ['https://github.com/facebookresearch/ears_dataset']
+    files:
+    - {name: p001.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p001.zip', size_bytes: 592079092,
+      sha256: null, laptop_sha256: 6016340f1a138d9111ff212ba0b6f9b32f7472cb001d9b637d95d96a66f14d79}
+    - {name: p002.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p002.zip', size_bytes: 584324228,
+      sha256: null, laptop_sha256: 9b62f36dfd9aad6092304a585ddcea79ccecf78df21f6356e88ba382e237dcbb}
+    - {name: p003.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p003.zip', size_bytes: 651915872,
+      sha256: null, laptop_sha256: b35f60866a3d8b542200e4daef70bebbc6beb2f6e28bdca5cb8e44535f015462}
+    - {name: p004.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p004.zip', size_bytes: 612312528,
+      sha256: null, laptop_sha256: 4bb41a65768bed478770d0d2341a83b59f2f6d92d4e59bbbcdde046b3248b774}
+    - {name: p005.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p005.zip', size_bytes: 632091228,
+      sha256: null, laptop_sha256: e9b1c146d3448996edb2f51b0a18d09de4fd6321a55310c9d3c11fe5061e14c8}
+    - {name: p006.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p006.zip', size_bytes: 695225616,
+      sha256: null, laptop_sha256: 581f506347098f26ac06d7d931dbead802c196f1117283e0f7313e32b3e8c794}
+    size_gb: 3.768
+    dest: data/raw/ears_src
+    extract: zip
+    scanner: vaani.data.sources.scan_ears
+    manifest: data/manifests/ears.parquet
+    needed_by: [ab1_fe_mini_s0, ab1_fe_mini_s1, ab1_refvalid_s0, ab1_refvalid_s1, ab2_p_s0, ab2_p_s1, ab2_pr_nhat_s0, ab2_pr_nhat_s1,
+      ab2_pr_pld_s0, ab2_pr_pld_s1, ab3_refdrop00_s0, ab3_refdrop00_s1, ab3_refdrop30_s0, ab3_refdrop30_s1, ab3b_tail00,
+      ab3b_tail10, ab4_bounded_df0, ab4_bounded_df3, ab4_unbounded_df3, ab6_kappa1, ab6_kappa2, ab6_kappa4, r8_fe_mini,
+      r8_mini_refvalid, r8_refvalid_v2]
+    licence: CC BY-NC 4.0
+    notes: 'p001-p006 only: ears.parquet is 894 rows = 6 speakers x 149. Each zip carries its own pNNN/ folder. No checksum
+      published: size check, plus the laptop sha256 as an advisory match.'
+    root: .
+  cv_hi:
+    access: login
+    credentials: [MDC_API_KEY]
+    urls: ['https://mozilladatacollective.com']
+    files:
+    - {name: cv_hi.tar.gz, size_bytes: 573120742, sha256: 8d08563ef25a9796a0f12f8c8c6d4190b976ed2bf95d9c8082c1ce8a12466513,
+      laptop_sha256: 8d08563ef25a9796a0f12f8c8c6d4190b976ed2bf95d9c8082c1ce8a12466513}
+    size_gb: 0.573
+    dest: data/raw/cv_hi_src
+    extract: tar
+    scanner: vaani.data.sources.scan_commonvoice_hi
+    manifest: data/manifests/cv_hi.parquet
+    needed_by: [ab1_fe_mini_s0, ab1_fe_mini_s1, ab1_refvalid_s0, ab1_refvalid_s1, ab2_p_s0, ab2_p_s1, ab2_pr_nhat_s0, ab2_pr_nhat_s1,
+      ab2_pr_pld_s0, ab2_pr_pld_s1, ab3_refdrop00_s0, ab3_refdrop00_s1, ab3_refdrop30_s0, ab3_refdrop30_s1, ab3b_tail00,
+      ab3b_tail10, ab4_bounded_df0, ab4_bounded_df3, ab4_unbounded_df3, ab6_kappa1, ab6_kappa2, ab6_kappa4, r8_fe_mini,
+      r8_mini_refvalid, r8_refvalid_v2, 'gate:G1']
+    licence: CC0-1.0; MDC terms forbid speaker re-identification and re-hosting
+    notes: 'Common Voice Scripted Speech 27.0 Hindi. POST mdc_api with ''Authorization: Bearer $MDC_API_KEY'' returns a
+      presigned downloadUrl. Quota 30 downloads/day per organisation: a resumed fetch re-POSTs only when the presigned URL
+      has expired. The sha256 is MDC''s and equals the laptop copy.'
+    fetch: mdc
+    mdc_dataset: cmu5vlext009to107ev1s9lk8
+    mdc_api: https://mozilladatacollective.com/api/datasets/{id}/download
+    root_find: validated.tsv
+    scan_args: {min_snr_db: 30}
+  esc50:
+    access: direct
+    credentials: []
+    urls: ['https://github.com/karolpiczak/ESC-50']
+    files:
+    - name: ESC-50-33c8ce9e.zip
+      url: https://github.com/karolpiczak/ESC-50/archive/33c8ce9eb2cf0b1c2f8bcf322eb349b6be34dbb6.zip
+      size_bytes: null
+      sha256: null
+      mirrors: ['https://github.com/karolpiczak/ESC-50/archive/master.zip']
+      size_bytes_estimate: 645695005
+    size_gb: 0.646
+    dest: data/raw/esc50_src
+    extract: zip
+    scanner: vaani.data.sources.scan_esc50
+    manifest: data/manifests/esc50.parquet
+    needed_by: [ab1_fe_mini_s0, ab1_fe_mini_s1, ab1_refvalid_s0, ab1_refvalid_s1, ab2_p_s0, ab2_p_s1, ab2_pr_nhat_s0, ab2_pr_nhat_s1,
+      ab2_pr_pld_s0, ab2_pr_pld_s1, ab3_refdrop00_s0, ab3_refdrop00_s1, ab3_refdrop30_s0, ab3_refdrop30_s1, ab3b_tail00,
+      ab3b_tail10, ab4_bounded_df0, ab4_bounded_df3, ab4_unbounded_df3, ab6_kappa1, ab6_kappa2, ab6_kappa4, r8_fe_mini,
+      r8_mini_refvalid, r8_refvalid_v2, 'gate:G1']
+    licence: CC BY-NC 3.0 (ESC-10 subset CC BY 3.0)
+    notes: Pinned commit zip (extracts to ESC-50-<sha>/; root_find locates it). GitHub codeload sends no length and no ranges,
+      so size is recorded on first fetch; the laptop master.zip is 645,695,005 B.
+    root_find: meta/esc50.csv
+  dns_freesound_000:
+    access: direct
+    credentials: []
+    urls: ['https://github.com/microsoft/DNS-Challenge']
+    files:
+    - name: datasets_fullband.noise_fullband.freesound_000.tar.bz2
+      url: https://dns4public.blob.core.windows.net/dns4archive/datasets_fullband/noise_fullband/datasets_fullband.noise_fullband.freesound_000.tar.bz2
+      size_bytes: 3470032239
+      sha256: null
+      mirrors: ['https://dnschallengepublic.blob.core.windows.net/dns5archive/V5_training_dataset/noise_fullband/datasets_fullband.noise_fullband.freesound_000.tar.bz2']
+      laptop_sha256: 715761950e30d36d5a665f0d61a032a127f9f0978b89be7c83a2aa2b454f4c3d
+    size_gb: 3.47
+    dest: data/raw/dns_freesound_000_src
+    extract: tar
+    scanner: vaani.data.sources.scan_dns_noise
+    manifest: data/manifests/dns_datasets_fullband.noise_fullband.freesound_000.tar.parquet
+    needed_by: [ab1_fe_mini_s0, ab1_fe_mini_s1, ab1_refvalid_s0, ab1_refvalid_s1, ab2_p_s0, ab2_p_s1, ab2_pr_nhat_s0, ab2_pr_nhat_s1,
+      ab2_pr_pld_s0, ab2_pr_pld_s1, ab3_refdrop00_s0, ab3_refdrop00_s1, ab3_refdrop30_s0, ab3_refdrop30_s1, ab3b_tail00,
+      ab3b_tail10, ab4_bounded_df0, ab4_bounded_df3, ab4_unbounded_df3, ab6_kappa1, ab6_kappa2, ab6_kappa4, r8_fe_mini,
+      r8_mini_refvalid, r8_refvalid_v2, 'gate:G1']
+    licence: DNS-Challenge repo CC BY 4.0 text; Freesound/AudioSet clips carry per-clip terms (DNS README)
+    notes: 'No checksum (the upstream sha1 CSV is 404): size check only. Use lbzip2 on the box.'
+    root: .
+  dns_audioset_000:
+    access: direct
+    credentials: []
+    urls: ['https://github.com/microsoft/DNS-Challenge']
+    files:
+    - {name: datasets_fullband.noise_fullband.audioset_000.tar.bz2, url: 'https://dns4public.blob.core.windows.net/dns4archive/datasets_fullband/noise_fullband/datasets_fullband.noise_fullband.audioset_000.tar.bz2',
+      size_bytes: 5364611964, sha256: null, laptop_sha256: 2c8cd05b1d391fbc9d7177dc2b3dc49d725fdcef458f2f5cb35164f1571d23c5}
+    size_gb: 5.365
+    dest: data/raw/dns_audioset_000_src
+    extract: tar
+    scanner: vaani.data.sources.scan_dns_noise
+    manifest: data/manifests/dns_datasets_fullband.noise_fullband.audioset_000.tar.parquet
+    needed_by: ['gate:G1']
+    licence: DNS-Challenge repo CC BY 4.0 text; Freesound/AudioSet clips carry per-clip terms (DNS README)
+    notes: Read by the G1 gate (scripts/data_gates.py V2_NOISE), not trained on. audioset_filter false keeps the laptop
+      pool G1 was confirmed on; true drops Speech/Music clips via the audioset_csv entry (fetch it first).
+    root: .
+    audioset_filter: false
+  mad:
+    access: direct
+    credentials: []
+    optional_credentials: [KAGGLE_USERNAME, KAGGLE_KEY, KAGGLE_API_TOKEN]
+    urls: ['https://www.kaggle.com/datasets/junewookim/mad-dataset-military-audio-dataset', 'https://github.com/kaen2891/military_audio_dataset']
+    files:
+    - {name: mad.zip, url: 'https://www.kaggle.com/api/v1/datasets/download/junewookim/mad-dataset-military-audio-dataset',
+      size_bytes: 1096444373, sha256: null, laptop_sha256: a87c0d2a670c9d1275668cc7a3b57f6fb7750631d612881d72d968da71961d7c}
+    size_gb: 1.096
+    dest: data/raw/mad_src
+    extract: zip
+    scanner: vaani.data.sources.scan_mad
+    manifest: [data/manifests/mad.parquet, data/manifests/mad_v2.parquet]
+    needed_by: [ab1_fe_mini_s0, ab1_fe_mini_s1, ab1_refvalid_s0, ab1_refvalid_s1, ab2_p_s0, ab2_p_s1, ab2_pr_nhat_s0, ab2_pr_nhat_s1,
+      ab2_pr_pld_s0, ab2_pr_pld_s1, ab3_refdrop00_s0, ab3_refdrop00_s1, ab3_refdrop30_s0, ab3_refdrop30_s1, ab3b_tail00,
+      ab3b_tail10, ab4_bounded_df0, ab4_bounded_df3, ab4_unbounded_df3, ab6_kappa1, ab6_kappa2, ab6_kappa4, r8_fe_mini,
+      r8_mini_refvalid, r8_refvalid_v2, 'gate:G1', 'gate:G4']
+    licence: 'conflict: Kaggle CC BY-SA 4.0 vs authors'' README CC BY 4.0; YouTube-sourced audio, research-only'
+    notes: Anonymous GET of the Kaggle API URL works (302 to a signed URL); the kaggle CLI with KAGGLE_USERNAME/KAGGLE_KEY
+      is the fallback. mad_v2.parquet (VAD-filtered, video-grouped) comes from the private mirror, not from this scan; its
+      paths resolve once scan_mad has written data/raw/mad. The link keeps scripts/score_real.py, field_accept.py (G4 communication
+      clips) and mad_speech_filter.py on their default MAD root.
+    kaggle: junewookim/mad-dataset-military-audio-dataset
+    root_find: training.csv
+    links: {data/download/mad/MAD_dataset: .}
+    scans:
+    - {scanner: vaani.data.sources.scan_mad, manifest: data/manifests/mad.parquet}
+    mirror_manifests: [data/manifests/mad_v2.parquet, data/manifests/mad_speech_contamination.parquet]
+  gunshots:
+    access: direct
+    credentials: []
+    urls: ['https://zenodo.org/records/7004819']
+    files:
+    - {name: edge-collected-gunshot-audio.zip, url: 'https://zenodo.org/api/records/7004819/files/edge-collected-gunshot-audio.zip/content',
+      size_bytes: 1567979135, md5: 6724e9085801fa4c7865f5ee312a0886, laptop_sha256: 45b7c90be7d357742f6d3bc96a25544551ffaddc0c6660f272246d90f7038da8}
+    size_gb: 1.568
+    dest: data/raw/gunshots_src
+    extract: zip
+    scanner: vaani.data.sources.scan_gunshots
+    manifest: data/manifests/gunshots.parquet
+    needed_by: [ab1_fe_mini_s0, ab1_fe_mini_s1, ab1_refvalid_s0, ab1_refvalid_s1, ab2_p_s0, ab2_p_s1, ab2_pr_nhat_s0, ab2_pr_nhat_s1,
+      ab2_pr_pld_s0, ab2_pr_pld_s1, ab3_refdrop00_s0, ab3_refdrop00_s1, ab3_refdrop30_s0, ab3_refdrop30_s1, ab3b_tail00,
+      ab3b_tail10, ab4_bounded_df0, ab4_bounded_df3, ab4_unbounded_df3, ab6_kappa1, ab6_kappa2, ab6_kappa4, r8_fe_mini,
+      r8_mini_refvalid, r8_refvalid_v2]
+    licence: CC BY 4.0
+    notes: Kabealo et al. 2023.
+    root: edge-collected-gunshot-audio
+  demand:
+    access: direct
+    credentials: []
+    urls: ['https://zenodo.org/records/1227121']
+    files:
+    - {name: DKITCHEN_16k.zip, url: 'https://zenodo.org/api/records/1227121/files/DKITCHEN_16k.zip/content', size_bytes: 110501049,
+      md5: 7ffbf52d7f4699f96927846103dc8788, laptop_sha256: 9d68e46d2709847c59580770e2f8aa160607ebff7475788174aa1080332cc845}
+    - {name: DLIVING_16k.zip, url: 'https://zenodo.org/api/records/1227121/files/DLIVING_16k.zip/content', size_bytes: 80170627,
+      md5: 46741384d9e434a0bd8b3ec1830b6052, laptop_sha256: 2b1726fe06e41551ce2397f2aaf3e4fb692c912d81914b04708df0bbb5252338}
+    - {name: DWASHING_16k.zip, url: 'https://zenodo.org/api/records/1227121/files/DWASHING_16k.zip/content', size_bytes: 102343250,
+      md5: 7e5ee9437ce9409c5f9a779b6212a240, laptop_sha256: f687c0806b0e9731b71a9c01c6134a21330efc5fa4aa7ee97cf4df276ad1dae1}
+    - {name: NFIELD_16k.zip, url: 'https://zenodo.org/api/records/1227121/files/NFIELD_16k.zip/content', size_bytes: 86536782,
+      md5: a740046c6f4e174e16f5d568aaec5024, laptop_sha256: b7ef25d2af0d9ff0b8b1e359aba3f928f59b966b87009c2aed53df93e57856e3}
+    - {name: NPARK_16k.zip, url: 'https://zenodo.org/api/records/1227121/files/NPARK_16k.zip/content', size_bytes: 86029332,
+      md5: 80f1385a34d7f1705758926b57f138ce, laptop_sha256: 80e12fa245eb7c035efc9add749620aa4efbf79ab4a8c0ead76d734cc7bc3f1b}
+    - {name: NRIVER_16k.zip, url: 'https://zenodo.org/api/records/1227121/files/NRIVER_16k.zip/content', size_bytes: 98689565,
+      md5: 54264db61d3fe073fb81f2e40e0d19b5, laptop_sha256: 98e3a3f05a7234ea07619d965bafeea68a100bbce5c9269b7487393e3b559660}
+    - {name: OHALLWAY_16k.zip, url: 'https://zenodo.org/api/records/1227121/files/OHALLWAY_16k.zip/content', size_bytes: 77941854,
+      md5: fe918bbb0e63e73d09ba7f4843ef33f1, laptop_sha256: 4d5ef858a05954f03340048131f60a2004b7b28afc65f7bd2301636a7002d6cb}
+    - {name: OMEETING_16k.zip, url: 'https://zenodo.org/api/records/1227121/files/OMEETING_16k.zip/content', size_bytes: 82703355,
+      md5: 62f7cfe7fe6d30b7d8a215fe37c2dfd2, laptop_sha256: 512016cad3a42511a0fb7e3c74d6924e6efde4921a6101361f1306bf90bf2e5a}
+    - {name: OOFFICE_16k.zip, url: 'https://zenodo.org/api/records/1227121/files/OOFFICE_16k.zip/content', size_bytes: 88995191,
+      md5: 7b61cc2d182d5a654cb9c3101ddd4041, laptop_sha256: 7570c952f621990d0d71b8398107d9a78066254f883a5569abec9c233ffda358}
+    - {name: PCAFETER_16k.zip, url: 'https://zenodo.org/api/records/1227121/files/PCAFETER_16k.zip/content', size_bytes: 107431494,
+      md5: 99927d148128254141a9417d051510bb, laptop_sha256: 89be7194b83cd583c4b12f4bf7c19e9cf0e612b95312e9f4aedc968cd811bcd5}
+    - {name: PRESTO_16k.zip, url: 'https://zenodo.org/api/records/1227121/files/PRESTO_16k.zip/content', size_bytes: 111292815,
+      md5: b98d2e6854eeebb397f29a8ad7457092, laptop_sha256: cfd2e13998fac36aa5628070e08261deb7993dada302dc00a76aaf4e02ee4166}
+    - {name: PSTATION_16k.zip, url: 'https://zenodo.org/api/records/1227121/files/PSTATION_16k.zip/content', size_bytes: 119441094,
+      md5: d7448009f6c2aeb6ba570375df1750a3, laptop_sha256: f19565b7b1d089bd89cb0d7178af77b052b59a15502229424fe36ddc9d379f1b}
+    - {name: SPSQUARE_16k.zip, url: 'https://zenodo.org/api/records/1227121/files/SPSQUARE_16k.zip/content', size_bytes: 110928528,
+      md5: 205d0e7b8fe74504a2f8d252fc414b9e, laptop_sha256: 82e90754aff6720d3d0dfb5ad076b972750b5e79c797f945e242aaa1de259eec}
+    - {name: STRAFFIC_16k.zip, url: 'https://zenodo.org/api/records/1227121/files/STRAFFIC_16k.zip/content', size_bytes: 118572691,
+      md5: 2efa87262f272bbf9ba578088e81939c, laptop_sha256: 2df9b444afb3b789df92d96cb6f58a50653cdbbbe7e7e74fcd9de2af6385fbea}
+    - {name: TBUS_16k.zip, url: 'https://zenodo.org/api/records/1227121/files/TBUS_16k.zip/content', size_bytes: 128916709,
+      md5: 706b11b0d8504f9f3b3f3211e91b3863, laptop_sha256: 82e79983c91c69acbabf76d56b3fc75ab06e0f1c539eadaaf21d297987a97a5a}
+    - {name: TCAR_16k.zip, url: 'https://zenodo.org/api/records/1227121/files/TCAR_16k.zip/content', size_bytes: 130045975,
+      md5: 4d930012796bd298932245a26189f973, laptop_sha256: 6b48e45f273ea8d401b5ec97d22c864169684b0ad231bef4a1758922aa5daedc}
+    - {name: TMETRO_16k.zip, url: 'https://zenodo.org/api/records/1227121/files/TMETRO_16k.zip/content', size_bytes: 126589090,
+      md5: 95daf4df678e13b120e14211e6d89571, laptop_sha256: 62deb6b1fbc412139c6b1f021869988aa9fae81b2861c4b2a4f87baa5addb49a}
+    - {name: SCAFE_48k.zip, url: 'https://zenodo.org/api/records/1227121/files/SCAFE_48k.zip/content', size_bytes: 325884186,
+      md5: 1a4ee387f1900f4b15ba219481c76556, laptop_sha256: 600f3b5b93af2b949f96e4d3fa488d678d4b14c381030a84bfcbb05d7b2d236d}
+    size_gb: 2.093
+    dest: data/raw/demand_src
+    extract: zip
+    scanner: vaani.data.sources.scan_demand
+    manifest: [data/manifests/demand.parquet, data/manifests/demand_pairs.parquet]
+    needed_by: ['gate:G1']
+    licence: 'conflict: Zenodo field CC BY 4.0, record text CC BY-SA 3.0'
+    notes: 17 x 16 kHz zips + SCAFE_48k (no SCAFE_16k exists; scan_demand resamples). demand.parquet is the r7 one-pair
+      (ch01+ch09) scan G1 reads; demand_pairs.parquet holds every measured 12 cm-like pair (plan 11.5), which no r8 config
+      names yet. The laptop's SCAFE_16k.zip is the 48k file under a 16k name.
+    root: .
+    scans:
+    - {scanner: vaani.data.sources.scan_demand, manifest: data/manifests/demand.parquet}
+    - {scanner: vaani.data.sources.scan_demand_pairs, manifest: data/manifests/demand_pairs.parquet}
+  drone:
+    access: direct
+    credentials: []
+    urls: ['https://github.com/saraalemadi/DroneAudioDataset']
+    files:
+    - {name: DroneAudioDataset-master.zip, url: 'https://github.com/saraalemadi/DroneAudioDataset/archive/master.zip', size_bytes: null,
+      sha256: null, laptop_sha256: 560fbfabe83a54ba5b7e94024d840a80f786964e380d7efacddbf690ed2910e7, size_bytes_estimate: 580427430}
+    size_gb: 0.58
+    dest: data/raw/drone_src
+    extract: zip
+    scanner: vaani.data.sources.scan_drone
+    manifest: data/manifests/drone.parquet
+    needed_by: [r8_mini_refvalid]
+    licence: none in the repo; cite Al-Emadi et al. 2019
+    notes: 'Only r8_mini_refvalid names drone.parquet (v2 pools exclude drone). codeload sends no length: the laptop master.zip
+      is 580,427,430 B.'
+    root_find: Multiclass_Drone_Audio
+  noisex92:
+    access: direct
+    credentials: []
+    urls: ['http://spib.linse.ufsc.br/noise.html']
+    files:
+    - {name: white.mat, url: 'http://spib.linse.ufsc.br/data/noise/white.mat', size_bytes: 9400000, sha256: null}
+    - {name: pink.mat, url: 'http://spib.linse.ufsc.br/data/noise/pink.mat', size_bytes: 9399992, sha256: null}
+    - {name: babble.mat, url: 'http://spib.linse.ufsc.br/data/noise/babble.mat', size_bytes: 12541832, sha256: null}
+    - {name: factory1.mat, url: 'http://spib.linse.ufsc.br/data/noise/factory1.mat', size_bytes: 9400000, sha256: null}
+    - {name: factory2.mat, url: 'http://spib.linse.ufsc.br/data/noise/factory2.mat', size_bytes: 9400000, sha256: null}
+    - {name: buccaneer1.mat, url: 'http://spib.linse.ufsc.br/data/noise/buccaneer1.mat', size_bytes: 9400008, sha256: null}
+    - {name: buccaneer2.mat, url: 'http://spib.linse.ufsc.br/data/noise/buccaneer2.mat', size_bytes: 9400008, sha256: null}
+    - {name: f16.mat, url: 'http://spib.linse.ufsc.br/data/noise/f16.mat', size_bytes: 9399992, sha256: null}
+    - {name: destroyerengine.mat, url: 'http://spib.linse.ufsc.br/data/noise/destroyerengine.mat', size_bytes: 9400008,
+      sha256: null}
+    - {name: destroyerops.mat, url: 'http://spib.linse.ufsc.br/data/noise/destroyerops.mat', size_bytes: 9400008, sha256: null}
+    - {name: leopard.mat, url: 'http://spib.linse.ufsc.br/data/noise/leopard.mat', size_bytes: 9400000, sha256: null, laptop_sha256: 88dd35d7ec05a625d64ffd5d05adc63d2d8e399d83fdfd102c33c66cf53c84fe}
+    - {name: m109.mat, url: 'http://spib.linse.ufsc.br/data/noise/m109.mat', size_bytes: 9399992, sha256: null, laptop_sha256: b8c7646957ab736841e46f258d63e46771e1786e531b1ba2aefb2ae98f663189}
+    - {name: machinegun.mat, url: 'http://spib.linse.ufsc.br/data/noise/machinegun.mat', size_bytes: 9400008, sha256: null,
+      laptop_sha256: aca248253f7afce8b95029d151092d1b1d2ff3e661357322513bee78e95c5e5f}
+    - {name: volvo.mat, url: 'http://spib.linse.ufsc.br/data/noise/volvo.mat', size_bytes: 9400000, sha256: null}
+    - {name: hfchannel.mat, url: 'http://spib.linse.ufsc.br/data/noise/hfchannel.mat', size_bytes: 9400008, sha256: null}
+    size_gb: 0.144
+    dest: data/raw/noisex92_src
+    extract: mat2wav
+    scanner: vaani.data.sources.scan_noisex92
+    manifest: data/manifests/noisex92.parquet
+    needed_by: [r8_mini_refvalid]
+    licence: 'unclear (DRA Malvern 1992 via SPIB): eval and r8_mini_refvalid only, never ship'
+    notes: 'SPIB originals: one int16 variable per .mat at 19.98 kHz; mat2wav writes <name>.wav sample-identical to the
+      laptop copies (checked on leopard, m109, machinegun). Sizes are the probed Content-Lengths.'
+    mat_rate: 19980
+    root: .
+  faster_whisper_small:
+    access: direct
+    credentials: []
+    optional_credentials: [HF_TOKEN]
+    urls: ['https://huggingface.co/Systran/faster-whisper-small']
+    files:
+    - {name: model.bin, size_bytes: 483546902, sha256: 3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671}
+    - {name: config.json, size_bytes: 2370, sha256: null}
+    - {name: tokenizer.json, size_bytes: 2203239, sha256: null}
+    - {name: vocabulary.txt, size_bytes: 459861, sha256: null}
+    size_gb: 0.486
+    dest: data/raw/faster_whisper_small_src
+    extract: none
+    scanner: null
+    manifest: null
+    needed_by: ['gate:G4']
+    licence: MIT
+    notes: Warms the HF cache that vaani.asr.load_whisper('small') reads (G4 Part 2 word survival); the files live in the
+      cache, dest only holds the markers.
+    kind: model
+    fetch: hf
+    hf_repo: Systran/faster-whisper-small
+    hf_repo_type: model
+    hf_revision: 536b0662742c02347bc0e980a01041f333bce120
+    hf_cache: true
+optional:
+  ears_more:
+    access: direct
+    credentials: []
+    urls: ['https://github.com/facebookresearch/ears_dataset']
+    files:
+    - {name: p007.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p007.zip', size_bytes: 590420616,
+      sha256: null, laptop_sha256: 1244565183f5a83041fdacc964903372db9aa246c0233a23bda2936646099756}
+    - {name: p008.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p008.zip', size_bytes: 718307256,
+      sha256: null, laptop_sha256: 5d67d341f52452bf240fec1cefe55f4e0f32278959cbfc0b05b9fed9e1f41a63}
+    - {name: p009.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p009.zip', size_bytes: 632216336,
+      sha256: null}
+    - {name: p010.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p010.zip', size_bytes: 631237396,
+      sha256: null}
+    - {name: p011.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p011.zip', size_bytes: 640761116,
+      sha256: null}
+    - {name: p012.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p012.zip', size_bytes: 689825384,
+      sha256: null}
+    - {name: p013.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p013.zip', size_bytes: 647896304,
+      sha256: null}
+    - {name: p014.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p014.zip', size_bytes: 697474276,
+      sha256: null}
+    - {name: p015.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p015.zip', size_bytes: 804887484,
+      sha256: null}
+    - {name: p016.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p016.zip', size_bytes: 564509328,
+      sha256: null}
+    - {name: p017.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p017.zip', size_bytes: 693634632,
+      sha256: null}
+    - {name: p018.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p018.zip', size_bytes: 686161688,
+      sha256: null}
+    - {name: p019.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p019.zip', size_bytes: 595644724,
+      sha256: null}
+    - {name: p020.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p020.zip', size_bytes: 718072404,
+      sha256: null}
+    - {name: p021.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p021.zip', size_bytes: 645178184,
+      sha256: null}
+    - {name: p022.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p022.zip', size_bytes: 598935252,
+      sha256: null}
+    - {name: p023.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p023.zip', size_bytes: 597853468,
+      sha256: null}
+    - {name: p024.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p024.zip', size_bytes: 608291056,
+      sha256: null}
+    - {name: p025.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p025.zip', size_bytes: 649054456,
+      sha256: null}
+    - {name: p026.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p026.zip', size_bytes: 679681056,
+      sha256: null}
+    - {name: p027.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p027.zip', size_bytes: 605990880,
+      sha256: null}
+    - {name: p028.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p028.zip', size_bytes: 617521072,
+      sha256: null}
+    - {name: p029.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p029.zip', size_bytes: 681444232,
+      sha256: null}
+    - {name: p030.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p030.zip', size_bytes: 647275440,
+      sha256: null}
+    - {name: p031.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p031.zip', size_bytes: 599060896,
+      sha256: null}
+    - {name: p032.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p032.zip', size_bytes: 624836748,
+      sha256: null}
+    - {name: p033.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p033.zip', size_bytes: 719087720,
+      sha256: null}
+    - {name: p034.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p034.zip', size_bytes: 750753460,
+      sha256: null}
+    - {name: p035.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p035.zip', size_bytes: 637743452,
+      sha256: null}
+    - {name: p036.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p036.zip', size_bytes: 667738312,
+      sha256: null}
+    - {name: p037.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p037.zip', size_bytes: 646569816,
+      sha256: null}
+    - {name: p038.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p038.zip', size_bytes: 628608232,
+      sha256: null}
+    - {name: p039.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p039.zip', size_bytes: 643147500,
+      sha256: null}
+    - {name: p040.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p040.zip', size_bytes: 624765684,
+      sha256: null}
+    - {name: p041.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p041.zip', size_bytes: 605582256,
+      sha256: null}
+    - {name: p042.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p042.zip', size_bytes: 640167784,
+      sha256: null}
+    - {name: p043.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p043.zip', size_bytes: 670092316,
+      sha256: null}
+    - {name: p044.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p044.zip', size_bytes: 700187476,
+      sha256: null}
+    - {name: p045.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p045.zip', size_bytes: 646968788,
+      sha256: null}
+    - {name: p046.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p046.zip', size_bytes: 638356608,
+      sha256: null}
+    - {name: p047.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p047.zip', size_bytes: 584606080,
+      sha256: null}
+    - {name: p048.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p048.zip', size_bytes: 640952736,
+      sha256: null}
+    - {name: p049.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p049.zip', size_bytes: 632256148,
+      sha256: null}
+    - {name: p050.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p050.zip', size_bytes: 646897600,
+      sha256: null}
+    - {name: p051.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p051.zip', size_bytes: 716712832,
+      sha256: null}
+    - {name: p052.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p052.zip', size_bytes: 614890032,
+      sha256: null}
+    - {name: p053.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p053.zip', size_bytes: 678044100,
+      sha256: null}
+    - {name: p054.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p054.zip', size_bytes: 598838308,
+      sha256: null}
+    - {name: p055.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p055.zip', size_bytes: 593113512,
+      sha256: null}
+    - {name: p056.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p056.zip', size_bytes: 690858168,
+      sha256: null}
+    - {name: p057.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p057.zip', size_bytes: 606539192,
+      sha256: null}
+    - {name: p058.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p058.zip', size_bytes: 656600488,
+      sha256: null}
+    - {name: p059.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p059.zip', size_bytes: 730327244,
+      sha256: null}
+    - {name: p060.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p060.zip', size_bytes: 600909248,
+      sha256: null}
+    - {name: p061.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p061.zip', size_bytes: 611008192,
+      sha256: null}
+    - {name: p062.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p062.zip', size_bytes: 591515440,
+      sha256: null}
+    - {name: p063.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p063.zip', size_bytes: 652445336,
+      sha256: null}
+    - {name: p064.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p064.zip', size_bytes: 617074672,
+      sha256: null}
+    - {name: p065.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p065.zip', size_bytes: 661755904,
+      sha256: null}
+    - {name: p066.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p066.zip', size_bytes: 649511696,
+      sha256: null}
+    - {name: p067.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p067.zip', size_bytes: 635050716,
+      sha256: null}
+    - {name: p068.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p068.zip', size_bytes: 570596036,
+      sha256: null}
+    - {name: p069.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p069.zip', size_bytes: 685117468,
+      sha256: null}
+    - {name: p070.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p070.zip', size_bytes: 713355952,
+      sha256: null}
+    - {name: p071.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p071.zip', size_bytes: 680417948,
+      sha256: null}
+    - {name: p072.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p072.zip', size_bytes: 656598280,
+      sha256: null}
+    - {name: p073.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p073.zip', size_bytes: 624018840,
+      sha256: null}
+    - {name: p074.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p074.zip', size_bytes: 631526280,
+      sha256: null}
+    - {name: p075.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p075.zip', size_bytes: 574949088,
+      sha256: null}
+    - {name: p076.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p076.zip', size_bytes: 597108488,
+      sha256: null}
+    - {name: p077.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p077.zip', size_bytes: 659283032,
+      sha256: null}
+    - {name: p078.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p078.zip', size_bytes: 588743672,
+      sha256: null}
+    - {name: p079.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p079.zip', size_bytes: 666311300,
+      sha256: null}
+    - {name: p080.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p080.zip', size_bytes: 682330708,
+      sha256: null}
+    - {name: p081.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p081.zip', size_bytes: 580391100,
+      sha256: null}
+    - {name: p082.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p082.zip', size_bytes: 591184292,
+      sha256: null}
+    - {name: p083.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p083.zip', size_bytes: 738427528,
+      sha256: null}
+    - {name: p084.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p084.zip', size_bytes: 600525664,
+      sha256: null}
+    - {name: p085.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p085.zip', size_bytes: 643558224,
+      sha256: null}
+    - {name: p086.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p086.zip', size_bytes: 672962224,
+      sha256: null}
+    - {name: p087.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p087.zip', size_bytes: 692878532,
+      sha256: null}
+    - {name: p088.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p088.zip', size_bytes: 584918524,
+      sha256: null}
+    - {name: p089.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p089.zip', size_bytes: 677856068,
+      sha256: null}
+    - {name: p090.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p090.zip', size_bytes: 684529420,
+      sha256: null}
+    - {name: p091.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p091.zip', size_bytes: 682055472,
+      sha256: null}
+    - {name: p092.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p092.zip', size_bytes: 692360236,
+      sha256: null}
+    - {name: p093.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p093.zip', size_bytes: 653793512,
+      sha256: null}
+    - {name: p094.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p094.zip', size_bytes: 643165880,
+      sha256: null}
+    - {name: p095.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p095.zip', size_bytes: 605044316,
+      sha256: null}
+    - {name: p096.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p096.zip', size_bytes: 592258996,
+      sha256: null}
+    - {name: p097.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p097.zip', size_bytes: 622763772,
+      sha256: null}
+    - {name: p098.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p098.zip', size_bytes: 696905000,
+      sha256: null}
+    - {name: p099.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p099.zip', size_bytes: 653806000,
+      sha256: null}
+    - {name: p100.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p100.zip', size_bytes: 655136168,
+      sha256: null}
+    - {name: p101.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p101.zip', size_bytes: 587406004,
+      sha256: null}
+    - {name: p102.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p102.zip', size_bytes: 586296796,
+      sha256: null}
+    - {name: p103.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p103.zip', size_bytes: 770808612,
+      sha256: null}
+    - {name: p104.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p104.zip', size_bytes: 655352696,
+      sha256: null}
+    - {name: p105.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p105.zip', size_bytes: 689562604,
+      sha256: null}
+    - {name: p106.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p106.zip', size_bytes: 680420380,
+      sha256: null}
+    - {name: p107.zip, url: 'https://github.com/facebookresearch/ears_dataset/releases/download/dataset/p107.zip', size_bytes: 637273192,
+      sha256: null}
+    size_gb: 65.398
+    dest: data/raw/ears_more_src
+    extract: zip
+    scanner: vaani.data.sources.scan_ears
+    manifest: data/manifests/ears_more.parquet
+    needed_by: []
+    licence: CC BY-NC 4.0
+    notes: p007-p107 (plan 11.5 / M11). A separate manifest so ears.parquet stays the 6-speaker r8 set. p108 is 404.
+    root: .
+  librittsr:
+    access: direct
+    credentials: []
+    urls: ['https://www.openslr.org/141/']
+    files:
+    - {name: train_clean_100.tar.gz, url: 'https://www.openslr.org/resources/141/train_clean_100.tar.gz', size_bytes: 8129817509,
+      md5: 6df668d8f5f33e70876bfa33862ad02b}
+    - {name: train_clean_360.tar.gz, url: 'https://www.openslr.org/resources/141/train_clean_360.tar.gz', size_bytes: 28953983271,
+      md5: 382eb3e64394b3da6a559f864339b22c}
+    size_gb: 37.084
+    dest: data/raw/librittsr_src
+    extract: tar
+    scanner: vaani.data.sources.scan_librittsr
+    manifest: data/manifests/librittsr.parquet
+    needed_by: []
+    licence: CC BY 4.0
+    notes: Plan 11.5 candidate, 24 kHz.
+    root: .
+  lombard_grid:
+    access: direct
+    credentials: []
+    urls: ['https://zenodo.org/records/3736465']
+    files:
+    - name: lombardgrid_audio.zip
+      url: https://zenodo.org/api/records/3736465/files/lombardgrid_audio.zip/content
+      size_bytes: 652614041
+      md5: fa0cfc739705323b53ba50e148b3a144
+      mirrors: ['https://spandh.dcs.shef.ac.uk/avlombard/data/lombardgrid_audio.zip']
+    size_gb: 0.653
+    dest: data/raw/lombard_grid_src
+    extract: zip
+    scanner: vaani.data.sources.scan_lombard_grid
+    manifest: data/manifests/lombard_grid.parquet
+    needed_by: []
+    licence: CC BY 4.0
+    notes: 'TBD: the file-name pattern inside the zip is not inspected (the scanner assumes <spk>_<l|p>_<sentence>.wav).'
+    root: .
+  fsd50k:
+    access: direct
+    credentials: []
+    urls: ['https://zenodo.org/records/4060432']
+    files:
+    - {name: FSD50K.dev_audio.zip, url: 'https://zenodo.org/api/records/4060432/files/FSD50K.dev_audio.zip/content', size_bytes: 2306663327,
+      md5: c480d119b8f7a7e32fdb58f3ea4d6c5a}
+    - {name: FSD50K.dev_audio.z01, url: 'https://zenodo.org/api/records/4060432/files/FSD50K.dev_audio.z01/content', size_bytes: 3221225472,
+      md5: faa7cf4cc076fc34a44a479a5ed862a3}
+    - {name: FSD50K.dev_audio.z02, url: 'https://zenodo.org/api/records/4060432/files/FSD50K.dev_audio.z02/content', size_bytes: 3221225472,
+      md5: 8f9b66153e68571164fb1315d00bc7bc}
+    - {name: FSD50K.dev_audio.z03, url: 'https://zenodo.org/api/records/4060432/files/FSD50K.dev_audio.z03/content', size_bytes: 3221225472,
+      md5: 1196ef47d267a993d30fa98af54b7159}
+    - {name: FSD50K.dev_audio.z04, url: 'https://zenodo.org/api/records/4060432/files/FSD50K.dev_audio.z04/content', size_bytes: 3221225472,
+      md5: d088ac4e11ba53daf9f7574c11cccac9}
+    - {name: FSD50K.dev_audio.z05, url: 'https://zenodo.org/api/records/4060432/files/FSD50K.dev_audio.z05/content', size_bytes: 3221225472,
+      md5: 81356521aa159accd3c35de22da28c7f}
+    - {name: FSD50K.eval_audio.zip, url: 'https://zenodo.org/api/records/4060432/files/FSD50K.eval_audio.zip/content', size_bytes: 3037675767,
+      md5: 6fa47636c3a3ad5c7dfeba99f2637982}
+    - {name: FSD50K.eval_audio.z01, url: 'https://zenodo.org/api/records/4060432/files/FSD50K.eval_audio.z01/content', size_bytes: 3221225472,
+      md5: 3090670eaeecc013ca1ff84fe4442aeb}
+    - {name: FSD50K.metadata.zip, url: 'https://zenodo.org/api/records/4060432/files/FSD50K.metadata.zip/content', size_bytes: 6700838,
+      md5: b9ea0c829a411c1d42adb9da539ed237}
+    - {name: FSD50K.ground_truth.zip, url: 'https://zenodo.org/api/records/4060432/files/FSD50K.ground_truth.zip/content',
+      size_bytes: 334701, md5: ca27382c195e37d2269c4c866dd73485}
+    size_gb: 24.679
+    dest: data/raw/fsd50k_src
+    extract: zip_split
+    scanner: vaani.data.sources.scan_fsd50k
+    manifest: data/manifests/fsd50k.parquet
+    needed_by: []
+    licence: per clip; the scanner keeps CC0 and CC BY only
+    notes: Split zips are joined with Info-ZIP 'zip -s 0' (apt install zip) and need ~2x space while joining.
+    root_find: FSD50K.ground_truth
+  c3gd:
+    access: direct
+    credentials: []
+    urls: ['https://zenodo.org/records/22286299']
+    files:
+    - {name: C3GD.zip, url: 'https://zenodo.org/api/records/22286299/files/C3GD.zip/content', size_bytes: 771109714, md5: a7d1961da8b7733c7019853b80d706d4}
+    size_gb: 0.771
+    dest: data/raw/c3gd_src
+    extract: zip
+    scanner: vaani.data.sources.scan_c3gd
+    manifest: data/manifests/c3gd.parquet
+    needed_by: []
+    licence: CC BY 4.0
+    notes: Zip root C3GD/ with data/{ClassId}-{EventId}-{Platform}-{MicId}-{FileId}-{ClipId}.wav (Zenodo preview listing,
+      993/993 names parse) and metadata.csv.
+    root_find: data/*.wav
+  musan_noise:
+    access: direct
+    credentials: []
+    urls: ['https://www.openslr.org/17/']
+    files:
+    - {name: musan.tar.gz, url: 'https://www.openslr.org/resources/17/musan.tar.gz', size_bytes: 11086114085, md5: 0c472d4fc0c5141eca47ad1ffeb2a7df}
+    size_gb: 11.086
+    dest: data/raw/musan_src
+    extract: tar
+    scanner: vaani.data.sources.scan_musan_noise
+    manifest: data/manifests/musan_noise.parquet
+    needed_by: []
+    licence: CC BY 4.0 + per-folder LICENSE
+    notes: Only musan/noise is extracted. md5 from openslr checksum.md5.
+    members: [musan/noise]
+    root: musan
+  avq_drone:
+    access: direct
+    credentials: []
+    urls: ['https://zenodo.org/records/4553667']
+    files:
+    - {name: all_drone_noises.zip, url: 'https://zenodo.org/api/records/4553667/files/all_drone_noises.zip/content', size_bytes: 60045688,
+      md5: d92ba84946d91e81422ff29ab49fe4ac}
+    size_gb: 0.06
+    dest: data/raw/avq_drone_src
+    extract: zip
+    scanner: vaani.data.sources.scan_avq_drone
+    manifest: data/manifests/avq_drone.parquet
+    needed_by: []
+    licence: CC BY 4.0
+    notes: Zip root noises-train-drones/n116-n120.wav, noises-test-drones/n121-n122.wav (Zenodo preview listing).
+    root: .
+  wham_noise:
+    access: direct
+    credentials: []
+    urls: ['https://wham.whisper.ai/']
+    files:
+    - {name: wham_noise.zip, url: 'https://my-bucket-a8b4b49c25c811ee9a7e8bba05fa24c7.s3.amazonaws.com/wham_noise.zip',
+      size_bytes: 18194930748, md5: d5af15645d521d3920e01954c6cd7594}
+    size_gb: 18.195
+    dest: data/raw/wham_noise_src
+    extract: zip
+    scanner: vaani.data.sources.scan_wham
+    manifest: data/manifests/wham.parquet
+    needed_by: []
+    licence: CC BY-NC 4.0
+    notes: Only tr is scanned; tt stays a held-out set. md5 from the project page.
+    root_find: tr
+  but_reverbdb:
+    access: direct
+    credentials: []
+    urls: ['https://speech.fit.vut.cz/software/but-speech-fit-reverb-database']
+    files:
+    - name: BUT_ReverbDB_rel_19_06_RIR-Only.tgz
+      url: http://merlin.fit.vutbr.cz/ReverbDB/BUT_ReverbDB_rel_19_06_RIR-Only.tgz
+      size_bytes: 9308593693
+      sha256: null
+      mirrors: ['https://merlin.fit.vutbr.cz/ReverbDB/BUT_ReverbDB_rel_19_06_RIR-Only.tgz']
+    size_gb: 9.309
+    dest: data/raw/but_reverbdb_src
+    extract: tar
+    scanner: vaani.data.sources.scan_but_reverbdb
+    manifest: data/manifests/but_reverbdb.parquet
+    needed_by: []
+    licence: CC BY 4.0
+    notes: RIR-only release. No checksum. r8 trains on the simulated data/rirs/bank_r3.npz.
+    root: .
+  dns_freesound_001:
+    access: direct
+    credentials: []
+    urls: ['https://github.com/microsoft/DNS-Challenge']
+    files:
+    - {name: datasets_fullband.noise_fullband.freesound_001.tar.bz2, url: 'https://dns4public.blob.core.windows.net/dns4archive/datasets_fullband/noise_fullband/datasets_fullband.noise_fullband.freesound_001.tar.bz2',
+      size_bytes: 992314629, sha256: null, laptop_sha256: f5fddbb36864053e9dba696f2d63a85c20635d0b4a5701390e8011ad17f8667b}
+    size_gb: 0.992
+    dest: data/raw/dns_freesound_001_src
+    extract: tar
+    scanner: vaani.data.sources.scan_dns_noise
+    manifest: data/manifests/dns_datasets_fullband.noise_fullband.freesound_001.tar.parquet
+    needed_by: []
+    licence: DNS-Challenge repo CC BY 4.0 text; Freesound/AudioSet clips carry per-clip terms (DNS README)
+    notes: Laptop has a manifest; no r8 config names it.
+    root: .
+  dns_audioset_001:
+    access: direct
+    credentials: []
+    urls: ['https://github.com/microsoft/DNS-Challenge']
+    files:
+    - {name: datasets_fullband.noise_fullband.audioset_001.tar.bz2, url: 'https://dns4public.blob.core.windows.net/dns4archive/datasets_fullband/noise_fullband/datasets_fullband.noise_fullband.audioset_001.tar.bz2',
+      size_bytes: 5357916291, sha256: null, laptop_sha256: d1dd294394f4d786ff4aa26855ef81c704d0cbcea487773b80f431ff883faf0a}
+    size_gb: 5.358
+    dest: data/raw/dns_audioset_001_src
+    extract: tar
+    scanner: vaani.data.sources.scan_dns_noise
+    manifest: data/manifests/dns_datasets_fullband.noise_fullband.audioset_001.tar.parquet
+    needed_by: []
+    licence: DNS-Challenge repo CC BY 4.0 text; Freesound/AudioSet clips carry per-clip terms (DNS README)
+    notes: Laptop has a manifest; no r8 config names it.
+    root: .
+    audioset_filter: false
+  dns_rirs:
+    access: direct
+    credentials: []
+    urls: ['https://github.com/microsoft/DNS-Challenge']
+    files:
+    - {name: datasets_fullband.impulse_responses_000.tar.bz2, url: 'https://dns4public.blob.core.windows.net/dns4archive/datasets_fullband/datasets_fullband.impulse_responses_000.tar.bz2',
+      size_bytes: 264965552, sha256: null}
+    size_gb: 0.265
+    dest: data/raw/dns_rirs_src
+    extract: tar
+    scanner: null
+    manifest: null
+    needed_by: []
+    licence: per DNS-Challenge README
+    notes: No scanner reads measured RIRs yet.
+  audioset_csv:
+    access: direct
+    credentials: []
+    urls: ['https://research.google.com/audioset/download.html']
+    files:
+    - {name: unbalanced_train_segments.csv, url: 'http://storage.googleapis.com/us_audioset/youtube_corpus/v1/csv/unbalanced_train_segments.csv',
+      size_bytes: 101468408, sha256: null}
+    - {name: balanced_train_segments.csv, url: 'http://storage.googleapis.com/us_audioset/youtube_corpus/v1/csv/balanced_train_segments.csv',
+      size_bytes: 1211931, sha256: null}
+    - {name: eval_segments.csv, url: 'http://storage.googleapis.com/us_audioset/youtube_corpus/v1/csv/eval_segments.csv',
+      size_bytes: 1143389, sha256: null}
+    - {name: class_labels_indices.csv, url: 'http://storage.googleapis.com/us_audioset/youtube_corpus/v1/csv/class_labels_indices.csv',
+      size_bytes: 14675, sha256: null}
+    size_gb: 0.104
+    dest: data/raw/audioset_csv_src
+    extract: none
+    scanner: null
+    manifest: null
+    needed_by: ['filter:dns_audioset']
+    licence: CC BY 4.0 (labels)
+    notes: 'Label CSVs for vaani.data.sources.dns_audioset_filter (DNS AudioSet shards with audioset_filter: true).'
+  cadre:
+    access: login
+    credentials: []
+    urls: ['https://cadreforensics.com/audio/']
+    files:
+    - {name: High_Standard_Sport_King_zoom.zip, url: 'https://tulane.box.com/shared/static/wr56pjy6amdxseu1q4iam1sp2e3dm7zo.zip',
+      size_bytes: 17323226, sha256: null, laptop_sha256: f6400416b0b34e15d0cb4c1bad030e46fab14306a4192f476f8dacb98e21e8ee}
+    - {name: S_W_34_1_zoom.zip, url: 'https://tulane.box.com/shared/static/78pwg2z297wl6crlbyss9xezpzah87k3.zip', size_bytes: null,
+      sha256: null, laptop_sha256: 2b4a8e834aee6860447faa47c57d94323ad3af4d27789f99e151a488e9154d44, size_bytes_estimate: 17491881}
+    - {name: Ruger_10_22_zoom.zip, url: 'https://tulane.box.com/shared/static/npm8gg0ho91kqvjueg6i3i42anxr4bow.zip', size_bytes: null,
+      sha256: null, laptop_sha256: 9291c5ff5c089029bd69838bd49a6f769baa73647cb27588a8b7b18b3406e30e, size_bytes_estimate: 17371798}
+    - {name: Remington_33_Bolt_Action_Rifle_zoom.zip, url: 'https://tulane.box.com/shared/static/1wqle7vj6k00xt7dcodtsn1sg3htp7nm.zip',
+      size_bytes: null, sha256: null, laptop_sha256: b4568cc2123af97d1045e5aa9fd5977c5f251d3a4278193a0e432cdb7fd0513f, size_bytes_estimate: 16166573}
+    - {name: Lorcin_L380_zoom.zip, url: 'https://tulane.box.com/shared/static/jp7dgd5wswfahwovf8j03oe01h609xeq.zip', size_bytes: null,
+      sha256: null, laptop_sha256: 03d030307ef0fb7a897bbda2f20c375148b80a34eb1b50c1fa11d630c08a23b3, size_bytes_estimate: 19363585}
+    - {name: S_W_10_8_zoom.zip, url: 'https://tulane.box.com/shared/static/m6o6z7oyt2mkrcvizgrk2eq4un2poqc0.zip', size_bytes: null,
+      sha256: null, laptop_sha256: f3e10aec05e73f48f3e5aca2d1f05e6e3bab9aaf902843031863f9b0d150ba8b, size_bytes_estimate: 19211333}
+    - {name: Ruger_Blackhawk_zoom.zip, url: 'https://tulane.box.com/shared/static/gyeeij3ppmhfwf1wziln2tevw3nxeubb.zip',
+      size_bytes: null, sha256: null, laptop_sha256: bc0d012b331186ba4d79f7a7e9c44a2fac6aba5aa128ef2e91a223609dbc04a2, size_bytes_estimate: 18470333}
+    - {name: Glock_19_zoom.zip, url: 'https://tulane.box.com/shared/static/uzst0osy4ida973barrpbddt5s4bxqhy.zip', size_bytes: 42815993,
+      sha256: null, laptop_sha256: 4a535760b4535e39b60b6662860706560fd04d835ab2eaf714631094c320a4e9}
+    - {name: Sig_P225_zoom.zip, url: 'https://tulane.box.com/shared/static/ywptb1ykkgwr7bhzfw79eufgygymr394.zip', size_bytes: null,
+      sha256: null, laptop_sha256: 883c5c6b9093434d337982253aeb077a806bd6673a8e30737f4d23bf1f864439, size_bytes_estimate: 21185942}
+    - {name: M_P_40_zoom.zip, url: 'https://tulane.box.com/shared/static/qqikn09dgs6kwtyjx4xazbty8a73ziy4.zip', size_bytes: null,
+      sha256: null, laptop_sha256: 6787c69d217363d61d729a9458681f947a8d3fda67957cbd948488c23a123ce5, size_bytes_estimate: 42275513}
+    - {name: HK_USP_Compact_zoom.zip, url: 'https://tulane.box.com/shared/static/wl2i1btzl94zc6i3s4m0zmsbd74eg8gb.zip',
+      size_bytes: null, sha256: null, laptop_sha256: c70c376930bd6e60fc13a0427d798ab511db6b71c01e9970fe18d19b6f169489, size_bytes_estimate: 22078565}
+    - {name: Glock_21_zoom.zip, url: 'https://tulane.box.com/shared/static/9e04uffrunbf9v0akqvdrb3v6d6m7i20.zip', size_bytes: null,
+      sha256: null, laptop_sha256: 86f9c1cb11528f2fdeab2aa33cd809c3dc294141270a4ae9c53d1e06ff8facbc, size_bytes_estimate: 19182631}
+    - {name: Colt_1911_zoom.zip, url: 'https://tulane.box.com/shared/static/apn7f8xa3t6hnwfljnqo0hahrrg6mo6r.zip', size_bytes: null,
+      sha256: null, laptop_sha256: 0f2ad13a93bf2e1174222d42f9d6660f12c28578b09d377b23b83be56bf0c823, size_bytes_estimate: 20997994}
+    - {name: Kimber_Tactical_Custom_zoom.zip, url: 'https://tulane.box.com/shared/static/8mxj4phb3pr090pmytvspkj9n8dqex6y.zip',
+      size_bytes: null, sha256: null, laptop_sha256: 760b1fedc0c67632c47a4ccc8f12f51a399bb77d1c999a74c3e6c81093e97452, size_bytes_estimate: 20889485}
+    - {name: M16A1_AR15_zoom.zip, url: 'https://tulane.box.com/shared/static/5tft9m5nxpn40vdytcxip2n2iun4tx81.zip', size_bytes: null,
+      sha256: null, laptop_sha256: 1896332ed7d8dcc14521dcd50ca7c9e1360a488288f27e88b60da22642aaf7f7, size_bytes_estimate: 22878969}
+    - {name: WASR_10_63_AK47_zoom.zip, url: 'https://tulane.box.com/shared/static/27pgqxuiu7dax7zipsvzd90wxuygzm8h.zip',
+      size_bytes: null, sha256: null, laptop_sha256: 44ca37b1ac2df12f948276e13b7faa64abdb0b2d441fafd0d5d919d0b88ba312, size_bytes_estimate: 22215315}
+    - {name: Winchester_M14_zoom.zip, url: 'https://tulane.box.com/shared/static/m30u8xshzu5uzdp5bc7wzwyvpktd1a5b.zip',
+      size_bytes: null, sha256: null, laptop_sha256: 50ce5f90dcdab1d0f63fe1d24dedf0389495c1bae4485a2739c7d82fcad320a7, size_bytes_estimate: 11095245}
+    - {name: Remington_700_zoom.zip, url: 'https://tulane.box.com/shared/static/nj7g2bonbmtydc43ag0aeny82x5lnkb3.zip', size_bytes: null,
+      sha256: null, laptop_sha256: 25b81583db8d9d331b9d2372cff0c7fcd28a3d8d84b68416e58d732ff11a4a17, size_bytes_estimate: 10765659}
+    size_gb: 0.382
+    dest: data/raw/cadre_src
+    extract: zip
+    scanner: vaani.data.sources.scan_cadre
+    manifest: data/manifests/cadre.parquet
+    needed_by: ['eval:r8_test_render']
+    licence: 'NIJ 2016-DN-BX-0183: as-is for any researcher, cite the grant'
+    notes: 'The publisher asks for a free registration (cadreforensics.com/audio/register/); the Box links then download
+      with no credential (GET only: Box refuses HEAD). Eval re-render only.'
+    extract_into: '{stem}'
+    root: .
+  vehicle_interior:
+    access: direct
+    credentials: []
+    urls: ['https://zenodo.org/records/5606504']
+    files:
+    - {name: visc.rar, url: 'https://zenodo.org/api/records/5606504/files/VISC%20Dataset%20SON.rar/content', size_bytes: 1228671997,
+      md5: a5b26d20784de4e1bfed71fa89a99987}
+    size_gb: 1.229
+    dest: data/raw/vehicle_interior_src
+    extract: rar
+    scanner: vaani.data.sources.scan_vehicle_interior
+    manifest: data/manifests/vehicle_interior.parquet
+    needed_by: ['eval:generalisation']
+    licence: CC BY 4.0
+    notes: 'Held-out generalisation corpus, never trained on. Needs unrar or 7z. TBD: the folder layout inside the RAR (root_find
+      takes the shallowest folder whose subfolders hold .wav files).'
+    root_find: '*/*.wav'
+  svarah:
+    access: login
+    credentials: [HF_TOKEN]
+    urls: ['https://huggingface.co/datasets/ai4bharat/Svarah']
+    files:
+    - {name: data/test-00000-of-00003.parquet, size_bytes: 365063447, sha256: null}
+    - {name: data/test-00001-of-00003.parquet, size_bytes: 360392442, sha256: null}
+    - {name: data/test-00002-of-00003.parquet, size_bytes: 369542701, sha256: null}
+    size_gb: 1.095
+    dest: data/raw/svarah_src
+    extract: none
+    scanner: null
+    manifest: null
+    needed_by: []
+    licence: CC BY 4.0
+    notes: Accept the gate on huggingface.co first (auto-approved). Test split only; no scanner.
+    fetch: hf
+    hf_repo: ai4bharat/Svarah
+    hf_repo_type: dataset
+  indictts:
+    access: request
+    credentials: []
+    urls: ['https://www.iitm.ac.in/donlab/indictts/']
+    files: []
+    size_gb: null
+    dest: data/raw/indictts_src
+    extract: none
+    scanner: null
+    manifest: null
+    needed_by: []
+    licence: 'TBD: what does the IITM ''License For Use of Indic TTS'' permit?'
+    notes: 'Not fetched by this tool: the IITM corpus is a licence request (smtiitm@gmail.com); the SPRINGLab HF copy inherits
+      that licence.'
