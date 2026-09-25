@@ -144,3 +144,20 @@ def test_telemetry_bounded_and_counts_misses():
 def test_config_hash_tracks_dsp():
     a = bk.config_hash(True, {"limiter": True})
     assert a == bk.config_hash(True, {"limiter": True}) != bk.config_hash(True, {"limiter": False})
+
+
+def test_refvalid_graph_takes_validity_on_both_ort_paths(graph, tmp_path):
+    # a ref_validity export: OrtBackend feeds `valid` as ref_avail; the r7-style graph stays validity-free
+    from tests.test_export import _refvalid_ckpt
+    onnx = export.export_refvalid(_refvalid_ckpt(tmp_path / "rv.pt"), tmp_path / "rv.onnx")
+    spec, feats = _inputs(T=20, seed=3)
+    av = np.ones(20, np.float32); av[6:14] = 0
+    ref, _ = export.stream_onnx(export.load_session(onnx), spec, feats, ref_avail=av)
+    assert not bk.OrtBackend(graph[1]).takes_valid
+    for b in (bk.OrtBackend(onnx), bk.OrtBackend(onnx, io_binding=True, device="cpu")):
+        assert b.takes_valid and "ref_avail" not in b.cache_names
+        st = b.new_state()
+        y = np.concatenate([b.step(spec[:, :, t:t + 1], feats[:, t:t + 1], st, float(av[t])) for t in range(20)], 2)
+        assert np.array_equal(y, ref)
+    ones, _ = export.stream_onnx(export.load_session(onnx), spec, feats)
+    assert not np.allclose(ones, ref, atol=1e-6)   # the availability input is live in the graph

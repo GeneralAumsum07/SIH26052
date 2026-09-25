@@ -20,6 +20,7 @@ from vaani.models.vaani_net import StreamVaaniNet, VaaniNet, init_caches
 
 IN_NAMES = ["spec6", "feats", "conv_cache", "tra_cache", "inter_cache", "df_cache", "coh_cache"]
 OUT_NAMES = ["spec_out", "conv_cache_out", "tra_cache_out", "inter_cache_out", "df_cache_out", "coh_cache_out"]
+REF_AVAIL = "ref_avail"   # (1,1) per-frame reference availability of a ref_validity graph (export_refvalid); last input
 
 
 def layer_macs(model, inputs):
@@ -141,25 +142,30 @@ def zero_caches(sess):
     """
     names, values = [], []
     for spec in sess.get_inputs()[2:]:
+        if spec.name == REF_AVAIL:   # an input, not a cache: never zero-initialised (0 = reference absent)
+            continue
         if any(not isinstance(d, int) for d in spec.shape):
             raise ValueError(f"cache input {spec.name!r} has a dynamic shape {spec.shape}; export is static batch-1")
         names.append(spec.name); values.append(np.zeros(spec.shape, np.float32))
     return names, values
 
 
-def stream_onnx(sess, spec, feats, cache_names=None, caches=None):
+def stream_onnx(sess, spec, feats, cache_names=None, caches=None, ref_avail=None):
     """Frame-by-frame ORT run carrying caches forward, exactly as the embedded loop must.
 
     spec (1,257,T,6) and feats (1,T,18) are float32 numpy. Returns the concatenated output
     spectrum (1,257,T,2) and the per-frame milliseconds with frame zero dropped -- it is a
     session/allocator warm-up and skews timing, but its output is still in the returned
-    spectrum so parity covers it.
+    spectrum so parity covers it. A graph with a `ref_avail` input gets ref_avail[t] (T,), default all present.
     """
     if cache_names is None or caches is None:
         cache_names, caches = zero_caches(sess)
+    has_avail = any(i.name == REF_AVAIL for i in sess.get_inputs())
     outs, times = [], []
     for t in range(spec.shape[2]):
         inp = {"spec6": spec[:, :, t:t + 1], "feats": feats[:, t:t + 1], **dict(zip(cache_names, caches))}
+        if has_avail:
+            inp[REF_AVAIL] = np.full((1, 1), 1.0 if ref_avail is None else ref_avail[t], np.float32)
         t0 = time.perf_counter()
         o = sess.run(None, inp)
         if t > 0:
@@ -191,6 +197,52 @@ def parity_and_timing(ckpt_path, onnx_path, seconds=10):
     _, caches, in_names, _ = _stream_twin(v, mc)
     got, times = stream_onnx(sess, spec.numpy(), f.numpy(), in_names[2:], [c.numpy() for c in caches])
     return {"max_abs_err": float(np.abs(got - ref).max()), **timing_stats(times)}
+
+
+# ---- ref_validity VaaniNet / cascade (spec 6.2): the same streaming graph plus a per-frame ref_avail input ----
+class _RefAvailStep(torch.nn.Module):
+    """Stream twin with ref_avail as its last positional input, so the ONNX graph exposes it (export() folds None)."""
+
+    def __init__(self, s):
+        super().__init__()
+        self.s = s
+
+    def forward(self, spec6, feats, *rest):
+        return self.s(spec6, feats, *rest[:-1], ref_avail=rest[-1])
+
+
+def export_refvalid(ckpt_path, out_path):
+    """Export a ref_validity checkpoint (VaaniNet or FrozenCascade first stage with model_cfg.ref_validity) with a
+    (1,1) `ref_avail` input after the caches. 1 = reference present, 0 = the trained reference-absent path."""
+    v, mc = _load_batch_model(ckpt_path)
+    if not mc.get("ref_validity", False):
+        raise ValueError(f"{ckpt_path}: model_cfg.ref_validity is off; use export() (no ref_avail input)")
+    s, caches, in_names, out_names = _stream_twin(v, mc)
+    spec = torch.zeros(1, 257, 1, 6); f = torch.zeros(1, 1, 18)
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")   # same legacy-exporter warnings as export()
+        torch.onnx.export(_RefAvailStep(s).eval(), (spec, f, *caches, torch.ones(1, 1)), str(out_path),
+                          opset_version=17, input_names=in_names + [REF_AVAIL], output_names=out_names,
+                          dynamo=False)
+    return Path(out_path)
+
+
+def refvalid_parity(ckpt_path, onnx_path, seconds=10, seed=0):
+    """Batch model vs ORT stream on random inputs with a mid-stream reference hole (avail 1 -> 0 -> 1)."""
+    v, mc = _load_batch_model(ckpt_path)
+    spec, f = random_stream_inputs(seconds, seed)
+    T = spec.shape[2]
+    avail = torch.ones(1, T)
+    avail[:, T // 3: 2 * T // 3] = 0.0
+    with torch.no_grad():
+        ref = v(spec, f, avail).numpy()
+    sess = load_session(onnx_path)
+    _, caches, in_names, _ = _stream_twin(v, mc)
+    got, times = stream_onnx(sess, spec.numpy(), f.numpy(), in_names[2:], [c.numpy() for c in caches],
+                             ref_avail=avail[0].numpy())
+    return {"max_abs_err": float(np.abs(got - ref).max()), "absent_frames": int((avail == 0).sum()),
+            **timing_stats(times)}
 
 
 # ---- VaaniFE (plan 11.3/11.4): step-graph export, ORT folding, carried-state parity ------------

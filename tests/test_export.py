@@ -52,3 +52,36 @@ def test_tracked_r7_checkpoint_reexports_to_the_shipped_graph(tmp_path):
     assert [n.SerializeToString() for n in got.graph.node] == [n.SerializeToString() for n in shipped.graph.node]
     r = export.parity_and_timing(ck, export.SHIPPING_ONNX, seconds=1)
     assert r["max_abs_err"] < 1e-4
+
+
+def _refvalid_ckpt(path, cascade_cfg=None):
+    # untrained ref_validity model; ref_conv is zero-init, so give it weight or availability would change nothing
+    mc = dict(channels=16, coh=True, df_order=3, film=False, noise_floor=False, ref_validity=True)
+    torch.manual_seed(0)
+    m = VaaniNet(**mc)
+    with torch.no_grad():
+        torch.nn.init.normal_(m.encoder.ref_conv.conv.weight, std=0.1)
+        m.df.conv.weight.normal_(0, 0.05)
+    torch.save({"model": m.state_dict(), "config": {"model": "vaani", "controller_on": True, "model_cfg": mc},
+                "step": 0}, path)
+    return path
+
+
+def test_export_refvalid_exposes_ref_avail_and_matches_batch(tmp_path):
+    import onnxruntime as ort
+    ck = _refvalid_ckpt(tmp_path / "rv.pt")
+    onnx = export.export_refvalid(ck, tmp_path / "rv.onnx")
+    names = [i.name for i in ort.InferenceSession(str(onnx), providers=["CPUExecutionProvider"]).get_inputs()]
+    assert names[:2] == ["spec6", "feats"] and names[-1] == export.REF_AVAIL
+    r = export.refvalid_parity(ck, onnx, seconds=1)
+    assert r["absent_frames"] > 0 and r["max_abs_err"] < 1e-4
+    # zero_caches never treats ref_avail as a cache
+    assert export.REF_AVAIL not in export.zero_caches(export.load_session(onnx))[0]
+
+
+def test_export_refvalid_refuses_a_default_model(tmp_path):
+    import pytest
+    ck = tmp_path / "m.pt"
+    torch.save({"model": VaaniNet().state_dict(), "config": {"model": "vaani", "controller_on": True}, "step": 0}, ck)
+    with pytest.raises(ValueError, match="ref_validity"):
+        export.export_refvalid(ck, tmp_path / "m.onnx")

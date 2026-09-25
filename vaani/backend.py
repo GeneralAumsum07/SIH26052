@@ -17,7 +17,8 @@ Backends:
   FeTorchBackend  VaaniFE.step (vaani/models/vaani_fe.py) on cpu or cuda, the flat state as one device tensor.
   `open_onnx` picks OrtBackend or FeOrtBackend from the graph's input names (numpy + onnxruntime only).
 
-Models with a validity input (VaaniFE, inputs != "p") set `takes_valid`; `step(..., valid=v)` then feeds v, the
+Models with a validity input (VaaniFE with inputs != "p", or a ref_validity VaaniNet/cascade graph from
+vaani.export.export_refvalid with its `ref_avail` input) set `takes_valid`; `step(..., valid=v)` then feeds v, the
 capture-path reference validity of this frame. Validity 0 is the trained reference-absent (mono) path.
 
 Width/profile changes happen only by building a new backend and a new state: `check_state` refuses a state whose
@@ -45,6 +46,7 @@ DISC_GAP = 1                       # input samples were dropped (overload queue 
 DISC_BYPASS = 2                    # hops skipped by the overload bypass: output was the raw primary
 DISC_RESET = 4                     # the state was reset mid-stream
 DISC_REF_DROPOUT = 8               # the reference channel was invalid for at least one hop
+REF_AVAIL = "ref_avail"            # vaani.export.REF_AVAIL (numpy-only here: the board path does not import torch)
 
 
 def config_hash(controller_on: bool, dsp: dict | None, extra: dict | None = None) -> str:
@@ -227,14 +229,18 @@ class OrtBackend(Backend):
         ins, outs = self.sess.get_inputs(), self.sess.get_outputs()
         if [i.name for i in ins[:2]] != ["spec6", "feats"]:
             raise ValueError(f"{onnx_path}: expected inputs spec6, feats first; got {[i.name for i in ins[:2]]}")
-        if len(outs) != len(ins) - 1:
-            raise ValueError(f"{onnx_path}: {len(ins) - 2} caches in but {len(outs) - 1} out")
+        # a ref_validity graph (vaani.export.export_refvalid) carries a per-frame `ref_avail` input after its caches
+        self.takes_valid = any(i.name == REF_AVAIL for i in ins)
+        cache_ins = [i for i in ins[2:] if i.name != REF_AVAIL]
+        if len(outs) != len(cache_ins) + 1:
+            raise ValueError(f"{onnx_path}: {len(cache_ins)} caches in but {len(outs) - 1} out")
         specs = {}
-        for i in ins[2:]:
+        for i in cache_ins:
             if any(not isinstance(d, int) for d in i.shape):
                 raise ValueError(f"cache input {i.name!r} has a dynamic shape {i.shape}; export is static batch-1")
             specs[i.name] = (tuple(i.shape), np.float32)
-        self.cache_names = [i.name for i in ins[2:]]
+        self.cache_names = [i.name for i in cache_ins]
+        self._avail = np.ones((1, 1), np.float32)                   # reused host buffer: no per-hop alloc
         self.out_names = [o.name for o in outs]
         gpu = any((p if isinstance(p, str) else p[0]) != "CPUExecutionProvider" for p in providers)
         self.io_binding = gpu if io_binding is None else bool(io_binding)
@@ -258,9 +264,14 @@ class OrtBackend(Backend):
             return np.array(a, copy=True)
         return self.ort.OrtValue.ortvalue_from_numpy(np.ascontiguousarray(a), self.device, 0)
 
-    def _step(self, spec6, feats, state):
+    def _step(self, spec6, feats, state, valid=1.0):
+        feeds = {}
+        if self.takes_valid:
+            self._avail[0, 0] = valid
+            feeds[REF_AVAIL] = self._avail
         if not self.io_binding:      # the reference path: identical call to vaani.export.stream_onnx
-            out = self.sess.run(None, {"spec6": spec6, "feats": feats, **{n: state.caches[n] for n in self.cache_names}})
+            out = self.sess.run(None, {"spec6": spec6, "feats": feats, **feeds,
+                                       **{n: state.caches[n] for n in self.cache_names}})
             state.caches = dict(zip(self.cache_names, out[1:]))
             return out[0]
         # device-resident caches: bind this stream's current buffers as inputs and its spare set as outputs,
@@ -271,6 +282,8 @@ class OrtBackend(Backend):
         b = self.sess.io_binding()
         b.bind_cpu_input("spec6", np.ascontiguousarray(spec6, np.float32))
         b.bind_cpu_input("feats", np.ascontiguousarray(feats, np.float32))
+        for n, a in feeds.items():
+            b.bind_cpu_input(n, a)
         for n in self.cache_names:
             b.bind_ortvalue_input(n, state.caches[n])
         b.bind_output(self.out_names[0], "cpu")
