@@ -17,12 +17,15 @@ def main() -> None:
     # M6 (plan 11.1) opt-ins; both unset = the legacy bank, byte-identical
     ap.add_argument("--receiver-radius", type=float, default=None,
                     help="armoured ray-tracer receiver radius in m (legacy 0.3); rays scale to keep the hit count")
-    ap.add_argument("--seed-namespace", choices=["eval"], default=None,
-                    help="'eval': a draw stream disjoint from every training bank of the same seed")
+    ap.add_argument("--seed-namespace", choices=["eval", "train"], default=None,
+                    help="'eval' / 'train': draw streams disjoint from each other and from the legacy one of any seed")
+    ap.add_argument("--parts-dir", default=None,
+                    help="save finished rooms here in blocks and resume from them on a rerun (removed when done)")
     a = ap.parse_args()
     build_bank(Path(a.out), a.n, a.seed, armoured_frac=a.armoured_frac,
                max_len=int(a.max_len_s * SR), workers=a.workers,
-               receiver_radius=a.receiver_radius, seed_namespace=a.seed_namespace)
+               receiver_radius=a.receiver_radius, seed_namespace=a.seed_namespace,
+               parts_dir=Path(a.parts_dir) if a.parts_dir else None)
     print("wrote", a.out)
 
 
