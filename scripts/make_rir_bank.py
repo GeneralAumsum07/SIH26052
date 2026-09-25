@@ -14,9 +14,15 @@ def main() -> None:
     ap.add_argument("--max-len-s", type=float, default=MAX_LEN / SR)
     ap.add_argument("--workers", type=int, default=None,
                     help="simulation processes; default all cores. Output is identical for any value")
+    # M6 (plan 11.1) opt-ins; both unset = the legacy bank, byte-identical
+    ap.add_argument("--receiver-radius", type=float, default=None,
+                    help="armoured ray-tracer receiver radius in m (legacy 0.3); rays scale to keep the hit count")
+    ap.add_argument("--seed-namespace", choices=["eval"], default=None,
+                    help="'eval': a draw stream disjoint from every training bank of the same seed")
     a = ap.parse_args()
     build_bank(Path(a.out), a.n, a.seed, armoured_frac=a.armoured_frac,
-               max_len=int(a.max_len_s * SR), workers=a.workers)
+               max_len=int(a.max_len_s * SR), workers=a.workers,
+               receiver_radius=a.receiver_radius, seed_namespace=a.seed_namespace)
     print("wrote", a.out)
 
 

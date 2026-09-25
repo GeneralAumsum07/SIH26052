@@ -45,3 +45,18 @@ def test_make_rir_bank_entrypoint_is_guarded():
         f"{SCRIPT.name} calls {sorted(set(offenders))} at import time; spawn re-imports this "
         "module in every pool child, so each one would start another pool"
     )
+
+
+def test_m6_flags_reach_build_bank_and_default_to_legacy(monkeypatch):
+    import importlib.util, sys
+    spec = importlib.util.spec_from_file_location("make_rir_bank", SCRIPT)
+    mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+    got = []
+    monkeypatch.setattr(mod, "build_bank", lambda *a, **k: got.append(k))
+    monkeypatch.setattr(sys, "argv", ["make_rir_bank.py", "--out", "x.npz"])
+    mod.main()
+    monkeypatch.setattr(sys, "argv", ["make_rir_bank.py", "--out", "x.npz", "--receiver-radius", "0.15",
+                                      "--seed-namespace", "eval"])
+    mod.main()
+    assert got[0]["receiver_radius"] is None and got[0]["seed_namespace"] is None
+    assert got[1]["receiver_radius"] == 0.15 and got[1]["seed_namespace"] == "eval"
