@@ -126,8 +126,11 @@ uv run python -c "from vaani import export as E; E.export_fe(E.fe_load('runs/r8_
 uv run python scripts/graph_gate.py runs/r8_fe_mini/export/fe_mini.onnx --ckpt runs/r8_fe_mini/best.pt \
     --json runs/r8_fe_mini/export/graph_gate.json      # exit 1 = FAIL
 ```
-If the refvalid C16 model is selected, its ONNX path has no `ref_avail` input yet (open issue from the fe/fe-runtime
-work). Until that lands, G2 does not apply to it and its runtime ignores validity.
+If the refvalid C16 model is selected, export it with its `ref_avail` input and check parity across a reference hole
+(G2 is a TensorRT-structure gate for VaaniFE; the refvalid graph keeps r7's structure, which G2 fails by design):
+```bash
+uv run python -c "from vaani import export as E; o = E.export_refvalid('runs/r8_refvalid_v2/best.pt', 'runs/r8_refvalid_v2/export/refvalid.onnx'); print(E.refvalid_parity('runs/r8_refvalid_v2/best.pt', o))"
+```
 
 ## 6. G6 test once
 
