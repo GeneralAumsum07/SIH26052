@@ -63,8 +63,10 @@ def _run(tmp_path):
     bash = shutil.which("bash")
     if not bash:
         pytest.skip("bash unavailable")
+    # run_r6.sh reads OUT/WORKERS/SKIP_TESTS/RESCAN from the env: a caller's exported OUT would move its outputs
+    env = {k: v for k, v in os.environ.items() if k not in ("OUT", "WORKERS", "SKIP_TESTS", "RESCAN")}
     return subprocess.run([bash, "-c", 'export PATH="$PWD:$PATH"; bash scripts/run_r6.sh'],
-                          cwd=tmp_path, env=dict(os.environ), capture_output=True, text=True)
+                          cwd=tmp_path, env=env, capture_output=True, text=True)
 
 
 def _calls(tmp_path):
