@@ -39,6 +39,9 @@ echo "rir bank workers: $W (nproc $(nproc), pids.max $(cat /sys/fs/cgroup/pids.m
     || uv run python scripts/make_rir_bank.py --out data/rirs/bank.npz --workers $W
   [ -f data/rirs/bank_r3.npz ] || fetch_bank bank_r3.npz e4e67463072e1dca14b94bef97a99bb85da34ebee7ec657a1f1dc7554df1b59f \
     || uv run python scripts/make_rir_bank.py --out data/rirs/bank_r3.npz --armoured-frac 0.2 --max-len-s 1.0 --workers $W
+  # r8 train bank (configs/data/r8_banks.json): fetch only, no builder fallback - a rebuild never reproduces these bytes
+  [ -f data/rirs/bank_r8.npz ] || fetch_bank bank_r8.npz 325ef372776de592ed1fb865f0e82a3dec1428ab65ea69d75afc01a680e1e3a7 \
+    || echo "WARN: bank_r8.npz not fetched (RIR_BANK_URL unset or asset missing); r8 configs on it will not start"
 } > data/rirs/bank_fetch.log 2>&1 &
 BANK_PID=$!
 wait_banks() { wait "$BANK_PID" || { echo "bank stage failed; see data/rirs/bank_fetch.log"; tail -20 data/rirs/bank_fetch.log; exit 1; }; }
@@ -125,7 +128,7 @@ free -g | sed -n '1,2p'   # the buffer/cache column should have grown by roughly
 
 # --- RIR banks: joined below, started at the top of the script --------------------------------------------
 wait_banks
-sha256sum data/rirs/bank.npz data/rirs/bank_r3.npz   # in the log for the run record; a regenerated bank shows up here as a new hash
+sha256sum data/rirs/bank.npz data/rirs/bank_r3.npz $(ls data/rirs/bank_r8.npz 2>/dev/null)   # in the log for the run record; a regenerated bank shows up here as a new hash
 
 # --- frozen eval set: use the laptop copy if it arrived, else re-render and compare the hash -----------------
 if [ ! -f data/eval_r2/test/EVALSET_HASH ]; then
