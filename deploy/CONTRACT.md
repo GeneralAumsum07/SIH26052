@@ -45,7 +45,13 @@ it for ALSA capture/playback and for WAV files.
 The algorithmic delay is 32 ms, not 16 ms. Changing the window or hop (for example a 256/128 or
 asymmetric-window low-delay profile) is a separately trained and evaluated profile, not a deployment
 switch.
-<!-- TBD(runtime): complete-hop benchmark (DSP + STFT + model + iSTFT + resampling) from scripts/hop_benchmark.py, with its JSON path -->
+
+Complete-hop cost: `scripts/hop_benchmark.py` times the whole hop as `StreamEngine` runs it (limiter,
+blocking matrix, NLMS, features, controller, STFT, model, iSTFT, optional 48 kHz resampling), per
+stage, e.g. `python scripts/hop_benchmark.py --models r7,C16,C32,C64,C96 --backends ort-cpu,torch-cpu,torch-cuda`.
+`scripts/board_timing.py --seconds 30 --resample48 --out deploy/board_timing.json` wraps it for the
+board. Only smoke runs on a loaded laptop exist; no complete-hop result is committed or reportable,
+and no board run has been made. TBD: a complete-hop run on an idle machine and on the Pi 5.
 
 ## Per frame, in order
 
@@ -129,8 +135,42 @@ of the preprocessing configuration. Rules:
   states.
 - Each hop reports timing, queue occupancy, clipping, missing samples and fallback events.
 
-`vaani/backend.py` implements this as `StreamState` (with `schema_version` and `config_hash`) and
-`Backend.step`. <!-- TBD(runtime): final backend API, discontinuity flag bits and telemetry field names, and the runtime guards (vaani/guards.py) once committed -->
+`vaani/backend.py` implements this (tests: `tests/test_stream_contract.py`, `tests/test_backend.py`):
+
+- `StreamState`: `schema_version` (`SCHEMA_VERSION = 1`), `profile_id`, `config_hash`, `caches`,
+  `sample_counter`, `channel_validity` (primary, reference) and `discontinuity_flags`.
+  `StreamState.save` / `load` write an `.npz` whose JSON header spells out every cache's name, shape
+  and dtype; another schema version or a header/array mismatch is refused.
+- Discontinuity bits: `DISC_GAP = 1` (input samples dropped by the overload queue or a capture
+  xrun), `DISC_BYPASS = 2` (hops passed through raw by the overload bypass), `DISC_RESET = 4`
+  (mid-stream reset), `DISC_REF_DROPOUT = 8` (the reference was invalid for at least one hop).
+- `Backend`: `new_state(config_hash)`, `reset(state)`, `step(spec6, feats, state, valid=1.0)`,
+  `to_host(state)`, `from_host(state)`. `check_state` refuses a state whose profile or cache shapes
+  differ from the backend's. Backends: `OrtBackend`, `TorchBackend` (r7) and `FeOrtBackend`,
+  `FeTorchBackend` (VaaniFE). The GPU execution-provider paths are written but untested.
+- Telemetry `summary()` keys: `steps`, `mean_ms`, `p50_ms`, `p95_ms`, `p99_ms`, `max_ms`,
+  `deadline_ms`, `deadline_misses`, `fallback_events` (a count per event name).
+- Graph hash: `StreamEngine` checks the graph against `onnx_sha256` in `model_config.json` on load
+  and refuses a mismatch unless `allow_hash_mismatch` (`--allow-hash-mismatch` in
+  `scripts/capture_loop.py`) is set.
+- Overload: `vaani.live.BoundedHopQueue` drops the oldest hops when full (`--queue-hops 8`); once
+  the backlog reaches `--bypass-depth 4` the loop passes the raw primary through for that hop.
+  Both set the discontinuity bits above.
+- Reference dropout: the StreamEngine docstring in `vaani/live.py`. It zeroes the reference and
+  freezes NLMS and blocking adaptation, then ramps the reference back over 16 hops (256 ms). This is
+  runtime safety only: r7 was not trained for it, and its quality during a dropout is not measured.
+
+Runtime guards (`vaani/guards.py`, `tests/test_guards.py`), opt-in (`--guards`, off by default):
+
+- Reference informativeness: |corr(P, R)| > 0.97 and |ILD| < 1 dB, held for 0.5 s, marks the
+  reference uninformative (validity 0). It recovers after 0.5 s of informative hops. Events:
+  `ref_uninformative` / `ref_informative`.
+- Never-vanish: output more than 25 dB below the input for more than 0.5 s of VAD-speech hops
+  crossfades to the fallback. Events: `never_vanish` / `never_vanish_release`.
+
+G4 field acceptance (`scripts/field_accept.py`) scores its validity-flag latency criterion from
+`eng.last[key]` for `key` in (`ref_informative`, `ref_validity`, `validity`), where falsy means
+uninformative. An r8 runtime must expose one of these keys for that criterion to be scored.
 
 ## Parity and timing (r7)
 
@@ -141,7 +181,9 @@ excluded from timing, included in parity), one intra-op thread, CPUExecutionProv
 - Model time: **1.135 ms mean / 1.960 ms p99** per 16 ms hop, on a **cloud x86 Linux core with
   ORT 1.25**, not the development laptop or a board.
 - On the Windows development laptop (AMD64 Family 25 Model 117, ORT 1.30, one thread, 2,000 timed
-  hops): 1.034 ms mean, 1.732 ms p99 (laptop). <!-- TBD(refvalid): committed JSON for this laptop timing; the original profile JSON is local-only -->
+  hops): 1.034 ms mean, 1.732 ms p99 (laptop). Source: a local-only profile JSON
+  (`docs/research/2026-09-24/scaling_profile.json`, not tracked), so this pair cannot be checked
+  from a clone. TBD: re-time on an idle machine and commit the JSON.
 
 These are model-only numbers. They exclude DSP, STFT/iSTFT, resampling and audio I/O, so they do
 not establish end-to-end latency or board feasibility. Re-time on the Pi 5 and, when available, the
@@ -182,6 +224,17 @@ frame with `torch.onnx.export(..., opset_version=17, dynamo=False)` at the stati
 exactly as the embedded loop must. A re-export's timing will differ from the recorded one; its
 parity must stay under the tolerance.
 
+Reproducibility, measured: re-exporting r7 with torch 2.11 gives the same topology (all 1,756 nodes
+byte-equal) and parity 6.7e-7 against PyTorch. It is **not** byte-identical to
+`deploy/r7/cascade.onnx` (exported with torch 2.14): 23 folded Conv initializers differ by up to
+9.5e-7, and shipped vs re-exported outputs differ by up to 5.1e-7. `deploy/r7/cascade.onnx` stays
+the sha-pinned artifact.
+
+Board install: `bash scripts/pi_setup.sh [--timing]` (`deploy/PI_SETUP.md`). It creates a Python
+3.12 `.venv-board` that is PEP 668-safe, installs `requirements-deploy.txt` binary-only (numpy +
+onnxruntime + numba, no torch), checks that torch is not importable and verifies r7's sha256.
+The aarch64 wheels are unverified on a board. TBD: the Pi 5 OS image and a first board run.
+
 ## Golden vectors
 
 `deploy/dsp_reference/vectors_cascade/<case>.wav` and `<case>.npz` cover r7's DSP configuration
@@ -204,8 +257,50 @@ than reuse r7's allocations, and must zero every cache at a new stream. VaaniFE 
 without `GRU`, `Loop` or `ScatterND` nodes (one-step GRUs as Gemm cells, Slice+Concat caches).
 Orin-tier figures for that family are projections from counts, graph checks and laptop timing; no
 Orin latency, power or quality is measured.
-<!-- TBD(fe): VaaniFE ONNX signature, cache layout and G2 graph-gate results (scripts/graph_gate.py) -->
-<!-- TBD(refvalid): signature change for the reference-validity input (validity plane / feature) in the r8 Mini -->
+
+### VaaniFE step graph (`vaani/models/vaani_fe.py`, `vaani/export.py::export_fe`)
+
+| Name | Shape | Meaning |
+|---|---|---|
+| `spec` (in) | (1, n_raw, 257) | the first n_raw channels of the engine's `[P re, P im, R re, R im, n_hat re, n_hat im]` frame, channels-first; n_raw is 4 for the default inputs `pr` |
+| `valid` (in) | (1, 1) | this frame's reference validity; absent when the inputs are `p` (mono) |
+| `state` (in) | (1, S) float32 | the only cache: K blocks of F·C2 GRU hidden, plus (df_taps − 1)·128 deep-filter frames when df_taps > 0 |
+| `spec_out` (out) | (1, 2, 257) | enhanced raw STFT frame [re, im] |
+| `state_out` (out) | (1, S) | next state |
+
+- Mini: S = 2 · 16 · 24 = 768 floats (3,072 B). Profile id `vaani_fe-<tier>`. A state from another
+  tier or profile is refused, never resized. `StreamState` and `SCHEMA_VERSION` are unchanged.
+- Validity per frame: 1 iff the reference was valid on both hops of the frame **and** the runtime
+  guards trust it; otherwise 0, with the reference zeroed. The reconnect ramp is 16 hops, or
+  `dsp.ref_policy.ramp_frames` (12) for a validity model.
+- `model_config.json`: `{"kind": "vaani_fe", "model": "vaani_fe", "profile", "controller_on", "dsp",
+  "model_cfg", "onnx", "onnx_sha256"}`, written by `vaani.live.write_fe_model_config`, or by
+  `write_model_config` from a `model: vaani_fe` checkpoint. r7's config is unchanged (`kind`
+  defaults to `cascade`).
+- Export: a checkpoint from `vaani/train.py` goes through `export.fe_load` + `export_fe` (opset 17,
+  static batch one). This writes `<name>.onnx` and ORT's folded `<name>.folded.onnx`, then checks
+  ORT-vs-torch parity over carried-state hops (tolerance 1e-5). `best.pt` records `weights`
+  (`raw` or `ema`) and `selection`.
+- Run live: `python scripts/capture_loop.py --onnx <tier>.folded.onnx --config <dir>/model_config.json --in-wav mix.wav --out-wav out.wav`.
+  The backend is picked from the graph's input names.
+- Tests: `tests/test_fe_stream.py` covers parity, state round trip, interleaved streams, the
+  validity rule, the mono path at validity 0, and the guards driving validity 0.
+
+G2 graph gate (`scripts/graph_gate.py`; limits: folded nodes < 250, no Loop/Scan/If/GRU/LSTM/RNN,
+no ScatterND, no symbolic dims or Shape/Range, layout ops < 30 %, parity ≤ 1e-5). On untrained
+seeded exports (`results_r2/fe_tiers/README.md`), every tier passes: Mini 116 folded nodes, Mid
+158, Large 193, Large+ 200, layout share 0.259–0.264, parity ≤ 4.5e-8. r7 fails (539 nodes,
+14 GRU, 18 ScatterND, layout share 0.586). The r8 Mini smoke export also passes (116 folded nodes, `configs/retraining/R8_RUNBOOK.md`). This is
+a laptop graph check, not a TensorRT or Orin result.
+
+### Reference-validity r7 variant (the r8 fallback)
+
+With `model_cfg.ref_validity: true`, the r7 architecture takes a reference-availability input
+`ref_avail` in {0, 1}: (B, T) for the batch model, (B, 1) as a keyword to `StreamVaaniNet`. `None`
+means present. The DSP `ref_policy` (default off) zeroes the reference and freezes the NLMS for
+unavailable samples, then ramps back over 12 frames. The ONNX export does **not** yet expose
+`ref_avail` as a graph input. TBD: add it before this variant can ship. All of this is default-off,
+and r7's outputs are unchanged. Budget: 53,147 entries, 85.621 MMAC/s (`results_r2/r8/budget.md`).
 
 Existing opt-in retraining flags on the r7 architecture: `model_cfg.channels`,
 `model_cfg.noise_floor` and `refiner_cfg.hidden/past/scale`. Widths change the convolution and
