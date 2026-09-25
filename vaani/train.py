@@ -152,8 +152,11 @@ def validate(model, dl, cfg, device):
         if not hasattr(dl, "_frozen_screen"):
             dl._frozen_screen = screen_items(cfg["val"]["eval_root"], cfg["val"].get("split", "val"))
         ds, indices = dl._frozen_screen
-        values = score_items(model, ds, indices, cfg, device).mean(0)
-        dl._last_val_metrics = dict(zip(("snr_out", "stoi", "pesq_wb"), map(float, values)))
+        arr = score_items(model, ds, indices, cfg, device); values = arr.mean(0)
+        n_nan = int(np.isnan(arr[:, 2]).sum())
+        if n_nan:   # PESQ NaN (no utterance, or a pesq child crash): log the mean of the rest; STOI selection is untouched
+            values[2] = np.nanmean(arr[:, 2]) if n_nan < len(arr) else np.nan
+        dl._last_val_metrics = dict(zip(("snr_out", "stoi", "pesq_wb"), map(float, values)), pesq_nan=n_nan)
         return float(values[1])
     model.eval(); scores = []
     for batch in dl:
@@ -281,6 +284,7 @@ class CompositeScreen:
 
     def score(self, model, device):
         was = model.training; model.eval(); rows = []
+        f0 = self.metrics.pesq_failures()["total"]
         for it in self.items:
             y = self.enhance(model, it, device); m = self.metrics
             r = dict(cond=it["cond"], clean_item=it["clean_item"], snr_in=it["snr_in"], snr_out=m.snr_db(it["clean"], y),
@@ -290,7 +294,13 @@ class CompositeScreen:
             rows.append(r)
         model.train(was)
         c = self.c
-        return composite_summary(rows, c["targets"], c["ild_max_loss"], c["margin_db"], self.base_d_snr, c["include_clean"])
+        s = composite_summary(rows, c["targets"], c["ild_max_loss"], c["margin_db"], self.base_d_snr, c["include_clean"])
+        # a pesq child crash scores that clip NaN (it fails the pass target); count it so a run's log shows it
+        s["pesq_failures"] = self.metrics.pesq_failures()["total"] - f0
+        if s["pesq_failures"]:
+            print(f"WARNING: composite screen: {s['pesq_failures']} PESQ child failure(s) scored NaN "
+                  f"(results_r2/r8/native_crash/README.md)", flush=True)
+        return s
 
 
 def main(config_path):
