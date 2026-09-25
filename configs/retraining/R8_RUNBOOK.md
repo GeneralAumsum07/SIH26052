@@ -138,5 +138,22 @@ Follow results_r2/r8/testset/PROTOCOL.md exactly: verify the hash, then run the 
 
 - 30-step smokes plus resume, composite/EMA selection and the fe export: `tests/test_train_r8_smoke.py`, results in
   `runs/smoke_r8_fe_mini/smoke_result.json` and `runs/smoke_r8_refvalid_v2/smoke_result.json` (git-ignored).
+  fe: 30 steps, resumed at 15, loop loss 1.94 -> 0.37 (mean of the first and last 10), single-batch overfit
+  5.53 -> 0.53, best.pt = EMA weights by composite, export parity pass, `graph_gate.py` PASS (116 folded nodes,
+  layout share 0.259). refvalid_v2: 30 steps, resumed at 15, loop 13.9 -> 8.75, overfit 20.8 -> 7.38.
+  The smokes override warmup to 3 and lr to 2e-3; at the real warmup of 2,000, lr is about 1e-6 at step 30.
 - Loader items/s: `results_r2/r8/loader_bench.json`. Step time: `results_r2/r8/step_time.json`. The commands are inside
   each file (`command`).
+
+| Config | Loader items/s per worker (1-3 workers) | GPU step, B 32 x 4 s, bf16 (5060) | GPU items/s |
+|---|---|---|---|
+| r8_fe_mini (v2, front end only) | 16.5-17.3 | 68 ms | 471 |
+| r8_refvalid_v2 (v2 + NLMS/DSP) | 8.4-9.2 | 218 ms | 147 |
+| r7_e256_wr64 (v1 + DSP, control) | 10.2-10.9 | 197 ms (plan 11.6 recorded 220 ms) | 162 |
+
+The v2 rows are after commit 2158fcd. Before it, v2 ran at about 1.5 items/s per worker because of a per-draw pandas
+filter in the scene pool; the old rows are kept in the same JSON. Workers needed to keep a 5060 fed:
+about 471 / 17 = 28 for the Mini and 147 / 9 = 16 for refvalid (inferred: linear per-worker scaling beyond 3 workers
+is assumed, not measured). The rental's per-vCPU rate differs. r7 managed 192 items/s from 32 vCPU on the box, about
+6 items/s per vCPU against 10.5 per worker here, so rental rates may be around 0.6x the laptop's (inferred).
+**Measure both on the box (step 1) before fixing the schedule.**
