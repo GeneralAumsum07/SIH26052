@@ -502,22 +502,65 @@ def _top(f: Path, root: Path) -> str:
     return rel[0] if len(rel) > 1 else f.stem
 
 
+C3GD_TRUE = {"true", "1", "yes", "y", "t"}
+
+
+def c3gd_fields(stem: str):
+    """{ClassId}-{EventId}-{Platform}-{MicId}-{FileId}-{ClipId} (C3GD README naming) -> dict, or None for any other
+    name. Fields hold '_' but not '-' in every listed name; extra '-' are taken as part of EventId-Platform."""
+    p = stem.split("-")
+    if len(p) < 6 or not p[0].isdigit():
+        return None
+    return {"cls": p[0], "session": "-".join(p[1:-3]), "mic": p[-3], "file": p[-2], "clip": p[-1]}
+
+
+def c3gd_phone_keys(root: Path) -> set:
+    """Keys (clip stem, file name, FileId or MicId) that metadata.csv marks is_phone and never marks otherwise.
+    The README names the column but not the key column, so every cell of a row is a candidate key; a key seen on
+    both sides (an event, a caliber) is ambiguous and ignored."""
+    f = Path(root) / "metadata.csv"
+    if not f.exists():
+        return set()
+    phone, other = set(), set()
+    with open(f, encoding="utf-8", newline="") as fh:
+        rd = csv.DictReader(fh)
+        if "is_phone" not in (rd.fieldnames or []):
+            return set()
+        for r in rd:
+            vals = {str(v).strip() for k, v in r.items() if k != "is_phone" and v}
+            (phone if str(r["is_phone"]).strip().lower() in C3GD_TRUE else other).update(vals)
+    return phone - other
+
+
 def scan_c3gd(root: Path, out: Path) -> list[dict]:
-    """C3GD (arXiv 2606.18135, CC BY 4.0; host URL TBD): layout TBD, taken as <root>/<firearm>/**/*.wav. Grouped per
-    firearm until the per-session id is known (conservative: no firearm straddles splits)."""
+    """C3GD (Gurny & Quinn, arXiv 2606.18135, Zenodo 22286299, CC BY 4.0): <root>/data/{ClassId}-{EventId}-{Platform}-
+    {MicId}-{FileId}-{ClipId}.wav at 48 kHz, <root>/metadata.csv. One group per EventId-Platform: every mic's copy of a
+    shot (same FileId+ClipId, README) and every shot of that gun at that event share a split. Phone-mic clips are
+    skipped (is_phone in metadata.csv: phone AGC, as for CADRE). Names outside that convention keep the old
+    <root>/<firearm>/**/*.wav reading, grouped per top folder."""
     if _absent(root, "c3gd"):
         return []
-    rows = []
+    rows, phones, skipped = [], c3gd_phone_keys(root), 0
     for f in sorted(Path(root).rglob("*.wav")):
-        arm = _top(f, Path(root))
-        dst = out / "c3gd" / arm / (f.stem + ".flac")
+        c = c3gd_fields(f.stem)
+        if c is None:
+            grp = _top(f, Path(root))
+        elif {f.stem, f.name, c["file"], c["mic"]} & phones:
+            skipped += 1; continue
+        else:
+            grp = c["session"]
+        dst = out / "c3gd" / grp / (f.stem + ".flac")
         dur = to_flac16k(f, dst) if not dst.exists() else sf.info(dst).duration
-        rows.append(_row(f"c3gd:{arm}/{f.stem}", "c3gd", "noise", f"c3gd-{arm}", "", dst, dur, "CC BY 4.0", "impulsive"))
+        rows.append(_row(f"c3gd:{grp}/{f.stem}", "c3gd", "noise", f"c3gd-{grp}", "", dst, dur, "CC BY 4.0", "impulsive"))
+    if skipped:
+        print(f"[c3gd] skipped {skipped} phone-mic clips (metadata.csv is_phone)")
     return rows
 
 
 def scan_avq_drone(root: Path, out: Path) -> list[dict]:
-    """AVQ drone noise (CC BY 4.0): layout TBD, taken as <root>/<recording or drone>/**/*.wav, grouped by the top folder."""
+    """AVQ drone noise (Zenodo 4553667, CC BY 4.0): <root>/noises-{train,test}-drones/nNNN.wav (zip preview listing).
+    One group per recording file: the folders are the publisher's train/test split, not recording sessions, and
+    nothing says two files share a flight (TBD). The folder rides in the source_id."""
     if _absent(root, "avq_drone"):
         return []
     rows = []
@@ -526,7 +569,7 @@ def scan_avq_drone(root: Path, out: Path) -> list[dict]:
         dst = out / "avq_drone" / top / (f.stem + ".flac")
         dur = to_flac16k(f, dst) if not dst.exists() else sf.info(dst).duration
         x, _ = sf.read(dst, dtype="float32")
-        rows.append(_row(f"avq_drone:{top}/{f.stem}", "avq_drone", "noise", f"avq-{top}", "", dst, dur, "CC BY 4.0",
+        rows.append(_row(f"avq_drone:{top}/{f.stem}", "avq_drone", "noise", f"avq-{f.stem}", "", dst, dur, "CC BY 4.0",
                          stationarity_class(x, SR)))
     return rows
 
@@ -657,20 +700,24 @@ def scan_but_reverbdb(root: Path, out: Path) -> list[dict]:
 AUDIOSET_SPEECH, AUDIOSET_MUSIC = "/m/09x0r", "/m/04rlf"
 
 
-def dns_audioset_filter(rows: list[dict], label_csv: Path | None, drop=(AUDIOSET_SPEECH, AUDIOSET_MUSIC)) -> list[dict]:
-    """Drop DNS AudioSet noise rows whose YouTube id carries Speech or Music in the AudioSet segments CSV
-    (YTID, start_seconds, end_seconds, positive_labels). The CSV is a metadata download not on disk: without it
-    the rows pass through unchanged and a note says the filter did not run (TBD). The clip-name -> YTID rule
-    (first 11 characters of the stem) is the AudioSet convention, unverified on the DNS shard names (TBD)."""
-    if label_csv is None or not Path(label_csv).exists():
+def dns_audioset_filter(rows: list[dict], label_csv, drop=(AUDIOSET_SPEECH, AUDIOSET_MUSIC)) -> list[dict]:
+    """Drop DNS AudioSet noise rows whose YouTube id carries Speech or Music in the AudioSet segments CSV(s)
+    (YTID, start_seconds, end_seconds, positive_labels). label_csv is one path or a list (balanced, unbalanced and eval
+    segments: configs/data/r8_datasets.yaml audioset_csv); absent files are skipped, and with none present the rows
+    pass through unchanged and a note says the filter did not run. The clip-name -> YTID rule (first 11 characters of
+    the stem) holds on the audioset_000 shard (stems are the bare 11-character ids, e.g. --OBFOUWZi0)."""
+    csvs = [label_csv] if label_csv is None or isinstance(label_csv, (str, Path)) else list(label_csv)
+    have = [Path(c) for c in csvs if c is not None and Path(c).exists()]
+    if not have:
         print(f"[dns_audioset_filter] label CSV {label_csv} absent: {len(rows)} rows unfiltered (TBD)")
         return rows
     bad = set()
-    with open(label_csv, encoding="utf-8") as fh:
-        for line in fh:
-            if line.startswith("#"):
-                continue
-            p = [t.strip().strip('"') for t in line.split(",", 3)]
-            if len(p) == 4 and any(d in p[3] for d in drop):
-                bad.add(p[0])
+    for c in have:
+        with open(c, encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("#"):
+                    continue
+                p = [t.strip().strip('"') for t in line.split(",", 3)]
+                if len(p) == 4 and any(d in p[3] for d in drop):
+                    bad.add(p[0])
     return [r for r in rows if Path(str(r["path"])).stem[:11] not in bad]

@@ -216,9 +216,57 @@ def test_but_reverbdb_rir_rows_grouped_by_room_and_misc_scanners(tmp_path):
     r = sources.scan_musan_noise(tmp_path / "musan", tmp_path / "out")
     assert r[0]["licence"] == "CC BY 3.0" and r[0]["corpus"] == "musan"
     a = tmp_path / "avq" / "dji"; a.mkdir(parents=True); sf.write(a / "x.wav", _noise(0.5), SR)
-    assert sources.scan_avq_drone(tmp_path / "avq", tmp_path / "out")[0]["group_id"] == "avq-dji"
+    r = sources.scan_avq_drone(tmp_path / "avq", tmp_path / "out")[0]
+    assert r["group_id"] == "avq-x" and r["source_id"] == "avq_drone:dji/x"   # one group per recording file
     t = tmp_path / "lttsr" / "train-clean-100" / "19" / "198"; t.mkdir(parents=True)
     sf.write(t / "19_198_000000_000000.wav", _noise(0.5), 24000)
     r = sources.scan_librittsr(tmp_path / "lttsr", tmp_path / "out")
     assert r[0]["group_id"] == "lttsr-spk-19" and sf.info(r[0]["path"]).samplerate == SR
     assert "drone" in sources.V2_DROPPED_CORPORA
+
+
+def test_c3gd_zenodo_layout_groups_per_event_platform_and_skips_phones(tmp_path):
+    root = tmp_path / "C3GD"; d = root / "data"; d.mkdir(parents=True)
+    names = ["0-nj_farm_2-bergara-bluebell_COMICA-kghnh22m1enr_23-10",   # the Zenodo preview's own first name
+             "0-nj_farm_2-bergara-rode_NTG-kghnh22m1enr_23-10",           # same shot, second mic: same group
+             "3-oh_farm-glock_19-bluebell_COMICA-aaaa-1",
+             "3-oh_farm-glock_19-iphone_12-bbbb-1"]                       # a phone mic (metadata.csv)
+    for n in names:
+        sf.write(d / f"{n}.wav", _noise(0.2), 48000)
+    (root / "metadata.csv").write_text("file,event,mic,is_phone\n" + "".join(
+        f"{n}.wav,{n.split('-')[1]},{n.split('-')[3]},{'True' if 'iphone' in n else 'False'}\n" for n in names))
+    rows = sources.scan_c3gd(root, tmp_path / "out")
+    assert {r["group_id"] for r in rows} == {"c3gd-nj_farm_2-bergara", "c3gd-oh_farm-glock_19"}
+    assert len(rows) == 3 and not any("iphone" in r["source_id"] for r in rows)
+    assert rows[0]["source_id"] == "c3gd:nj_farm_2-bergara/" + names[0] and rows[0]["noise_class"] == "impulsive"
+    assert sf.info(rows[0]["path"]).samplerate == SR
+    # the two mics of one shot cannot straddle splits
+    assert len({r["split"] for r in rows if r["group_id"] == "c3gd-nj_farm_2-bergara"}) == 1
+
+
+def test_c3gd_fields_and_phone_keys_without_metadata(tmp_path):
+    assert sources.c3gd_fields("0-nj_farm_2-bergara-bluebell_COMICA-kghnh22m1enr_23-10") == {
+        "cls": "0", "session": "nj_farm_2-bergara", "mic": "bluebell_COMICA", "file": "kghnh22m1enr_23", "clip": "10"}
+    assert sources.c3gd_fields("a") is None and sources.c3gd_fields("x-a-b-c-d-e") is None
+    assert sources.c3gd_phone_keys(tmp_path) == set()
+    (tmp_path / "metadata.csv").write_text("file,is_phone\n")
+    assert sources.c3gd_phone_keys(tmp_path) == set()
+
+
+def test_avq_zenodo_layout_one_group_per_file(tmp_path):
+    for folder, n in (("noises-train-drones", "n116"), ("noises-train-drones", "n117"), ("noises-test-drones", "n121")):
+        (tmp_path / "avq" / folder).mkdir(parents=True, exist_ok=True)
+        sf.write(tmp_path / "avq" / folder / f"{n}.wav", _noise(0.5), 44100)
+    rows = sources.scan_avq_drone(tmp_path / "avq", tmp_path / "out")
+    assert sorted(r["group_id"] for r in rows) == ["avq-n116", "avq-n117", "avq-n121"]
+    assert "avq_drone:noises-test-drones/n121" in {r["source_id"] for r in rows}
+
+
+def test_dns_audioset_filter_takes_a_list_of_csvs(tmp_path, capsys):
+    rows = [dict(path=f"x/{y}.flac", source_id=y) for y in ("--OBFOUWZi0", "BBBBBBBBBBB", "CCCCCCCCCCC")]
+    a, b = tmp_path / "balanced_train_segments.csv", tmp_path / "eval_segments.csv"
+    a.write_text('--OBFOUWZi0, 0.000, 10.000, "/m/09x0r"\n')
+    b.write_text('BBBBBBBBBBB, 0.000, 10.000, "/m/04rlf,/m/0jbk"\n')
+    assert [r["source_id"] for r in sources.dns_audioset_filter(rows, [a, b, tmp_path / "absent.csv"])] == ["CCCCCCCCCCC"]
+    assert sources.dns_audioset_filter(rows, [tmp_path / "absent.csv"]) == rows and "TBD" in capsys.readouterr().out
+    assert [r["source_id"] for r in sources.dns_audioset_filter(rows, str(a))] == ["BBBBBBBBBBB", "CCCCCCCCCCC"]

@@ -557,8 +557,9 @@ def _mat2wav(mat, dest, rate):
     if len(d) != 1:
         raise DatasetError(f"{mat.name}: expected one variable, found {sorted(d)}")
     x = np.asarray(next(iter(d.values()))).squeeze()
-    if x.dtype != np.int16:
+    if x.dtype.kind != "i" or x.dtype.itemsize != 2:   # SPIB stores big-endian int16 (>i2): same samples
         raise DatasetError(f"{mat.name}: {x.dtype}, expected int16 (not an SPIB original?)")
+    x = x.astype(np.int16)
     sf.write(dest / (mat.stem + ".wav"), x, int(rate), subtype="PCM_16")
 
 
@@ -672,8 +673,7 @@ def _scan_one(scanner, root, out, man, args, csvs):
     if csvs is not None:
         from vaani.data.sources import dns_audioset_filter
         n0 = len(rows)
-        for c in csvs:   # one CSV at a time: the filter's own contract is a single label file
-            rows = dns_audioset_filter(rows, c)
+        rows = dns_audioset_filter(rows, [Path(c) for c in csvs])
         print(f"[audioset filter] {n0} -> {len(rows)} rows ({n0 - len(rows)} Speech/Music clips dropped)")
     if not rows:
         raise DatasetError(f"{fn} returned no rows from {root}")

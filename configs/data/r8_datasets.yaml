@@ -715,8 +715,10 @@ optional:
     manifest: data/manifests/but_reverbdb.parquet
     needed_by: []
     licence: CC BY 4.0
-    notes: RIR-only release. No checksum. r8 trains on the simulated data/rirs/bank_r3.npz.
-    root: .
+    notes: 'RIR-only release. No checksum. r8 trains on the simulated data/rirs/bank_r3.npz. root_find takes the folder
+      four levels above RIR/ (<room>/<mic>/<spk>/<pos>/RIR, the layout scan_but_reverbdb reads); TBD: whether the tgz adds
+      a top folder (root_find copes either way).'
+    root_find: '*/*/*/*/RIR'
   dns_freesound_001:
     access: direct
     credentials: []

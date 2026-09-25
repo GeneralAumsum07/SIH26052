@@ -441,3 +441,60 @@ def test_list_and_dry_run_touch_nothing(tmp_path, server, capsys):
     assert not server.log and not root.exists()
     out = capsys.readouterr().out
     assert "would fetch o" in out and "req" not in out.split("OK")[-1]   # request-only entries are not in --all
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# laptop regression (skipped where the corpus is absent): box layout + scanners == the manifests already on disk
+# ---------------------------------------------------------------------------------------------------------------
+
+KEYS = ["source_id", "corpus", "kind", "group_id", "speaker_id", "licence", "split", "sha1", "noise_class"]
+
+
+def _same_rows(rows, manifest, out):
+    from vaani.data import manifests
+    old = manifests.read(REPO / manifest).sort_values("source_id").reset_index(drop=True)
+    new = __import__("pandas").DataFrame(rows).drop_duplicates("sha1").sort_values("source_id").reset_index(drop=True)
+    assert len(new) == len(old)
+    assert (new[KEYS] == old[KEYS]).all().all()
+    assert np.allclose(new.duration_s, old.duration_s)
+    # paths: <out>/<corpus>/... against the laptop's data/raw/<corpus>/...
+    tail = new.path.map(lambda s: Path(s).relative_to(Path(out)).as_posix())
+    assert (("data/raw/" + tail) == old.path).all()
+
+
+def _need(*paths):
+    for p in paths:
+        if not (REPO / p).exists():
+            pytest.skip(f"{p} not on this machine")
+
+
+def test_laptop_noisex92_mat2wav_is_sample_exact_and_scan_unchanged(tmp_path):
+    _need("data/download/noisex92/leopard.mat", "data/manifests/noisex92.parquet")
+    from vaani.data import sources
+    src = REPO / "data/download/noisex92"; root = tmp_path / "noisex92_src"; root.mkdir()
+    for w in src.glob("*.wav"):
+        shutil.copy(w, root / w.name)
+    for m in src.glob("*.mat"):   # the box path: SPIB .mat -> wav, replacing the laptop copy
+        (root / (m.stem + ".wav")).unlink()
+        R._mat2wav(m, root, 19980)
+        a, sra = sf.read(src / (m.stem + ".wav"), dtype="int16"); b, srb = sf.read(root / (m.stem + ".wav"), dtype="int16")
+        assert sra == srb == 19980 and np.array_equal(a, b)
+    out = tmp_path / "raw"
+    _same_rows(sources.scan_noisex92(root, out), "data/manifests/noisex92.parquet", out)
+
+
+def test_laptop_demand_scan_unchanged(tmp_path):
+    _need("data/raw/demand/DKITCHEN/ch01.wav", "data/manifests/demand.parquet")
+    from vaani.data import sources
+    out = tmp_path / "raw"
+    _same_rows(sources.scan_demand(REPO / "data/raw/demand", out), "data/manifests/demand.parquet", out)
+
+
+def test_laptop_drone_root_find_and_scan_unchanged(tmp_path):
+    _need("data/download/drone/DroneAudioDataset-master", "data/manifests/drone.parquet")
+    from vaani.data import sources
+    reg = R.load_registry()
+    root = R.find_root(REPO / "data/download/drone", reg["datasets"]["drone"]["root_find"])
+    assert root.name == "DroneAudioDataset-master"   # the laptop's extract_to (configs/data/round1.yaml)
+    out = tmp_path / "raw"
+    _same_rows(sources.scan_drone(root, out), "data/manifests/drone.parquet", out)
