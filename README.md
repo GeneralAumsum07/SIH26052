@@ -676,8 +676,10 @@ default-off change keeps r7 bit-exact.
 Open decisions, all Rachit's: the rental's vCPU count, the final selection metric (`composite` or
 `stoi`), whether NLMS stays in the default path, whether to install torch_pesq (until then the FE
 loss's PESQ weight is 0), and dataset downloads (Lombard GRID, DEMAND pairs, the AudioSet label
-CSV). The refvalid C16 has no `ref_avail` ONNX input yet, so G2 and the runtime validity path do
-not apply to it until that export lands.
+CSV). The refvalid C16 exports with a per-frame `ref_avail` graph input
+(`vaani.export.export_refvalid`, parity in `vaani.export.refvalid_parity`, tested in `tests/test_export.py`);
+`OrtBackend` feeds it and `scripts/eval_refvalid.py`'s `onnx:` runner scores it. It keeps r7's graph structure,
+so like r7 it is a CPU/ORT (Pi) graph, not a G2/TensorRT candidate.
 
 ---
 

@@ -298,8 +298,10 @@ a laptop graph check, not a TensorRT or Orin result.
 With `model_cfg.ref_validity: true`, the r7 architecture takes a reference-availability input
 `ref_avail` in {0, 1}: (B, T) for the batch model, (B, 1) as a keyword to `StreamVaaniNet`. `None`
 means present. The DSP `ref_policy` (default off) zeroes the reference and freezes the NLMS for
-unavailable samples, then ramps back over 12 frames. The ONNX export does **not** yet expose
-`ref_avail` as a graph input. TBD: add it before this variant can ship. All of this is default-off,
+unavailable samples, then ramps back over 12 frames. `vaani.export.export_refvalid(ckpt, out)` exports it
+with a (1, 1) float32 `ref_avail` graph input after the caches (1 = present, 0 = the trained absent path);
+`vaani.export.refvalid_parity` checks batch vs ORT stream across a reference hole, and `OrtBackend` sets
+`takes_valid` and feeds it per hop. No trained refvalid checkpoint exists yet (r8 retrain). All of this is default-off,
 and r7's outputs are unchanged. Budget: 53,147 entries, 85.621 MMAC/s (`results_r2/r8/budget.md`).
 
 Existing opt-in retraining flags on the r7 architecture: `model_cfg.channels`,
