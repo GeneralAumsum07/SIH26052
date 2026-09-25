@@ -1,0 +1,378 @@
+{
+ "v2_param": {
+  "dirs": [
+   "results_r2/r8/data_gates/tune/c2_s55",
+   "results_r2/r8/data_gates/tune/c2_s77",
+   "results_r2/r8/data_gates/tune/c2_s101"
+  ],
+  "items": 600,
+  "pooled_auc": 0.7937118486237265,
+  "breakdown": {
+   "pooled_hist_auc": 0.7937118486237265,
+   "by_component": {
+    "bed": {
+     "noise_bin_share": 0.3064742088317871,
+     "auc_vs_this": 0.8407817686759894,
+     "auc_without_this": 0.7729113010226819
+    },
+    "near": {
+     "noise_bin_share": 0.49112001061439514,
+     "auc_vs_this": 0.7398902692647749,
+     "auc_without_this": 0.8456550486226748
+    },
+    "point": {
+     "noise_bin_share": 0.17117740213871002,
+     "auc_vs_this": 0.8676730605303843,
+     "auc_without_this": 0.7784365793935997
+    },
+    "wind": {
+     "noise_bin_share": 0.031228376552462578,
+     "auc_vs_this": 0.7727901792344534,
+     "auc_without_this": 0.7943862591256599
+    }
+   },
+   "by_scene": {
+    "apc": {
+     "items": 74,
+     "noise_bin_share": 0.3140874207019806,
+     "auc_within": 0.6778803637697457,
+     "auc_leave_out": 0.8038751984560286
+    },
+    "artillery": {
+     "items": 53,
+     "noise_bin_share": 0.018571311607956886,
+     "auc_within": 0.783819599184764,
+     "auc_leave_out": 0.7878780556440401
+    },
+    "command_post": {
+     "items": 103,
+     "noise_bin_share": 0.21782717108726501,
+     "auc_within": 0.8330845405858252,
+     "auc_leave_out": 0.7835654802941233
+    },
+    "drone": {
+     "items": 61,
+     "noise_bin_share": 0.04338274896144867,
+     "auc_within": 0.839562931349359,
+     "auc_leave_out": 0.790708822394974
+    },
+    "firefight": {
+     "items": 84,
+     "noise_bin_share": 0.08571957051753998,
+     "auc_within": 0.7679418851130835,
+     "auc_leave_out": 0.7996444216465669
+    },
+    "helicopter": {
+     "items": 54,
+     "noise_bin_share": 0.24499957263469696,
+     "auc_within": 0.7143348694544852,
+     "auc_leave_out": 0.7950758366720252
+    },
+    "patrol": {
+     "items": 119,
+     "noise_bin_share": 0.04876809939742088,
+     "auc_within": 0.7682733513853099,
+     "auc_leave_out": 0.7978663205341155
+    },
+    "windy_ridge": {
+     "items": 52,
+     "noise_bin_share": 0.026644110679626465,
+     "auc_within": 0.7872181995932491,
+     "auc_leave_out": 0.7923131683963501
+    }
+   },
+   "by_ref_mode": {
+    "low_ild": {
+     "items": 62,
+     "noise_bin_share": 0.10622891783714294,
+     "auc_within": 0.46356851601114246,
+     "auc_leave_out": 0.8269091340217158
+    },
+    "mono": {
+     "items": 62,
+     "noise_bin_share": 0.11973211169242859,
+     "auc_within": 0.5,
+     "auc_leave_out": 0.8197286380826834
+    },
+    "physical": {
+     "items": 459,
+     "noise_bin_share": 0.742590606212616,
+     "auc_within": 0.8749819567598174,
+     "auc_leave_out": 0.5257079581439245
+    },
+    "stereo": {
+     "items": 17,
+     "noise_bin_share": 0.031448353081941605,
+     "auc_within": 0.42455240566356384,
+     "auc_leave_out": 0.8018588577301068
+    }
+   },
+   "by_near": {
+    "neg": {
+     "items": 50,
+     "noise_bin_share": 0.09165339171886444,
+     "auc_within": 0.9059815185720654,
+     "auc_leave_out": 0.7861333122421905
+    },
+    "none": {
+     "items": 65,
+     "noise_bin_share": 0.0910000279545784,
+     "auc_within": 0.8203328699024215,
+     "auc_leave_out": 0.791896294990156
+    },
+    "pos": {
+     "items": 471,
+     "noise_bin_share": 0.7865831851959229,
+     "auc_within": 0.7896860791908481,
+     "auc_leave_out": 0.8330824120782168
+    },
+    "unspatialised": {
+     "items": 14,
+     "noise_bin_share": 0.030763421207666397,
+     "auc_within": 0.4151941059137024,
+     "auc_leave_out": 0.7983870467283146
+    }
+   },
+   "by_wind": {
+    "no": {
+     "items": 453,
+     "noise_bin_share": 0.7639832496643066,
+     "auc_within": 0.7957408579493271,
+     "auc_leave_out": 0.7884322953290066
+    },
+    "yes": {
+     "items": 147,
+     "noise_bin_share": 0.23601678013801575,
+     "auc_within": 0.7884322953290066,
+     "auc_leave_out": 0.7957408579493271
+    }
+   },
+   "by_m2_bucket": {
+    "-6..+3": {
+     "items": 141,
+     "noise_bin_share": 0.25740939378738403,
+     "auc_within": 0.5257079581439245,
+     "auc_leave_out": 0.8749819567598174
+    },
+    "physical": {
+     "items": 459,
+     "noise_bin_share": 0.742590606212616,
+     "auc_within": 0.8749819567598174,
+     "auc_leave_out": 0.5257079581439245
+    }
+   },
+   "by_clipped": {
+    "False": {
+     "items": 408,
+     "noise_bin_share": 0.3867212235927582,
+     "auc_within": 0.814058784357799,
+     "auc_leave_out": 0.781364586670644
+    },
+    "True": {
+     "items": 192,
+     "noise_bin_share": 0.6132788062095642,
+     "auc_within": 0.781364586670644,
+     "auc_leave_out": 0.814058784357799
+    }
+   }
+  },
+  "bootstrap": {
+   "b": 1000,
+   "mean": 0.7940436756642069,
+   "sd": 0.010990223170482769,
+   "ci95": [
+    0.7739064069363069,
+    0.8159745206543824
+   ],
+   "share_le_gate": 0.0
+  }
+ },
+ "v2_room": {
+  "dirs": [
+   "results_r2/r8/data_gates/tune/c2_s55",
+   "results_r2/r8/data_gates/tune/c2_s77",
+   "results_r2/r8/data_gates/tune/c2_s101"
+  ],
+  "items": 600,
+  "pooled_auc": 0.76889478019599,
+  "breakdown": {
+   "pooled_hist_auc": 0.76889478019599,
+   "by_component": {
+    "bed": {
+     "noise_bin_share": 0.3132714629173279,
+     "auc_vs_this": 0.83522666252109,
+     "auc_without_this": 0.7386355368928921
+    },
+    "near": {
+     "noise_bin_share": 0.4863949418067932,
+     "auc_vs_this": 0.7121630709555036,
+     "auc_without_this": 0.8226209211659784
+    },
+    "point": {
+     "noise_bin_share": 0.1687479466199875,
+     "auc_vs_this": 0.8097051483483124,
+     "auc_without_this": 0.7606100899028978
+    },
+    "wind": {
+     "noise_bin_share": 0.03158563748002052,
+     "auc_vs_this": 0.7665983382904563,
+     "auc_without_this": 0.7689696805491851
+    }
+   },
+   "by_scene": {
+    "apc": {
+     "items": 74,
+     "noise_bin_share": 0.3199586272239685,
+     "auc_within": 0.6641793663733949,
+     "auc_leave_out": 0.778060602989699
+    },
+    "artillery": {
+     "items": 53,
+     "noise_bin_share": 0.01898455247282982,
+     "auc_within": 0.7832486925099714,
+     "auc_leave_out": 0.7622156796224002
+    },
+    "command_post": {
+     "items": 103,
+     "noise_bin_share": 0.21263061463832855,
+     "auc_within": 0.7820592845855416,
+     "auc_leave_out": 0.7649156611551078
+    },
+    "drone": {
+     "items": 61,
+     "noise_bin_share": 0.04483650252223015,
+     "auc_within": 0.7867181739277662,
+     "auc_leave_out": 0.7670676088220959
+    },
+    "firefight": {
+     "items": 84,
+     "noise_bin_share": 0.07763302326202393,
+     "auc_within": 0.7111338682712414,
+     "auc_leave_out": 0.7772323419491142
+    },
+    "helicopter": {
+     "items": 54,
+     "noise_bin_share": 0.24950025975704193,
+     "auc_within": 0.7093453403345024,
+     "auc_leave_out": 0.7619372019960075
+    },
+    "patrol": {
+     "items": 119,
+     "noise_bin_share": 0.04940030723810196,
+     "auc_within": 0.7289424264074291,
+     "auc_leave_out": 0.7734871812921258
+    },
+    "windy_ridge": {
+     "items": 52,
+     "noise_bin_share": 0.027056092396378517,
+     "auc_within": 0.7867907595480513,
+     "auc_leave_out": 0.7663859151185278
+    }
+   },
+   "by_ref_mode": {
+    "low_ild": {
+     "items": 62,
+     "noise_bin_share": 0.10979583114385605,
+     "auc_within": 0.4312749600861756,
+     "auc_leave_out": 0.8013777349327712
+    },
+    "mono": {
+     "items": 62,
+     "noise_bin_share": 0.11444750428199768,
+     "auc_within": 0.5,
+     "auc_leave_out": 0.7917948033059166
+    },
+    "physical": {
+     "items": 459,
+     "noise_bin_share": 0.7436908483505249,
+     "auc_within": 0.842614216595802,
+     "auc_leave_out": 0.4982768492545006
+    },
+    "stereo": {
+     "items": 17,
+     "noise_bin_share": 0.03206581994891167,
+     "auc_within": 0.40551550238677603,
+     "auc_leave_out": 0.7759779019950124
+    }
+   },
+   "by_near": {
+    "neg": {
+     "items": 54,
+     "noise_bin_share": 0.10194102674722672,
+     "auc_within": 0.9012489492405775,
+     "auc_leave_out": 0.7554568308700573
+    },
+    "none": {
+     "items": 65,
+     "noise_bin_share": 0.09510073065757751,
+     "auc_within": 0.795512043631364,
+     "auc_leave_out": 0.7670299195601977
+    },
+    "pos": {
+     "items": 467,
+     "noise_bin_share": 0.7714912295341492,
+     "auc_within": 0.7559702182318526,
+     "auc_leave_out": 0.8246484995900029
+    },
+    "unspatialised": {
+     "items": 14,
+     "noise_bin_share": 0.03146698698401451,
+     "auc_within": 0.4124886137886012,
+     "auc_leave_out": 0.7723157521771257
+    }
+   },
+   "by_wind": {
+    "no": {
+     "items": 453,
+     "noise_bin_share": 0.762652575969696,
+     "auc_within": 0.7628459169612813,
+     "auc_leave_out": 0.7896645277773006
+    },
+    "yes": {
+     "items": 147,
+     "noise_bin_share": 0.23734742403030396,
+     "auc_within": 0.7896645277773006,
+     "auc_leave_out": 0.7628459169612813
+    }
+   },
+   "by_m2_bucket": {
+    "-6..+3": {
+     "items": 141,
+     "noise_bin_share": 0.2563091516494751,
+     "auc_within": 0.4982768492545006,
+     "auc_leave_out": 0.842614216595802
+    },
+    "physical": {
+     "items": 459,
+     "noise_bin_share": 0.7436908483505249,
+     "auc_within": 0.842614216595802,
+     "auc_leave_out": 0.4982768492545006
+    }
+   },
+   "by_clipped": {
+    "False": {
+     "items": 410,
+     "noise_bin_share": 0.3885617256164551,
+     "auc_within": 0.7708409387934523,
+     "auc_leave_out": 0.774470172574757
+    },
+    "True": {
+     "items": 190,
+     "noise_bin_share": 0.6114382743835449,
+     "auc_within": 0.774470172574757,
+     "auc_leave_out": 0.7708409387934523
+    }
+   }
+  },
+  "bootstrap": {
+   "b": 1000,
+   "mean": 0.7691855833942017,
+   "sd": 0.010742080327649835,
+   "ci95": [
+    0.7474569733805718,
+    0.7906531233798801
+   ],
+   "share_le_gate": 0.039
+  }
+ }
+}
