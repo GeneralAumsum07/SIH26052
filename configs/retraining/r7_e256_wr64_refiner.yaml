@@ -7,6 +7,8 @@
 name: r7_e256_wr64_refiner
 model: vaani_cascade
 base_checkpoint: runs/r7_e256_wr64/best.pt
+# the backbone r7 shipped with (== results_r2/runs/r7_e256_wr64/best.pt, the refiner checkpoint's first_stage.sha256)
+base_checkpoint_sha256: 0bea98181cf7846d64fdd14e6fc16ec9d45c0028d5feb08f76279f5947b81106
 seed: 4606
 epochs: 32
 batch_size: 32

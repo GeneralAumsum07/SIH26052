@@ -1,6 +1,7 @@
 """Tier 4.6 refiner trainer: the loop is exercised end to end on CPU with a synthetic loader and screen, so the tests
 prove the freezing, selection, resume and self-containment contracts without the 20k-item mixer."""
 import json
+from pathlib import Path
 
 import numpy as np, pytest, torch, yaml
 
@@ -11,6 +12,7 @@ from vaani.models.vaani_net import VaaniNet
 
 MC = dict(df_order=3, film=False, coh=True)
 N = 8000
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _first_stage(tmp_path):
@@ -118,3 +120,18 @@ def test_parallel_screen_scorer_matches_serial_loop(tmp_path, monkeypatch):
             y = stft.istft(model(spec6, torch.from_numpy(r["features"])[None]).float(), length=mix.shape[1])[0].numpy()
             ser.append((metrics.snr_db(clean, y), metrics.stoi(clean, y), metrics.pesq_wb(clean, y)))
     assert np.allclose(par, np.asarray(ser), atol=1e-6)
+
+
+def test_base_checkpoint_falls_back_to_the_tracked_copy(tmp_path, monkeypatch):
+    import yaml
+    from vaani.train_refiner import resolve_base_checkpoint
+    from vaani.training_controls import verify_checkpoint_hash
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "results_r2/runs/b").mkdir(parents=True); (tmp_path / "results_r2/runs/b/best.pt").write_bytes(b"x")
+    assert Path(resolve_base_checkpoint("runs/b/best.pt")) == Path("results_r2/runs/b/best.pt")
+    (tmp_path / "runs/b").mkdir(parents=True); (tmp_path / "runs/b/best.pt").write_bytes(b"y")
+    assert resolve_base_checkpoint("runs/b/best.pt") == str(Path("runs/b/best.pt"))   # the local run wins
+    # r7's refiner recipe now pins its backbone, so a clone's fallback is checked, not trusted
+    monkeypatch.chdir(ROOT)
+    cfg = yaml.safe_load(open("configs/retraining/r7_e256_wr64_refiner.yaml"))
+    verify_checkpoint_hash("results_r2/runs/r7_e256_wr64/best.pt", cfg["base_checkpoint_sha256"])

@@ -134,8 +134,19 @@ def should_stop_early(history):
     return not any(dst >= -STOI_TOL - 1e-9 and (ds >= EARLY_SNR or dp >= EARLY_PESQ) for _, ds, dst, dp in history)
 
 
+def resolve_base_checkpoint(path):
+    """runs/<x> as written, else the tracked copy results_r2/runs/<x> (a clone has only that); the recipe's sha256 pin
+    still decides whether it is the right file."""
+    p = Path(path)
+    if not p.exists() and (Path("results_r2") / p).exists():
+        print(f"base_checkpoint {p} absent; using the tracked copy results_r2/{p.as_posix()}", flush=True)
+        return str(Path("results_r2") / p)
+    return str(p)
+
+
 def main(config_path, max_steps=None):
     cfg = yaml.safe_load(open(config_path)); torch.manual_seed(cfg["seed"]); np.random.seed(cfg["seed"])
+    cfg["base_checkpoint"] = resolve_base_checkpoint(cfg["base_checkpoint"])
     verify_checkpoint_hash(cfg["base_checkpoint"], cfg.get("base_checkpoint_sha256"))
     device = torch.device(cfg.get("device", "cuda" if torch.cuda.is_available() else "cpu"))
     run_dir = Path(cfg.get("runs_dir", "runs")) / cfg["name"]; run_dir.mkdir(parents=True, exist_ok=True)
