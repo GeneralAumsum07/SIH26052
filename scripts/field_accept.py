@@ -30,18 +30,23 @@ validity 0 where the model takes a validity input; r7 has none), and M / mono_du
 stress row. The criteria are unchanged; only the report order and labels follow this.
 
 Part 2, reference-free, on the original web WAV run four ways (as_is L/R, ref_zero, mono_dup L/L, swapped R/L); all
-comparisons against ref_zero. Whisper confident-word survival (faster-whisper small, words p > 0.5 in the run's
-primary input, survived = same word in the output within 0.5 s) and Silero VAD speech seconds (threshold 0.3,
-peak-normalised) need faster-whisper; when it is not importable those criteria are TBD. Longest stretch attenuated
-> 30 dB: longest run over the active input frames (20 ms, energy within 30 dB of the p99 frame; inactive frames
-skipped) where output < input - 30 dB, as_is run, <= 1.0 s. Validity-flag latency: first hop at which the engine's
-reference-informativeness flag (`eng.last[<--validity-key>]`, falsy = uninformative) fires on as_is and mono_dup,
-<= 0.5 s; TBD when the system exposes no such flag. `proxy_survival` = 1 - atten20_frac is reported, not gated.
+comparisons against ref_zero. Whisper confident-word survival (vaani.asr.WordTranscriber: faster-whisper
+`--whisper-model`, default small, `--asr-device` auto; words p > 0.5 in the run's primary input, survived = same word
+in the output within 0.5 s); mono survival = the same on mono_dup. Silero VAD speech seconds (vaani.asr.
+vad_speech_seconds: the VAD bundled in the faster-whisper wheel, run on onnxruntime, no download; threshold 0.3,
+peak-normalised, no edge padding). Both need faster-whisper (the `asr` extra); `--asr off` or not importable -> TBD.
+Longest stretch attenuated > 30 dB: longest run over the active input frames (20 ms, energy within 30 dB of the p99
+frame; inactive frames skipped) where output < input - 30 dB, as_is run, <= 1.0 s. Validity-flag latency: first hop at
+which the engine's reference-informativeness estimate (`eng.last[<--validity-key>]`, default `ref_informative`, which
+the runtime guards expose under `--guards`; falsy = uninformative) fires on as_is and mono_dup, <= 0.5 s; TBD when
+the system exposes no estimate (r7; offline specs; guards off). The capture-path `validity` key is not an estimate
+and is not autodetected. `proxy_survival` = 1 - atten20_frac is reported, not gated.
 
 Per-task rows are appended to <out>/work/<name>_part1.jsonl, so a killed run resumes.
 """
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -57,7 +62,8 @@ from vaani import physical  # noqa: E402
 SR, HOP, F = 16000, 256, 320
 NS = 6 * SR
 BASE_LVL = -26.0
-WEB_WAV = Path("C:/Users/Rachit/Downloads/abcd.wav")
+# env, not only a flag: spawned workers re-import this module and must see the same file
+WEB_WAV = Path(os.environ.get("VAANI_WEB_WAV", "C:/Users/Rachit/Downloads/abcd.wav"))
 OUT = REPO / "results_r2/field"
 CONS = ["M", "W", "H4", "H8", "Z", "G"]
 # report order and row labels: the single-channel headline first, the duplicated-primary stress row last
@@ -67,7 +73,8 @@ ROW = {"Z": "single-channel headline", "M": "stress (duplicated primary)", "W": 
 SHOW2 = ["ref_zero", "as_is", "swapped", "mono_dup"]
 ROW2 = {"ref_zero": "single-channel headline (comparison base)", "as_is": "as recorded", "swapped": "as recorded",
         "mono_dup": "stress (duplicated primary)"}
-VALIDITY_KEYS = ("ref_informative", "ref_validity", "validity")   # eng.last keys a guard may expose; not ref_valid
+# eng.last keys of a reference-informativeness estimate; not ref_valid or validity (capture-path availability)
+VALIDITY_KEYS = ("ref_informative", "ref_validity")
 LOSS_MEAN, LOSS_P95, LOST_RUN_S, STOI_TOL, DSNR_MIN, GTCRN_TOL = 0.06, 0.15, 0.3, 0.02, 3.0, 1.0
 PS_SNR, PS_STOI, PS_PESQ = 15.0, 0.85, 2.5
 SURV_RATIO, ATTEN30_RUN_S, VALID_LAT_S = 0.8, 1.0, 0.5
@@ -192,31 +199,20 @@ def validity_latency(trace, key):
     return None
 
 
-# ---------- optional ASR / VAD hooks (faster-whisper; TBD when not importable) ----------
+# ---------- ASR / VAD hooks (vaani.asr; faster-whisper, the `asr` extra; TBD when not importable) ----------
 
 def have_whisper():
-    try:
-        import faster_whisper  # noqa: F401
-        return True
-    except Exception:
-        return False
+    from vaani import asr
+    return asr.available()
 
 
-_WH = None
-
-
-def whisper_words(y):
-    """[(word, start, end, p)] from faster-whisper small, or None when it is not importable."""
-    global _WH
-    if not have_whisper():
-        return None
-    if _WH is None:
-        from vaani.asr import load_whisper
-        _WH = load_whisper("cpu", "small", 1)
-    segs, _ = _WH.transcribe(np.asarray(y, np.float32), language=None, beam_size=1, temperature=0.0, vad_filter=False,
-                             condition_on_previous_text=False, word_timestamps=True)
-    norm = lambda w: re.sub(r"[^\w']+", "", w.lower())
-    return [(norm(w.word), w.start, w.end, float(w.probability)) for s in segs for w in (s.words or [])]
+def asr_hooks(mode="auto", model=None, device="auto", threads=1):
+    """(transcriber, vad) for Part 2: vaani.asr.WordTranscriber and the Silero VAD bundled with faster-whisper, both
+    lazy; (None, None) when mode is 'off' or faster-whisper is not importable (those criteria are then TBD)."""
+    from vaani import asr
+    if mode == "off" or not asr.available():
+        return None, None
+    return asr.WordTranscriber(model or asr.WORD_MODEL, device, threads), asr.vad_speech_seconds
 
 
 def word_survival(ref_words, out_words, conf=0.5, tol=0.5):
@@ -229,20 +225,11 @@ def word_survival(ref_words, out_words, conf=0.5, tol=0.5):
     return sum(any(o[0] == w[0] and abs(o[1] - w[1]) <= tol for o in out_words) for w in ref) / len(ref)
 
 
-def vad_seconds(y, thr=0.3):
-    """Silero VAD (bundled with faster-whisper) speech seconds, peak-normalised; None when not importable."""
-    if not have_whisper():
-        return None
-    from faster_whisper.vad import VadOptions, get_speech_timestamps
-    y = np.asarray(y, np.float32) / (np.abs(y).max() + 1e-9) * 0.5
-    ts = get_speech_timestamps(y, VadOptions(threshold=thr, min_silence_duration_ms=200, min_speech_duration_ms=150))
-    return float(sum(t["end"] - t["start"] for t in ts) / SR)
-
-
 # ---------- systems ----------
 
-def make_system(spec):
-    """-> fn(p, r, trace=False) -> (y (T,), diag dict). Stream systems run hop by hop through vaani.live."""
+def make_system(spec, guards=False):
+    """-> fn(p, r, trace=False, ref_valid=True) -> (y (T,), diag dict). Stream systems run hop by hop through
+    vaani.live; guards=True turns on the plan 11.3 runtime guards (stream systems only; off = the r7 default path)."""
     if spec == "r7" or spec.startswith("stream:"):
         onnx, config = physical.ONNX, physical.CONFIG
         if spec.startswith("stream:"):
@@ -250,7 +237,8 @@ def make_system(spec):
             config = cfg or physical.CONFIG
 
         def run(p, r, trace=False, ref_valid=True):
-            return physical.run_engine(np.stack([p, r]), onnx, config, 1, trace=trace, ref_valid=ref_valid)
+            return physical.run_engine(np.stack([p, r]), onnx, config, 1, trace=trace, ref_valid=ref_valid,
+                                       guards=True if guards else None)
         run.stream = True
         run.validity0 = lambda: physical.engine_takes_valid(onnx, config)
         return run
@@ -267,10 +255,10 @@ def make_system(spec):
 _SYS = {}
 
 
-def system(spec):
-    if spec not in _SYS:
-        _SYS[spec] = make_system(spec)
-    return _SYS[spec]
+def system(spec, guards=False):
+    if (spec, guards) not in _SYS:
+        _SYS[(spec, guards)] = make_system(spec, guards)
+    return _SYS[(spec, guards)]
 
 
 def _init_worker():
@@ -339,29 +327,42 @@ def run_part1(a, work):
     return [r for t in tasks for r in done.get(_task_key(t), [])], mad
 
 
-def run_part2(a, wav=WEB_WAV):
+def run_part2(a, wav=None, transcriber="auto", vad="auto"):
+    """The four reference-free runs of `wav`. transcriber(y) -> [(word, start, end, p)] and vad(y) -> seconds are
+    injectable; "auto" = asr_hooks(--asr, --whisper-model, --asr-device), None = that criterion TBD."""
+    if transcriber == "auto" or vad == "auto":
+        t, v = asr_hooks(getattr(a, "asr", "auto"), getattr(a, "whisper_model", None), getattr(a, "asr_device", "auto"))
+        transcriber = t if transcriber == "auto" else transcriber
+        vad = v if vad == "auto" else vad
+    words = (lambda y: None) if transcriber is None else transcriber
+    vsec = (lambda y: None) if vad is None else vad
+    wav = WEB_WAV if wav is None else wav
     x = load16(wav)
     L, R = x[0], x[1] if x.shape[0] > 1 else x[0]
     runs = {"as_is": (L, R), "ref_zero": (L, np.zeros_like(L)), "mono_dup": (L, L.copy()), "swapped": (R, L)}
-    fn = system(a.system)
+    guards = bool(getattr(a, "guards", False))
+    fn = system(a.system, guards)
     key = a.validity_key
-    res = {"wav": str(wav), "seconds": len(L) / SR, "whisper_available": have_whisper(),
+    res = {"wav": str(wav), "seconds": len(L) / SR, "whisper_available": transcriber is not None,
+           "vad_available": vad is not None, "asr_model": getattr(transcriber, "model_name", None),
+           "asr_device": getattr(transcriber, "device", None), "guards": guards,
            "ref_zero_validity0": fn.validity0(), "runs": {}}
-    in_words = {}
+    in_words, in_vad = {}, {}
     for name, (p, r) in runs.items():
         y, diag = fn(p, r, trace=fn.stream, ref_valid=name != "ref_zero")
         tr = diag.get("trace") or []
         k = key or next((c for c in VALIDITY_KEYS if tr and any(c in d for d in tr)), None)
         prox = physical.attenuation_proxy(p, y)
         pid = "R" if name == "swapped" else "L"
-        if pid not in in_words:
-            in_words[pid] = whisper_words(p)
+        if pid not in in_words:                         # each primary is transcribed once
+            in_words[pid], in_vad[pid] = words(p), vsec(p)
         res["runs"][name] = {"longest_atten30_s": longest_atten_run(p, y), "atten20_frac": prox["atten20_frac"],
-                             "proxy_survival": 1 - prox["atten20_frac"], "vad_speech_s": vad_seconds(y),
-                             "vad_speech_in_s": vad_seconds(p),
-                             "word_survival": word_survival(in_words[pid], whisper_words(y)),
+                             "proxy_survival": 1 - prox["atten20_frac"], "vad_speech_s": vsec(y),
+                             "vad_speech_in_s": in_vad[pid],
+                             "word_survival": word_survival(in_words[pid], words(y)),
                              "validity_key": k, "validity_latency_s": validity_latency(tr, k) if fn.stream else "absent"}
         print(f"part 2 {name}: {res['runs'][name]}", flush=True)
+    res["asr_device"] = getattr(transcriber, "device", None)   # resolved once the model has loaded
     return res
 
 
@@ -474,7 +475,10 @@ def write_md(res, path):
     if res.get("part2"):
         p2 = res["part2"]
         L += ["", f"## Part 2: reference-free, `{p2['wav']}` ({p2['seconds']:.1f} s)", "",
-              f"faster-whisper importable: {p2['whisper_available']} (Whisper/VAD criteria are TBD when it is not).", "",
+              f"Word transcriber: {p2['whisper_available']}"
+              + (f" (faster-whisper `{p2.get('asr_model')}` on {p2.get('asr_device')})" if p2["whisper_available"] else "")
+              + f"; Silero VAD: {p2.get('vad_available', p2['whisper_available'])}; runtime guards: "
+              f"{p2.get('guards', False)}. Whisper/VAD criteria are TBD without faster-whisper (the `asr` extra).", "",
               f"ref_zero at validity 0: {p2.get('ref_zero_validity0', False)} (False = reference zeroed only; the "
               "system takes no validity input or the run predates the flag).", "",
               "| row | run | longest >30 dB s | atten>20dB frac | proxy survival | VAD speech s (in) | word survival | "
@@ -490,6 +494,7 @@ def write_md(res, path):
 
 
 def main(argv=None):
+    global WEB_WAV
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--system", default="r7")
     ap.add_argument("--name", help="output stem (default: sanitised --system)")
@@ -501,10 +506,19 @@ def main(argv=None):
     ap.add_argument("--workers", type=int, default=2)
     ap.add_argument("--parts", nargs="+", type=int, default=[1, 2], choices=[1, 2])
     ap.add_argument("--validity-key", help="eng.last key of the reference-informativeness flag (default: autodetect)")
+    ap.add_argument("--web-wav", default=str(WEB_WAV), help="the stereo web WAV (Part 1 bed and Part 2 input)")
+    ap.add_argument("--guards", action="store_true",
+                    help="Part 2 stream runs: plan 11.3 runtime guards on (their ref_informative flag is the validity "
+                         "estimator Part 2 times); Part 1 always runs guards off, the r7 default path")
+    ap.add_argument("--asr", default="auto", choices=["auto", "off"],
+                    help="Part 2 Whisper/VAD hooks: auto = on when faster-whisper imports (the asr extra), off = TBD")
+    ap.add_argument("--whisper-model", default=None, help="faster-whisper model for word survival (default small)")
+    ap.add_argument("--asr-device", default="auto", help="auto (cuda when ctranslate2 sees one), cpu or cuda")
     ap.add_argument("--out", default=str(OUT))
     ap.add_argument("--allow-pure-python", action="store_true", help="run without numba (slow; smoke tests only)")
     ap.add_argument("--summarise-only", action="store_true", help="rebuild json/md from the cached part-1 rows")
     a = ap.parse_args(argv)
+    WEB_WAV = Path(a.web_wav); os.environ["VAANI_WEB_WAV"] = a.web_wav
     a.name = a.name or re.sub(r"[^\w.-]+", "_", a.system)
     if a.system == "r7" or a.system.startswith("stream:"):
         from vaani.dsp import nlms
@@ -520,7 +534,7 @@ def main(argv=None):
         res["summarised_by"] = res["command"]
         res.update({k: prev[k] for k in ("command", "mad_beds", "ref_zero_validity0") if k in prev})
     if "ref_zero_validity0" not in res:
-        res["ref_zero_validity0"] = system(a.system).validity0()
+        res["ref_zero_validity0"] = system(a.system, a.guards).validity0()
     if 1 in a.parts:
         if a.summarise_only:
             a.workers = 0

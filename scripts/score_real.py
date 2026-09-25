@@ -26,6 +26,7 @@ ignore the reference, so their condition is `mono`. The stream system (`--name`,
 import argparse
 import csv
 import json
+import os
 import sys
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -38,7 +39,8 @@ sys.path.insert(0, str(REPO))
 from vaani import physical  # noqa: E402
 
 MAD_ROOT = REPO / "data/download/mad/MAD_dataset"
-WEB_WAV = Path("C:/Users/Rachit/Downloads/abcd.wav")
+# env, not only a flag: spawned workers re-import this module and must see the same file
+WEB_WAV = Path(os.environ.get("VAANI_WEB_WAV", "C:/Users/Rachit/Downloads/abcd.wav"))
 OUT = REPO / "results_r2/real"
 SR = 16000
 METRICS = ["dnsmos_sig", "dnsmos_bak", "dnsmos_ovrl", "atten20_frac", "mean_atten_db"]
@@ -281,13 +283,14 @@ def write_table(summ):
 
 
 def main(argv=None):
-    global OUT
+    global OUT, WEB_WAV
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--max-clips", type=int, default=200)
     ap.add_argument("--crop-s", type=float, default=10.0)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--workers", type=int, default=2)
     ap.add_argument("--no-web", action="store_true", help="skip the abcd.wav rows")
+    ap.add_argument("--web-wav", default=str(WEB_WAV), help="the stereo web WAV (env VAANI_WEB_WAV)")
     ap.add_argument("--allow-pure-python", action="store_true", help="run without numba (slow; smoke tests only)")
     ap.add_argument("--summarise-only", action="store_true")
     ap.add_argument("--out", default=str(OUT), help="output folder (default results_r2/real)")
@@ -296,6 +299,7 @@ def main(argv=None):
     ap.add_argument("--config", default=ENGINE[2], help="its model_config.json (default deploy/r7/model_config.json)")
     a = ap.parse_args(argv)
     OUT = Path(a.out)
+    WEB_WAV = Path(a.web_wav); os.environ["VAANI_WEB_WAV"] = a.web_wav     # spawned workers read the env
     if not a.summarise_only:
         score(a)
     summarise()

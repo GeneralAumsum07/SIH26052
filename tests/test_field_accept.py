@@ -107,7 +107,7 @@ def test_end_to_end_synthetic_passthrough(tmp_path, monkeypatch):
     monkeypatch.setattr(fa, "WEB_WAV", wav)
     real_run_part2 = fa.run_part2
     monkeypatch.setattr(fa, "run_part2", lambda a, w=wav: real_run_part2(a, w))
-    res = fa.main(["--system", "raw", "--name", "smoke", "--n-utt", "1", "--snrs", "5", "--beds", "web",
+    res = fa.main(["--system", "raw", "--name", "smoke", "--n-utt", "1", "--snrs", "5", "--beds", "web", "--asr", "off",
                    "--workers", "1", "--out", str(tmp_path / "field")])
     assert res["part1_verdict"] == "FAIL"
     m = res["part1"]["web/M"]

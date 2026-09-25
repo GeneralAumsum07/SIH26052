@@ -53,3 +53,30 @@ Validity-flag latency: TBD (r7 exposes no reference-informativeness flag).
   as the r7 G4 baseline. TBD: rerun Part 2 with faster-whisper installed to fill the ASR/VAD rows.
 
 To score an r8 candidate: `--system stream:<cascade.onnx>@<model_config.json> --name <run>` (or any `vaani.eval.enhance_fn` spec).
+
+## Part 2 hooks (G4 Part 2, plan 11.2)
+
+`vaani.asr.WordTranscriber` (faster-whisper word timestamps; `--whisper-model`, default `small`, the multilingual size
+eval already uses; `--asr-device auto` = cuda when ctranslate2 sees one) and `vaani.asr.vad_speech_seconds` (the Silero
+VAD shipped inside the faster-whisper wheel, run on onnxruntime: no extra download). Both load lazily; `--asr off` or
+no faster-whisper makes their criteria TBD. Tested with fakes only (`tests/test_asr_hooks.py`); no Whisper weights are
+ever loaded on the laptop.
+
+Which Part 2 criteria each setup can compute:
+
+| criterion | laptop `.venv` (no asr extra) | box, `asr` extra, `--guards` |
+|---|---|---|
+| longest stretch attenuated > 30 dB <= 1.0 s | yes | yes |
+| Whisper confident-word survival >= 0.8 x ref_zero | TBD | yes |
+| VAD speech seconds >= 0.8 x ref_zero | TBD | yes |
+| mono (mono_dup) word survival >= 0.8 x ref_zero | TBD | yes |
+| validity-flag latency <= 0.5 s | only with `--guards` (the guards' `ref_informative`) | yes |
+
+Box command (repo root; the Whisper `small` weights download there on first use; the web WAV must be on the box,
+path via `--web-wav` or env `VAANI_WEB_WAV`):
+
+    uv sync --extra asr --extra fast
+    uv run python scripts/field_accept.py --system stream:<cascade.onnx>@<model_config.json> --name <run> \
+        --guards --asr auto --whisper-model small --asr-device auto --web-wav <path/to/abcd.wav> --workers 3
+
+`--guards` applies to Part 2 only (Part 1 runs the default path). Without it a stream system exposes no reference-informativeness estimate and the latency row is TBD, as for r7.
