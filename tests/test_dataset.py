@@ -234,7 +234,9 @@ def test_cached_scene_pool_draws_identical():
     cls = ["shooting", "shelling", "vehicle", "helicopter", "footsteps"]
     df = pd.DataFrame([dict(corpus="mad", source_id=f"mad:{cls[i % 5]}/v{i // 3}_{i}", group_id=f"v{i // 3}",
                             noise_class="impulsive" if i % 4 == 0 else "changing") for i in range(60)])
-    a, b = ScenePool(df), dataset.CachedScenePool(df)
+    class Uncached(ScenePool):   # the reference: the group filter recomputed on every draw
+        _groups = ScenePool._groups_uncached
+    a, b = Uncached(df), dataset.CachedScenePool(df)
     for k in range(40):
         ra, rb = np.random.default_rng(k), np.random.default_rng(k)
         sa, sb = sample_scene(ra, crop_s=4.0), sample_scene(rb, crop_s=4.0)

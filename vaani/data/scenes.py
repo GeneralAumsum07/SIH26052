@@ -177,6 +177,14 @@ class ScenePool:
         return {t: int(sum(len(g) for g in gs)) for t, gs in sorted(self.index.items())}
 
     def _groups(self, t, impulsive: bool | None):
+        # memoised: a pure function of (tag, impulsive), and the pandas filter costs ~0.6 s per v2 draw uncached
+        c = self.__dict__.setdefault("_gcache", {})
+        k = (t, impulsive)
+        if k not in c:
+            c[k] = self._groups_uncached(t, impulsive)
+        return c[k]
+
+    def _groups_uncached(self, t, impulsive: bool | None):
         groups = self.index.get(t) or []
         if impulsive is not None and groups:   # keep continuous sources continuous and events impulsive
             groups = [g[(self.df.noise_class.values[g] == "impulsive") == impulsive] for g in groups]

@@ -164,16 +164,8 @@ def front_end(mixed, dsp_cfg=None, avail=None):
 
 
 class CachedScenePool(ScenePool):
-    """ScenePool with _groups memoised: it is a pure function of (tag, impulsive), but recomputing it filters
-    every group through pandas per draw (~0.6 s of a ~0.7 s v2 item). Same arrays in the same order, so the rng
-    draws and the mixtures are unchanged."""
-
-    def _groups(self, t, impulsive):
-        c = self.__dict__.setdefault("_gcache", {})
-        k = (t, impulsive)
-        if k not in c:
-            c[k] = super()._groups(t, impulsive)
-        return c[k]
+    """Kept as a name for callers and tests: ScenePool now memoises _groups itself (same arrays, same order, so the
+    rng draws and the mixtures are unchanged)."""
 
 
 def load_exclude_groups(path):
