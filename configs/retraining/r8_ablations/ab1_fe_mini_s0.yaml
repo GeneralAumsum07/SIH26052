@@ -1,0 +1,71 @@
+# r8 ablation pilot (1 family gate: VaaniFE-Mini, seed 0). 48 epochs = 15 % of the full schedule, mixer v2 like the
+# full runs; everything else as r8_fe_mini.yaml. See r8_ablations/README.md.
+amp: true
+batch_size: 32
+controller_on: true
+data:
+  bank: data/rirs/bank_r3.npz
+  crop_s: 4.0
+  epoch_len: 20000
+  exclude_groups_file: configs/data/r8_heldout_exclude.json
+  manifests:
+  - data/manifests/librispeech_100h.parquet
+  - data/manifests/ears.parquet
+  - data/manifests/cv_hi.parquet
+  - data/manifests/esc50.parquet
+  - data/manifests/dns_datasets_fullband.noise_fullband.freesound_000.tar.parquet
+  - data/manifests/mad_v2.parquet
+  - data/manifests/gunshots.parquet
+  mix:
+    impulse_kinds:
+    - blast
+    - blast
+    - burst
+    - click_train
+    v2:
+      tail_share: 0.25
+    version: 2
+  ref_corrupt:
+    p: 0.15
+    p_absent: 0.15
+device: cuda
+dsp:
+  limiter: true
+  ref_policy:
+    absent: freeze
+    ramp_frames: 12
+early_stopping:
+  min_delta: 0.0
+  patience: null
+ema:
+  decay: 0.999
+  warmup: true
+epochs: 48
+loss: fe
+loss_cfg:
+  kappa: 3.0
+  w_mrstft: 0.0
+  w_phase: 0.0
+model: vaani_fe
+model_cfg:
+  df_taps: 0
+  inputs: pr
+  mask: unbounded
+  norm: bn
+  tier: mini
+name: r8ab1_fe_mini_s0
+num_workers: auto
+optim:
+  clip: 5.0
+  lr: 0.0005
+  warmup: 2000
+resume: true
+seed: 0
+val:
+  composite:
+    every: 4
+    per_bucket: 2
+  dynamic_items: 200
+  eval_root: data/eval_r2
+  select: composite
+  split: val

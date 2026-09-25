@@ -1,0 +1,84 @@
+# r8 ablation pilot (1 family gate: refvalid C16, seed 1). 48 epochs = 15 % of the full schedule, mixer v2 like the
+# full runs; everything else as r8_refvalid_v2.yaml. See r8_ablations/README.md.
+amp: true
+batch_size: 32
+controller_on: true
+data:
+  bank: data/rirs/bank_r3.npz
+  crop_s: 4.0
+  epoch_len: 20000
+  exclude_groups_file: configs/data/r8_heldout_exclude.json
+  manifests:
+  - data/manifests/librispeech_100h.parquet
+  - data/manifests/ears.parquet
+  - data/manifests/cv_hi.parquet
+  - data/manifests/esc50.parquet
+  - data/manifests/dns_datasets_fullband.noise_fullband.freesound_000.tar.parquet
+  - data/manifests/mad_v2.parquet
+  - data/manifests/gunshots.parquet
+  mix:
+    impulse_kinds:
+    - blast
+    - blast
+    - burst
+    - click_train
+    v2:
+      tail_share: 0.25
+    version: 2
+  ref_corrupt:
+    p: 0.15
+    p_absent: 0.15
+device: cuda
+dsp:
+  blocking: true
+  controller:
+    block_margin_db: 10.0
+    diff_jump_max_db: 3.0
+  limiter: true
+  ref_policy:
+    absent: freeze
+    nlms: true
+    ramp_frames: 12
+early_stopping:
+  min_delta: 0.0
+  patience: null
+ema:
+  decay: 0.999
+  warmup: true
+epochs: 48
+init_from: results_r2/runs/r7_e256_wr64/best.pt
+init_sha256: 0bea98181cf7846d64fdd14e6fc16ec9d45c0028d5feb08f76279f5947b81106
+loss: hybrid
+loss_cfg:
+  p: 0.5
+  snr_max_db: 30
+  w_complex: 50
+  w_mag: 50
+  w_snr: 0.2
+model: vaani
+model_cfg:
+  channels: 16
+  coh: true
+  df_order: 3
+  film: false
+  noise_floor: false
+  ref_validity: true
+name: r8ab1_refvalid_s1
+num_workers: auto
+optim:
+  clip: 5.0
+  clip_df: 1.0
+  lr: 0.00025
+  lr_df: 0.0025
+  lr_new: 0.0005
+  warmup: 200
+resume: true
+seed: 1
+val:
+  composite:
+    every: 4
+    per_bucket: 2
+  dynamic_items: 200
+  eval_root: data/eval_r2
+  select: composite
+  split: val

@@ -417,7 +417,7 @@ def main(config_path):
             opt.step(); sched.step(); step += 1
             if ema is not None:
                 ema.update(model, step)
-            if step % 20 == 0:
+            if step % cfg.get("log_every", 20) == 0:
                 tb.add_scalar("train/loss", loss.item(), step); tb.add_scalar("train/lr", sched.get_last_lr()[0], step)
                 if fe_loss:
                     for k, t in loss_fn.last_terms.items():

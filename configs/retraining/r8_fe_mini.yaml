@@ -1,0 +1,81 @@
+# r8 VaaniFE-Mini from scratch (plan 11.3/11.6): the primary r8 candidate. Not launched here; the rental runs it.
+# Exposure matches r7's lineage: r6_e256 (256 epochs) + r7_e256_wr64 (64) = 320 epochs x 20,000 items x 4 s
+# = 25.6 M s = 7,111 h of mixtures; the train speech pool (librispeech_100h + ears + cv_hi train split) is 102.0 h,
+# so each speech second is seen 7,111 / 102.0 = ~70x. Here: 320 epochs x 20,000 = 6.4 M items / B 32 = 200,000
+# optimiser steps (625 per epoch), the same exposure. At r7's 192 items/s rental loader rate that is ~9.3 h of
+# loader time (inferred; this box's rate: results_r2/r8/loader_bench.json).
+# Data: mixer v2 (M1-M4, M7, M8 scenes, M10, M11; tail_share 0.25), M9 reference faults (15 %) + reference absent
+# (15 %, validity 0), held-out test groups dropped (configs/data/r8_heldout_exclude.json; a missing file warns).
+# Selection: val.select composite (per-clip all-three pass rate on a VAL subset with G3's ILD-sweep speech-loss and
+# mono/web-stereo dSNR filters), scored for the raw and the EMA weights every 4 val points and at the end.
+# TBD (Rachit, plan 11.9 Q7): the final selection metric. Set val.select: stoi for r7-style STOI selection.
+# lr 5e-4 / warmup 2,000 / EMA 0.999 are inferred starting points (FastEnhancer-style from-scratch training).
+amp: true
+batch_size: 32
+controller_on: true
+data:
+  bank: data/rirs/bank_r3.npz
+  crop_s: 4.0
+  epoch_len: 20000
+  exclude_groups_file: configs/data/r8_heldout_exclude.json
+  manifests:
+  - data/manifests/librispeech_100h.parquet
+  - data/manifests/ears.parquet
+  - data/manifests/cv_hi.parquet
+  - data/manifests/esc50.parquet
+  - data/manifests/dns_datasets_fullband.noise_fullband.freesound_000.tar.parquet
+  - data/manifests/mad_v2.parquet
+  - data/manifests/gunshots.parquet
+  mix:
+    impulse_kinds:
+    - blast
+    - blast
+    - burst
+    - click_train
+    v2:
+      tail_share: 0.25
+    version: 2
+  ref_corrupt:
+    p: 0.15
+    p_absent: 0.15
+device: cuda
+dsp:
+  limiter: true
+  ref_policy:
+    absent: freeze
+    ramp_frames: 12
+early_stopping:
+  min_delta: 0.0
+  patience: null
+ema:
+  decay: 0.999
+  warmup: true
+epochs: 320
+loss: fe
+loss_cfg:
+  kappa: 3.0
+  w_mrstft: 0.0
+  w_phase: 0.0
+model: vaani_fe
+model_cfg:
+  df_taps: 0
+  inputs: pr
+  mask: unbounded
+  norm: bn
+  tier: mini
+name: r8_fe_mini
+num_workers: auto
+optim:
+  clip: 5.0
+  lr: 0.0005
+  warmup: 2000
+resume: true
+seed: 0
+val:
+  composite:
+    every: 4
+    per_bucket: 2
+  dynamic_items: 200
+  eval_root: data/eval_r2
+  select: composite
+  split: val
