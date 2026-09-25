@@ -171,6 +171,10 @@ def load_exclude_groups(path):
         msg = f"data.exclude_groups_file {path!r} is ABSENT: no held-out groups are excluded from training"
         warnings.warn(msg); print("WARNING: " + msg, flush=True)
         return set()
+    j = json.load(open(path, encoding="utf-8"))
+    if isinstance(j, dict) and str(j.get("schema", "")).startswith("vaani.heldout_exclude/"):
+        # the testset stage's file (configs/data/r8_heldout_exclude.json): its rule is "drop every listed source_id"
+        return {s for src in j["sources"].values() for s in src.get("source_ids", [])}
     out = set()
 
     def walk(v):
@@ -182,7 +186,7 @@ def load_exclude_groups(path):
         elif isinstance(v, (list, tuple)):
             for x in v:
                 walk(x)
-    walk(json.load(open(path, encoding="utf-8")))
+    walk(j)
     return out
 
 

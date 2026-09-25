@@ -213,3 +213,17 @@ def test_exclude_groups_file(tmp_path, capsys):
         ds2 = dataset.DynamicMixDataset([m], "train", None, mixer.MixConfig(p_room=0.0), crop_s=1.0, epoch_len=2,
                                         exclude_groups_file=str(tmp_path / "missing.json"))
     assert len(ds2.speech) == 4 and "WARNING" in capsys.readouterr().out
+
+
+def test_exclude_groups_schema_file(tmp_path):
+    m = _tiny_manifest(tmp_path)
+    ex = tmp_path / "ex.json"
+    json.dump({"schema": "vaani.heldout_exclude/1", "apply": "g1 is only in this text",
+               "sources": {"x": {"group_ids": ["g2"], "source_ids": ["s0", "n1"]}}}, open(ex, "w"))
+    ds = dataset.DynamicMixDataset([m], "train", None, mixer.MixConfig(p_room=0.0), crop_s=1.0, epoch_len=2,
+                                   exclude_groups_file=str(ex))
+    assert set(ds.speech.source_id) == {"s1", "s2", "s3"} and "n1" not in set(ds.noise.source_id)
+    real = Path(__file__).resolve().parents[1] / "configs/data/r8_heldout_exclude.json"
+    if real.exists():
+        ids = dataset.load_exclude_groups(real)
+        assert len(ids) > 100 and all(":" in s for s in ids)
