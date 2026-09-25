@@ -75,3 +75,21 @@ def test_legacy_bank_bytes_unchanged_by_parts_path(tmp_path):
     rirs.build_bank(tmp_path / "b.npz", n=4, seed=0, n_noise=2, max_len=1200, workers=1, parts_dir=tmp_path / "p")
     assert (tmp_path / "a.npz").read_bytes() == (tmp_path / "b.npz").read_bytes()
     assert set(np.load(tmp_path / "a.npz").files) == {"speech", "noise", "rt60", "armoured"}
+
+
+def test_m6_bank_serves_scene_matched_rooms_legacy_bank_stays_uniform(tmp_path, monkeypatch):
+    monkeypatch.setattr(rirs, "ARMOURED_RAYS", 40)
+    kw = dict(n=5, seed=8, n_noise=1, armoured_frac=0.4, max_len=1500, workers=1)
+    rirs.build_bank(tmp_path / "m6.npz", receiver_radius=0.05, seed_namespace="train", **kw)
+    rirs.build_bank(tmp_path / "old.npz", **kw)
+    m6, old = rirs.RirBank(tmp_path / "m6.npz"), rirs.RirBank(tmp_path / "old.npz")
+    arm = np.load(tmp_path / "m6.npz")["armoured"]
+    rt_arm, rt_plain = set(np.asarray(m6.rt60)[arm].tolist()), set(np.asarray(m6.rt60)[~arm].tolist())
+    rng = np.random.default_rng(0)
+    assert all(m6.sample(rng, armoured=True)["rt60"] in rt_arm for _ in range(40))
+    assert all(m6.sample(rng, armoured=False)["rt60"] in rt_plain for _ in range(40))
+    # a legacy bank ignores the request and draws exactly what the one-argument call draws (mixer v1/G1 renders)
+    a, b = np.random.default_rng(5), np.random.default_rng(5)
+    for flag in (True, False, None):
+        assert old.sample(a, armoured=flag)["rt60"] == old.sample(b)["rt60"]
+    assert a.random() == b.random()

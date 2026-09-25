@@ -242,10 +242,22 @@ class RirBank:
                     if tmp.exists():
                         tmp.unlink()
         self.speech, self.noise, self.rt60 = (np.load(parts[k], mmap_mode="r") for k in self.KEYS)
+        # scene-matched rooms (mixer v2 asks for armoured rooms for the APC scene) only from M6 banks: a legacy bank
+        # (bank.npz, bank_r3) keeps its uniform draw, so every r7-era and G1 render on it stays bit-exact
+        self._pick = None
+        if path.exists():
+            with np.load(path) as z:
+                if "receiver_radius" in z.files and "armoured" in z.files:
+                    arm = np.asarray(z["armoured"], bool)
+                    self._pick = {True: np.flatnonzero(arm), False: np.flatnonzero(~arm)}
 
     def __len__(self):
         return len(self.rt60)
 
-    def sample(self, rng: np.random.Generator) -> dict:
-        i = int(rng.integers(len(self)))
+    def sample(self, rng: np.random.Generator, armoured: bool | None = None) -> dict:
+        idx = None if armoured is None or self._pick is None else self._pick[bool(armoured)]
+        if idx is None or not len(idx):   # no selection, or none of that kind in the bank: the legacy uniform draw
+            i = int(rng.integers(len(self)))
+        else:
+            i = int(idx[rng.integers(len(idx))])
         return {"speech": self.speech[i], "noise": self.noise[i], "rt60": float(self.rt60[i])}
