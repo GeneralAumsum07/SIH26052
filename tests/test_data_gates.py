@@ -39,7 +39,7 @@ def test_bins_ild_separates_a_boom_speech_from_a_diffuse_noise():
 def test_m2_draw_and_spl_round_trip():
     g = _gates()
     h = g.m2_histogram(n=5000)
-    assert abs(h["share_-6_to_+3"] - 0.25) < 0.03 and h["min"] >= -20.0 and h["max"] <= 3.0
+    assert abs(h["share_-6_to_+3"] - 0.40) < 0.03 and h["min"] >= -20.0 and h["max"] <= 3.0   # tail_share 0.40
     assert g.spl_round_trip()["pass"]
 
 
@@ -78,3 +78,44 @@ def test_small_sample_run_writes_both_versions(tmp_path):
             assert 0.0 <= j[p]["auc_ild"] <= 1.0 and j[p]["n_speech_bins"] > 0 and j[p]["n_noise_bins"] > 0
         assert j["spl_round_trip"]["pass"]
     assert "gate_pass" in res[2] and set(res[2]["m2_draw"]["modes"]) <= {"physical", "mono", "stereo", "low_ild"}
+
+
+def test_item_rng_seeds_are_disjoint_and_legacy_scheme_kept():
+    g = _gates()
+    # legacy seed + i: seed 101 item 101 is seed 202 item 0; the [seed, i] scheme gives a different stream
+    assert g.item_rng(101, 101, legacy=True).random() == g.item_rng(202, 0, legacy=True).random()
+    assert g.item_rng(101, 101).random() != g.item_rng(202, 0).random()
+
+
+def test_hist_auc_bootstrap_and_breakdown_known_answers():
+    g = _gates()
+    nb = len(g.ILD_EDGES) - 1; rng = np.random.default_rng(0)
+    S = np.zeros((20, nb)); N = np.zeros((20, len(g.COMPS), nb))
+    for i in range(20):
+        S[i, nb // 2 + 40] = 50                      # speech bins 4 dB above every noise bin
+        N[i, i % len(g.COMPS), nb // 2] = 50
+    recs = [dict(scene="a" if i < 10 else "b", ref_mode="physical", near="none", wind="no", m2_bucket="physical",
+                 clipped=False) for i in range(20)]
+    bd = g.breakdown(recs, S, N)
+    assert abs(bd["pooled_hist_auc"] - 1.0) < 1e-9 and bd["by_scene"]["a"]["items"] == 10
+    assert abs(sum(c["noise_bin_share"] for c in bd["by_component"].values()) - 1.0) < 1e-9
+    bs = g.bootstrap(S, N, 200, gate=0.75)
+    assert bs["ci95"][0] > 0.99 and bs["share_le_gate"] == 0.0
+    # identical speech and noise histograms: AUC 0.5 and every bootstrap draw too
+    S2 = N.sum(1); assert abs(g.hist_auc(S2.sum(0), N.sum((0, 1))) - 0.5) < 1e-9
+
+
+def test_from_items_pools_saved_runs(tmp_path):
+    from vaani.data import rirs
+    g = _gates()
+    md = _corpus(tmp_path)
+    rirs.build_bank(tmp_path / "b.npz", n=2, seed=0, n_noise=3, max_len=4000, workers=1)
+    dirs = []
+    for s in (1, 2):
+        out = tmp_path / f"g{s}"; dirs.append(str(out))
+        g.main(["--versions", "2", "--items", "2", "--seed", str(s), "--paths", "param", "--manifest-dir", str(md),
+                "--bank", str(tmp_path / "b.npz"), "--out", str(out), "--bootstrap", "20"])
+        j = json.loads((out / "v2.json").read_text())
+        assert j["seed_scheme"] == "[seed, i]" and "breakdown" in j["param"] and len(j["param"]["bootstrap"]["ci95"]) == 2
+    res = g.main(["--from-items", *dirs, "--pooled-out", str(tmp_path / "pool"), "--bootstrap", "20"])
+    assert res["v2_param"]["items"] == 4 and (tmp_path / "pool" / "item_stats.json").exists()
