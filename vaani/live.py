@@ -32,7 +32,7 @@ from pathlib import Path
 
 import numpy as np
 
-from vaani.dsp import stft
+from vaani.dsp import pipeline, stft
 from vaani.dsp.blocking import BlockingMatrix
 from vaani.dsp.controller import Controller
 from vaani.dsp.features import FEATURE_NAMES, N_FEATURES, FrameFeatures
@@ -101,8 +101,22 @@ class StreamEngine:
     reference); the model caches live in `self.state` (a `vaani.backend.StreamState`), the DSP state on this object.
     `export_state` / `import_state` carry both, so a stream can be saved and resumed exactly.
 
-    Reference dropout policy (`process(..., ref_valid=False)`; a runtime safety measure - the r7 weights were NOT
-    trained with it, so enhancement quality during and after a dropout is unmeasured):
+    Trained reference policy (dsp["ref_policy"] set: every r8 config). `ref_valid` is the capture path's availability,
+    one flag per hop or per sample, and the engine runs vaani.dsp.pipeline.run's ref_policy exactly, so a model sees at
+    deployment what it was trained on (tests/test_dropout_parity.py):
+      absent sample  the reference is zeroed at the capture, before the limiter.
+      absent hop     (any sample absent) NLMS and blocking adaptation off (ref_policy.absent "reset": the NLMS restarts
+                     at the onset); the blocking output there (-h*primary, i.e. speech) is zeroed, so the NLMS input is 0.
+      reconnect      pipeline.ref_gain's per-sample linear ramp over ref_policy.ramp_frames hops (default 12) scales the
+                     model-facing reference and n_hat; the adaptive filters see the true limited reference and adapt as
+                     usual. Features are computed as offline, with no overrides.
+      validity       per frame, 1 only when every sample of both hops was available (pipeline.frame_avail).
+    Guards on this path fold into availability: a hop the guards do not trust is an absent hop (instant zero, trained
+    ramp on release), since that is the transition the model learned.
+
+    Legacy reference dropout policy (no dsp["ref_policy"], i.e. r7; a runtime safety measure - the r7 weights were NOT
+    trained with it, so enhancement quality during and after a dropout is unmeasured; a hop is invalid if any
+    sample of it is):
       invalid hop  the reference is zeroed before the limiter, so a dead or railed mic drives nothing; the blocking
                    matrix is stepped with adaptation off and its output (which would be -h*primary, i.e. speech)
                    discarded; the NLMS sees a zero reference with adaptation off, so n_hat = 0 and its weights keep
@@ -147,9 +161,11 @@ class StreamEngine:
             raise ValueError(f"model_config kind {kind!r} but the backend runs a {backend.kind!r} model")
         self.backend = backend
         self.takes_valid = bool(getattr(backend, "takes_valid", False))
+        self.pol = dsp.get("ref_policy")        # None: the legacy runtime policy (r7); set: the trained policy
+        if self.pol is not None and self.pol.get("absent", "freeze") not in ("freeze", "reset"):
+            raise ValueError("ref_policy.absent must be 'freeze' or 'reset'")
         if ref_ramp_hops is None:
-            pol = dsp.get("ref_policy") if self.takes_valid else None
-            ref_ramp_hops = (pol or {}).get("ramp_frames", REF_RAMP_HOPS)
+            ref_ramp_hops = REF_RAMP_HOPS if self.pol is None else self.pol.get("ramp_frames", pipeline.RAMP_FRAMES)
         self.ref_ramp_hops = max(1, int(ref_ramp_hops))
         self.config_hash = bk.config_hash(controller_on, dsp)
         self._left_context = None if left_context is None else np.asarray(left_context, np.float32).reshape(3, HOP).copy()
@@ -170,7 +186,8 @@ class StreamEngine:
     # ---------------------------------------------------------------------------------------------- lifecycle
     def _init_dsp(self, keep=None):
         dsp = self.dsp
-        self.nlms, self.ff = NLMS(), FrameFeatures()
+        self.nlms = NLMS(robust=self.pol.get("nlms")) if self.pol is not None else NLMS()   # as pipeline.run
+        self.ff = FrameFeatures()
         self.ctl = Controller(**dsp.get("controller", {}))
         bk = dsp.get("blocking"); lk = dsp.get("limiter")
         self.blk = BlockingMatrix(**(bk if isinstance(bk, dict) else {})) if bk else None
@@ -182,6 +199,8 @@ class StreamEngine:
         self.gate, self.prev_hit, self.frames = 1.0, False, 0
         self._ramp_pos = self.ref_ramp_hops     # fully ramped: the reference is trusted
         self._prev_ref_valid = True             # previous hop's reference was valid (frame validity, VaaniFE)
+        # trained policy: pipeline.ref_gain_step state (samples since the reconnect, last sample's availability)
+        self._since, self._prev_avail, self._was_absent = self.ref_ramp_hops * HOP, True, False
         # the left half of the next frame: the previous hop of limited primary, limited reference and n_hat
         self.hist = (np.zeros((3, HOP), np.float32) if self._left_context is None else self._left_context.copy())
         self.ola = np.zeros(N_FFT, np.float64)
@@ -212,13 +231,21 @@ class StreamEngine:
             self.hist[1] = 0.0 if ref is None else np.asarray(ref, np.float32)
             self.hist[2] = 0.0
         self._prev_ref_valid = ref is not None  # a missing reference hop leaves the next frame half-absent
+        if self.pol is not None:                # the trained ramp clock keeps running across the skipped hop
+            g, self._since, self._prev_avail = pipeline.ref_gain_step(np.full(HOP, ref is not None), self._since,
+                                                                       self._prev_avail, self.ref_ramp_hops)
+            self.hist[1] *= g                   # the next frame's left half is the model-facing (ramped) reference
+            if ref is None and not self._was_absent and self.pol.get("absent", "freeze") == "reset":
+                self.nlms.reset()               # the absence starts on the skipped hop, as offline
+            self._was_absent = ref is None
         self.prev_hit = False
         self.skipped += 1
         self.telemetry.event("bypass" if prim is not None else "gap", sample=self.state.sample_counter - HOP)
 
     # ---------------------------------------------------------------------------------------------- state I/O
     _DSP_OBJS = ("nlms", "ff", "ctl", "lim", "blk_f")
-    _ENGINE_ATTRS = ("gate", "prev_hit", "frames", "hist", "ola", "_ramp_pos", "_prev_ref_valid")
+    _ENGINE_ATTRS = ("gate", "prev_hit", "frames", "hist", "ola", "_ramp_pos", "_prev_ref_valid", "_since",
+                     "_prev_avail", "_was_absent")
 
     def _dsp_obj(self, name):
         if name == "blk_f":
@@ -284,14 +311,58 @@ class StreamEngine:
         self._ramp_pos += 1
         return a
 
-    def process(self, prim: np.ndarray, ref: np.ndarray, ref_valid: bool = True) -> np.ndarray:
+    def _front_trained(self, prim, ref, avail, marks):
+        """The trained ref_policy's DSP half of one hop, operation for operation pipeline.run's (class docstring)."""
+        if self.guards is not None:                 # detectors run on the raw hop; distrust = an absent hop
+            self.guards.pre(prim, ref)
+            if not self.guards.ref_ok:
+                avail = np.zeros(HOP, bool)
+        ok = bool(avail.all())
+        v = 1.0 if (ok and self._prev_ref_valid) else 0.0
+        self._prev_ref_valid = ok
+        ref = np.where(avail, ref, np.float32(0.0)).astype(np.float32)   # zeroed at the capture, before the limiter
+        hit = False
+        if self.lim is not None:
+            prim, ref = self.lim.process_block(prim, ref)
+            hit = self.lim.engaged > 0; self.lim.engaged = 0
+        if marks is not None: marks.append(("limiter", time.perf_counter()))
+        g, self._since, self._prev_avail = pipeline.ref_gain_step(avail, self._since, self._prev_avail, self.ref_ramp_hops)
+        absent = not ok
+        if absent and not self._was_absent and self.pol.get("absent", "freeze") == "reset":
+            self.nlms.reset()
+        self._was_absent = absent
+        r_in = ref
+        if self.blk is not None:
+            r_in = self.blk.process_block(prim, ref, 0.0 if absent else (self.ctl.speech_adapt if self.controller_on else 0.0))
+            r_in = r_in * avail
+        if marks is not None: marks.append(("blocking", time.perf_counter()))
+        n_hat, health = self.nlms.process_block(prim, r_in, 0.0 if absent else (self.gate if self.controller_on else 1.0))
+        if marks is not None: marks.append(("nlms", time.perf_counter()))
+        return prim, ref * g, n_hat * g, health, hit, v, float(g[-1])
+
+    def process(self, prim: np.ndarray, ref: np.ndarray, ref_valid=True) -> np.ndarray:
         """One 256-sample hop of both mics at 16 kHz in [-1, 1] -> 256 enhanced samples (one hop behind).
-        ref_valid=False applies the reference dropout policy (class docstring)."""
+        ref_valid: the reference's capture-path availability, a bool for the hop or one bool per sample; False
+        applies the reference policy (class docstring)."""
         t0 = time.perf_counter()
         marks = [] if self.stage_timing else None
         prim = np.asarray(prim, np.float32); ref = np.asarray(ref, np.float32)
         if prim.shape != (HOP,) or ref.shape != (HOP,):
             raise ValueError(f"process() takes exactly {HOP} samples per channel, got {prim.shape}, {ref.shape}")
+        avail = np.broadcast_to(np.asarray(ref_valid, bool), (HOP,))
+        ref_valid = bool(avail.all())
+        if self.pol is not None:
+            prim, ref, n_hat, health, hit, v, w_last = self._front_trained(prim, ref, avail, marks)
+            if not ref_valid:
+                self.ref_invalid_hops += 1
+            a = None
+        else:
+            prim, ref, n_hat, health, hit, v, a = self._front_legacy(prim, ref, ref_valid, marks)
+            w_last = 1.0 if a is None else float(a[-1])
+        return self._back(t0, marks, prim, ref, n_hat, health, hit, v, a, w_last, ref_valid)
+
+    def _front_legacy(self, prim, ref, ref_valid, marks):
+        """The legacy runtime dropout policy's DSP half of one hop (class docstring); unchanged from the r7 engine."""
         a = self._ref_ramp(bool(ref_valid))
         if self.guards is not None:                 # guard crossfade (decided on the raw hop) composes with the ramp
             gw = self.guards.pre(prim, ref)
@@ -320,7 +391,10 @@ class StreamEngine:
         if marks is not None: marks.append(("blocking", time.perf_counter()))
         n_hat, health = self.nlms.process_block(prim, r_in, (self.gate if self.controller_on else 1.0) if a is None else 0.0)
         if marks is not None: marks.append(("nlms", time.perf_counter()))
+        return prim, ref, n_hat, health, hit, v, a
 
+    def _back(self, t0, marks, prim, ref, n_hat, health, hit, v, a, w_last, ref_valid):
+        """Features, controller, model step and synthesis of one hop: shared by both reference policies."""
         fp = np.concatenate([self.hist[0], prim])    # frame k = previous hop + this hop
         fr = np.concatenate([self.hist[1], ref])
         fn = np.concatenate([self.hist[2], n_hat])
@@ -376,7 +450,7 @@ class StreamEngine:
         dt = (time.perf_counter() - t0) * 1000
         self.ms.append(dt); self.telemetry.add(dt)
         self.last = {"gate": float(self.gate), "burst": bool(burst), "reliability": float(rel), "limiter": bool(hit),
-                     "ms": dt, "ref_valid": bool(ref_valid), "ref_weight": 1.0 if a is None else float(a[-1])}
+                     "ms": dt, "ref_valid": bool(ref_valid), "ref_weight": w_last}
         if self.takes_valid:
             self.last["validity"] = v
         if self.guards is not None:

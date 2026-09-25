@@ -32,6 +32,22 @@ def ref_gain(avail: np.ndarray, ramp_frames: int = RAMP_FRAMES) -> np.ndarray:
     return g
 
 
+def ref_gain_step(avail: np.ndarray, since: int, prev: bool, ramp_frames: int = RAMP_FRAMES):
+    """Streaming twin of ref_gain for one block: (gain (n,) float32, since', prev'). `since` = samples elapsed since
+    the latest reconnect at the block start (>= the ramp length when none is ramping), `prev` = the availability of
+    the sample before the block. Start a stream with since = ramp length, prev = True. Bit-identical to ref_gain."""
+    avail = np.asarray(avail, bool); n = len(avail); n_ramp = max(1, int(ramp_frames) * stft.HOP)
+    if n == 0:
+        return np.zeros(0, np.float32), since, prev
+    idx = np.arange(n)
+    rec = avail & ~np.concatenate([[prev], avail[:-1]])
+    last = np.maximum.accumulate(np.where(rec, idx, -1))
+    c = np.where(last >= 0, idx - last, since + idx)      # samples since the reconnect that governs each sample
+    k = (c + 1).astype(np.float32) / n_ramp                 # the same float32 division as ref_gain's arange
+    g = np.where(avail, np.where(c < n_ramp, k, np.float32(1.0)), np.float32(0.0)).astype(np.float32)
+    return g, int(min(c[-1] + 1, n_ramp)), bool(avail[-1])
+
+
 def frame_avail(avail: np.ndarray, n_frames: int) -> np.ndarray:
     """(n_frames,) float32: frame k is available only if every sample of its window [k*HOP-256, k*HOP+256) is."""
     avail = np.asarray(avail, bool); out = np.ones(n_frames, np.float32)
@@ -46,8 +62,10 @@ def run(mix: np.ndarray, controller_on: bool = True, dsp_cfg: dict | None = None
     "blocking": bool | BlockingMatrix kwargs, "ref_policy": {...}}. None = r1/r2 behaviour.
     ref_policy (spec 6.2, plan B1; absent = off, bit-exact): {"nlms": True | NLMS robust kwargs, "absent": "freeze"|"reset",
     "ramp_frames": int}. ref_avail: per-sample capture-path availability of the reference (None = always present);
-    it acts only under ref_policy: absent samples reach no NLMS/feature/model input, the NLMS freezes (or resets), and
-    the reference ramps back in on reconnect. Returns "ref_avail" (per frame) when ref_policy is set.
+    it acts only under ref_policy: absent samples are zeroed at the capture (before the limiter), reach no NLMS/feature/
+    model input, freeze (or reset) the NLMS and freeze the blocking matrix; on reconnect the model-facing reference and
+    n_hat ramp back in while the adaptive filters see the true reference. vaani.live.StreamEngine runs the same policy
+    hop by hop (tests/test_dropout_parity.py). Returns "ref_avail" (per frame) when ref_policy is set.
     Returns "mix" too: the limited signal when the limiter is on (what the model must see), else the input."""
     dsp_cfg = dsp_cfg or {}
     prim, ref = mix[0].astype(np.float32), mix[1].astype(np.float32)
@@ -64,6 +82,8 @@ def run(mix: np.ndarray, controller_on: bool = True, dsp_cfg: dict | None = None
     bk = dsp_cfg.get("blocking"); blk_m = BlockingMatrix(**(bk if isinstance(bk, dict) else {})) if bk else None
     n_blocks = (T + stft.HOP - 1) // stft.HOP  # tail: last block may be shorter than HOP
     lim_hit = np.zeros(n_blocks + 1, bool)     # per hop block: did the limiter engage (feeds the burst flag)
+    if pol is not None:                        # a dead or railed channel is zero from the capture on (no-op on zeroed faults)
+        ref = np.where(avail, ref, np.float32(0.0)).astype(np.float32)
     if dsp_cfg.get("limiter"):
         # hop-by-hop like the port; the STFT below then runs on the limited signal
         lk = dsp_cfg["limiter"]; lim = Limiter(**(lk if isinstance(lk, dict) else {}))   # True or Limiter kwargs
@@ -72,9 +92,9 @@ def run(mix: np.ndarray, controller_on: bool = True, dsp_cfg: dict | None = None
             lp[i:i + stft.HOP], lr[i:i + stft.HOP] = lim.process_block(prim[i:i + stft.HOP], ref[i:i + stft.HOP])
             lim_hit[j] = lim.engaged > 0; lim.engaged = 0
         prim, ref = lp, lr
-    g_ref = None
+    g_ref, ref_true = None, ref
     if pol is not None:
-        # after the limiter, which sees the raw capture: the zeroed/ramped reference is what every later stage consumes
+        # after the limiter; the ramp shapes what the model and features see, the adaptive filters keep the true reference
         g_ref = ref_gain(avail, pol.get("ramp_frames", RAMP_FRAMES)); ref = ref * g_ref
 
     P = stft.np_stft(prim); R = stft.np_stft(ref)
@@ -95,7 +115,7 @@ def run(mix: np.ndarray, controller_on: bool = True, dsp_cfg: dict | None = None
         # NLMS block k, gated by the decision made for the *previous* frame
         if k < n_blocks:
             i = k * stft.HOP
-            r_in = ref[i:i + stft.HOP]
+            r_in = ref_true[i:i + stft.HOP]
             absent = pol is not None and not avail[i:i + stft.HOP].all()
             if absent and not was_absent and pol.get("absent", "freeze") == "reset":
                 nlms.reset()
@@ -103,7 +123,11 @@ def run(mix: np.ndarray, controller_on: bool = True, dsp_cfg: dict | None = None
             if blk_m is not None:
                 # 2.8: speech-path estimate adapts on the previous frame's speech verdict, same causality as the gate.
                 # Without a controller there is no speech verdict, so the block matrix stays at its initial zero.
-                r_in = blk_m.process_block(prim[i:i + stft.HOP], r_in, ctl.speech_adapt if controller_on else 0.0)
+                # A dead reference teaches it nothing, and its output there (-h*prim, i.e. speech) is no reference.
+                r_in = blk_m.process_block(prim[i:i + stft.HOP], r_in,
+                                           0.0 if absent else (ctl.speech_adapt if controller_on else 0.0))
+                if pol is not None:
+                    r_in = r_in * avail[i:i + stft.HOP]
             blk, health = nlms.process_block(prim[i:i + stft.HOP], r_in,
                                               0.0 if absent else (gate if controller_on else 1.0))
             n_hat[i:i + len(blk)] = blk

@@ -149,6 +149,10 @@ def front_end(mixed, dsp_cfg=None, avail=None):
     ref_policy zero/ramp, exactly as the first half of pipeline.run. Returns (mix (2,n), frame validity (T,))."""
     dsp_cfg = dsp_cfg or {}
     prim, ref = mixed[0].astype(np.float32), mixed[1].astype(np.float32); n = len(prim)
+    av = np.ones(n, bool) if avail is None else np.asarray(avail, bool)
+    pol = dsp_cfg.get("ref_policy")
+    if pol is not None:   # as pipeline.run: a dead channel is zero from the capture on, before the limiter
+        ref = np.where(av, ref, np.float32(0.0)).astype(np.float32)
     if dsp_cfg.get("limiter"):
         lk = dsp_cfg["limiter"]; lim = Limiter(**(lk if isinstance(lk, dict) else {}))
         lp, lr = np.empty_like(prim), np.empty_like(ref)
@@ -156,8 +160,6 @@ def front_end(mixed, dsp_cfg=None, avail=None):
             lp[i:i + stft.HOP], lr[i:i + stft.HOP] = lim.process_block(prim[i:i + stft.HOP], ref[i:i + stft.HOP])
             lim.engaged = 0
         prim, ref = lp, lr
-    av = np.ones(n, bool) if avail is None else np.asarray(avail, bool)
-    pol = dsp_cfg.get("ref_policy")
     if pol is not None:
         ref = ref * pipeline.ref_gain(av, pol.get("ramp_frames", pipeline.RAMP_FRAMES))
     return np.stack([prim, ref]).astype(np.float32), pipeline.frame_avail(av, n // stft.HOP + 1)
