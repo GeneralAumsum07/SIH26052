@@ -76,4 +76,15 @@ spread above). Measured rate: 2 of 2,280 raw noisy test inputs (0.09 %); model o
 `scripts/diag_conditioning.py` on the r7 backbone over eval_r2 val (the run that crashed at clip
 `recorded_impulsive+stationary_-10/0009`), with numba, faulthandler and VAANI_PESQ_CRASH_DIR set. Its outputs
 are evidence only (the committed results_r2/r7/diag files belong to that diagnostic):
-docs/impl/2026-09-24/evidence/segfault/ (git-ignored). Result: see the lane report.
+docs/impl/2026-09-24/evidence/segfault/ (git-ignored). Command (from the repo root, 23:29-00:10 IST):
+
+    CUDA_VISIBLE_DEVICES=-1 PYTHONFAULTHANDLER=1 VAANI_PESQ_CRASH_DIR=docs/impl/2026-09-24/evidence/segfault/pesq_crash       uv run --with numba python -X faulthandler scripts/diag_conditioning.py --ckpt results_r2/runs/r7_e256_wr64/best.pt       --eval-root data/eval_r2 --split val --n 0 --out docs/impl/2026-09-24/evidence/segfault/conditioning_backbone
+
+Result: rc 0, 1480/1480 clips, 0 skipped (the committed run has 1479, clip 0009 skipped). Three pesq children
+died (access violation in `_pesq_inner`, rc 3221225477) and scored NaN, all in the "ref zeroed" variant:
+`recorded_impulsive+stationary_-10/0009`, `recorded_impulsive+stationary_-10/0033`, `stationary_-5/0020`
+(inputs saved as pesq_crash_*.npz). The other 5,916 rows match results_r2/r7/diag/conditioning_backbone.csv
+to <= 4e-15 (STOI exactly). Headline as trained: STOI 0.8910, PESQ-WB 2.3003 (n=1480).
+Inferred: the committed PESQ for 0033 and 0020 "ref zeroed" (1.206329, 1.220508) are the non-faulting
+garbage-read draws of the same bug; dropping both moves the committed variant mean by about 0.0005.
+
