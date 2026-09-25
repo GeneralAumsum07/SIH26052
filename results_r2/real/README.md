@@ -30,9 +30,17 @@ shared machine. `--summarise-only` rebuilds the CSVs and table from `work/rows.j
 
 - `raw` / `mono`: the primary, passthrough. `gtcrn_pretrained` / `mono`: DNS3 weights, primary only.
 - `r7`: deploy/r7/cascade.onnx with deploy/r7/model_config.json through `vaani.live.StreamEngine`, hop by hop (the board path).
-  - `stereo_LR`: the web WAV's own R channel as reference.
-  - `ref_zero`: reference all zeros. A **fault condition** for r7 (a dead reference mic).
-  - `ref_dup`: reference = primary. A **degenerate copy** r7 never saw in training.
+  - `ref_zero` (**single-channel headline**, Rachit 2026-09-25): reference all zeros, at validity 0 where the model
+    takes a validity input (the trained reference-absent mode). r7 has none, so for r7 it is a **fault condition**
+    (a dead reference mic).
+  - `stereo_LR` (as recorded): the web WAV's own R channel as reference.
+  - `ref_dup` (**stress row**, never the headline): reference = primary, a duplicated mono feed r7 never saw in training.
+- An r8 stream system is added with `--name <run> --onnx <cascade.onnx> --config <model_config.json>`; its rows
+  cache as `work/rows_<run>.jsonl` and the summary pools every cache (raw/gtcrn rows kept once).
+
+Table order and labels (2026-09-25): per stream system `ref_zero`, `stereo_LR`, `ref_dup`, with a `row` column
+(`summary.csv` too). `table.md` / `summary.csv` were rebuilt with `--summarise-only` from the unchanged
+`work/rows.jsonl`; every number is the same as the 2026-09-24 run (reordered only).
 
 Metrics: DNSMOS P.835 of the output (vaani/dnsmos.py). `atten>20dB` = fraction of active 20 ms input frames (energy
 within 30 dB of the clip's p99 frame; not a VAD, so speech and loud noise alike) where the output is more than 20 dB
@@ -44,13 +52,13 @@ below the input. CI = 1000-resample bootstrap over clips (`vaani.report.ci`).
 |---|---|---|---|---|---|---|
 | MAD comm. | raw | mono | 192 | 1.79 [1.72, 1.88] | 0 | 0.00 |
 | MAD comm. | gtcrn_pretrained | mono | 192 | 2.25 [2.19, 2.31] | +0.45 [0.40, 0.50] | 0.30 [0.27, 0.33] |
-| MAD comm. | r7 | ref_zero | 192 | 2.04 [1.98, 2.09] | +0.25 [0.19, 0.29] | 0.15 [0.13, 0.17] |
-| MAD comm. | r7 | ref_dup | 192 | 1.98 [1.96, 2.00] | +0.19 [0.11, 0.27] | 1.00 [0.99, 1.00] |
+| MAD comm. | r7 | **ref_zero (headline)** | 192 | 2.04 [1.98, 2.09] | +0.25 [0.19, 0.29] | 0.15 [0.13, 0.17] |
+| MAD comm. | r7 | ref_dup (stress) | 192 | 1.98 [1.96, 2.00] | +0.19 [0.11, 0.27] | 1.00 [0.99, 1.00] |
 | web WAV | raw | mono | 1 | 1.12 | 0 | 0.00 |
 | web WAV | gtcrn_pretrained | mono | 1 | 1.95 | +0.83 | 0.33 |
-| web WAV | r7 | stereo_LR | 1 | 1.61 | +0.49 | 0.79 |
-| web WAV | r7 | ref_zero | 1 | 1.81 | +0.70 | 0.14 |
-| web WAV | r7 | ref_dup | 1 | 2.16 | +1.04 | 1.00 |
+| web WAV | r7 | **ref_zero (headline)** | 1 | 1.81 | +0.70 | 0.14 |
+| web WAV | r7 | stereo_LR (as recorded) | 1 | 1.61 | +0.49 | 0.79 |
+| web WAV | r7 | ref_dup (stress) | 1 | 2.16 | +1.04 | 1.00 |
 
 ## Reading
 

@@ -3,6 +3,7 @@
 
     uv run --with numba python scripts/score_real.py --workers 2          # score (resumes), then summarise
     uv run --with numba python scripts/score_real.py --summarise-only     # rebuild scores.csv / summary.csv / table.md
+    uv run --with numba python scripts/score_real.py --name r8 --onnx <cascade.onnx> --config <model_config.json>
 
 Every other number in the repo is scored on `mixer.mix()` output. These clips are recordings, so there is no
 clean reference: the metrics are DNSMOS P.835 (SIG/BAK/OVRL) and the level-based attenuation proxy of
@@ -10,14 +11,17 @@ clean reference: the metrics are DNSMOS P.835 (SIG/BAK/OVRL) and the level-based
 
 (a) MAD label 0 ("communication": radio speech recorded in military noise), which `sources.scan_mad` drops as
     not-noise. One clip per YouTube video (seeded), at most `--max-clips`, cropped to `--crop-s`. The clips are
-    single-channel, so r7 is run under two labelled reference conditions: `ref_zero` (a dead reference mic, a fault
-    case for r7) and `ref_dup` (reference = the primary, a degenerate copy that r7 never saw in training).
+    single-channel, so the stream system runs under two labelled reference conditions. `ref_zero` is the headline
+    row: reference zeroed, at validity 0 where the model takes a validity input (the trained reference-absent mode;
+    for r7, which has none, it is a dead-reference fault case). `ref_dup` (reference = the primary, a duplicated
+    mono feed) is a labelled stress row, never the headline.
 (b) C:/Users/Rachit/Downloads/abcd.wav, stereo 44.1 kHz, L = primary, R = reference, as run on the Pi, resampled
     to 16 kHz (polyphase 160/441). Scored as `stereo_LR` plus the same two single-channel conditions.
 
 Baselines on the same clips: `raw` (the primary, passthrough) and `gtcrn_pretrained` (mono, DNS3 weights). Both
-ignore the reference, so their condition is `mono`. r7 runs through `vaani.live.StreamEngine` (the board path).
-Per-clip rows are appended to `results_r2/real/work/rows.jsonl` as they finish, so a killed run resumes.
+ignore the reference, so their condition is `mono`. The stream system (`--name`, default r7 = deploy/r7) runs through
+`vaani.live.StreamEngine` (the board path). Per-clip rows are appended to `results_r2/real/work/rows.jsonl` (r7) or
+`work/rows_<name>.jsonl` as they finish, so a killed run resumes; the summary pools every cache.
 """
 import argparse
 import csv
@@ -40,6 +44,10 @@ SR = 16000
 METRICS = ["dnsmos_sig", "dnsmos_bak", "dnsmos_ovrl", "atten20_frac", "mean_atten_db"]
 ROW_KEYS = ["source", "clip", "video", "seconds", "system", "condition", *METRICS,
             "gate_mean", "burst_frac", "limiter_frac"]
+# which row a condition is in the tables (Rachit, 2026-09-25): ref_zero heads single-channel audio, ref_dup is stress
+ROW = {"mono": "baseline", "ref_zero": "single-channel headline", "stereo_LR": "as recorded", "ref_dup": "stress"}
+COND_ORDER = ["ref_zero", "stereo_LR", "ref_dup"]
+ENGINE = ("r7", str(physical.ONNX), str(physical.CONFIG))     # (name, onnx, model_config) of the stream system
 
 
 def _video_id(url: str, fallback: str) -> str:
@@ -96,16 +104,18 @@ def _gtcrn(prim):
     return _GTCRN.enhance(prim[None].astype(np.float32)).astype(np.float32)
 
 
-def score_item(item: dict) -> list[dict]:
+def score_item(item: dict, engine=ENGINE) -> list[dict]:
     """All system x condition rows for one clip. item: clip, video, source, and prim (+ ref for stereo)."""
+    name, onnx, config = engine
     prim = np.asarray(item["prim"], np.float32)
     runs = [("raw", "mono", prim, None), ("gtcrn_pretrained", "mono", _gtcrn(prim), None)]
     conds = [("ref_zero", np.zeros_like(prim)), ("ref_dup", prim.copy())]
     if item.get("ref") is not None:
         conds.insert(0, ("stereo_LR", np.asarray(item["ref"], np.float32)))
     for cond, ref in conds:
-        y, diag = physical.run_engine(np.stack([prim, ref]))
-        runs.append(("r7", cond, y, diag))
+        # ref_zero runs at validity 0 on a validity-input model; run_engine leaves r7's call unchanged
+        y, diag = physical.run_engine(np.stack([prim, ref]), onnx, config, ref_valid=cond != "ref_zero")
+        runs.append((name, cond, y, diag))
     nan = float("nan")
     out = []
     for system, cond, y, diag in runs:
@@ -119,9 +129,9 @@ def score_item(item: dict) -> list[dict]:
 
 
 def _mad_task(args):
-    r, crop_s = args
+    r, crop_s, engine = args
     return score_item({"source": "mad_communication", "clip": r["clip"], "video": r["video"],
-                       "prim": load_mono(r["path"], crop_s)})
+                       "prim": load_mono(r["path"], crop_s)}, engine)
 
 
 def build_items(a) -> list:
@@ -133,14 +143,15 @@ def build_items(a) -> list:
     return tasks
 
 
-def _run(task, crop_s):
+def _run(task, crop_s, engine=ENGINE):
     kind, r = task
     if kind == "web":
         import soundfile as sf
         x, sr = sf.read(WEB_WAV, dtype="float32", always_2d=True)
         x16 = physical.to_16k(x.T, sr)                      # 44.1k -> 16k, 160/441 (the earlier repro's resampler)
-        return score_item({"source": "web_abcd", "clip": "web:abcd", "video": "abcd", "prim": x16[0], "ref": x16[1]})
-    return _mad_task((r, crop_s))
+        return score_item({"source": "web_abcd", "clip": "web:abcd", "video": "abcd", "prim": x16[0], "ref": x16[1]},
+                          engine)
+    return _mad_task((r, crop_s, engine))
 
 
 def _run_star(args):
@@ -152,7 +163,8 @@ def score(a):
     if not nlms._HAVE_NUMBA and not a.allow_pure_python:
         sys.exit("numba not importable: run under 'uv run --with numba' (pure-Python NLMS is ~26 ms/hop)")
     work = OUT / "work"; work.mkdir(parents=True, exist_ok=True)
-    cache = work / "rows.jsonl"
+    engine = (a.name, a.onnx, a.config)
+    cache = _cache(work, a.name)
     done = set()
     if cache.exists():
         for line in cache.read_text(encoding="utf-8").splitlines():
@@ -173,32 +185,55 @@ def score(a):
         if a.workers <= 1:
             _init_worker()
             for t in todo:
-                put(_run(t, a.crop_s))
+                put(_run(t, a.crop_s, engine))
         else:
             import multiprocessing as mp
             with mp.get_context("spawn").Pool(a.workers, initializer=_init_worker) as pool:
-                for rows in pool.imap_unordered(_run_star, [(t, a.crop_s) for t in todo]):
+                for rows in pool.imap_unordered(_run_star, [(t, a.crop_s, engine) for t in todo]):
                     put(rows)
+
+
+def _cache(work: Path, name: str) -> Path:
+    return work / ("rows.jsonl" if name == "r7" else f"rows_{name}.jsonl")
+
+
+def load_rows(work: Path) -> list[dict]:
+    """Every cache's rows; raw/gtcrn rows repeat across caches and are kept once (the first, r7's cache first)."""
+    caches = sorted(work.glob("rows*.jsonl"), key=lambda p: (p.name != "rows.jsonl", p.name))
+    seen, rows = set(), []
+    for c in caches:
+        for line in c.read_text(encoding="utf-8").splitlines():
+            for r in (json.loads(line) if line.strip() else []):
+                k = (r["source"], r["clip"], r["system"], r["condition"])
+                if k not in seen:
+                    seen.add(k); rows.append(r)
+    rows.sort(key=lambda r: (r["source"], r["clip"], r["system"], r["condition"]))
+    return rows
+
+
+def row_order(rows) -> list[tuple[str, str]]:
+    """Baselines, then per stream system (r7 first) the headline ref_zero, the as-recorded stereo, the ref_dup stress."""
+    order = [("raw", "mono"), ("gtcrn_pretrained", "mono")]
+    streams = sorted({r["system"] for r in rows if r["condition"] != "mono"}, key=lambda s: (s != "r7", s))
+    return order + [(s, c) for s in streams for c in COND_ORDER]
 
 
 def summarise():
     from vaani.report import ci
-    cache = OUT / "work" / "rows.jsonl"
-    rows = [r for line in cache.read_text(encoding="utf-8").splitlines() if line.strip() for r in json.loads(line)]
-    rows.sort(key=lambda r: (r["source"], r["clip"], r["system"], r["condition"]))
+    rows = load_rows(OUT / "work")
     with open(OUT / "scores.csv", "w", encoding="utf-8", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=ROW_KEYS); w.writeheader()
         for r in rows:
             w.writerow({k: (f"{r[k]:.4f}" if isinstance(r[k], float) else r[k]) for k in ROW_KEYS})
     raw = {(r["source"], r["clip"]): r for r in rows if r["system"] == "raw"}
-    order = [("raw", "mono"), ("gtcrn_pretrained", "mono"), ("r7", "stereo_LR"), ("r7", "ref_zero"), ("r7", "ref_dup")]
+    order = row_order(rows)
     summ = []
     for src in sorted({r["source"] for r in rows}):
         for system, cond in order:
             g = [r for r in rows if r["source"] == src and r["system"] == system and r["condition"] == cond]
             if not g:
                 continue
-            s = {"source": src, "system": system, "condition": cond, "n_clips": len(g)}
+            s = {"source": src, "system": system, "condition": cond, "row": ROW[cond], "n_clips": len(g)}
             for m in METRICS:
                 s[m], s[m + "_lo"], s[m + "_hi"] = ci([r[m] for r in g])
             s["d_ovrl_vs_raw"], s["d_ovrl_vs_raw_lo"], s["d_ovrl_vs_raw_hi"] = ci(
@@ -228,14 +263,17 @@ def write_table(summ):
          "no clean reference. Mean [95% bootstrap CI over clips, 1000 resamples, vaani.report.ci]; one clip gives a "
          "point value. `atten>20dB` = fraction of active 20 ms input frames (energy within 30 dB of the clip's p99; "
          "not a VAD) that the output cut by more than 20 dB. `dOVRL` = paired per-clip OVRL minus raw.", "",
-         "Conditions: `mono` = system ignores the reference; `stereo_LR` = the recording's own R channel as reference; "
-         "`ref_zero` = reference mic all zeros (a fault case for r7); `ref_dup` = reference = primary (a degenerate "
-         "copy, never seen in training).", ""]
+         "Rows: `single-channel headline` = `ref_zero`, the reference zeroed (validity 0 where the model takes a "
+         "validity input; r7 has none, so for r7 it is a dead-reference fault case). `stress` = `ref_dup`, reference "
+         "= primary (a duplicated mono feed): a labelled stress row, never the headline. `as recorded` = "
+         "`stereo_LR`, the recording's own R channel as reference (two-channel sources only; the only row at the "
+         "two-mic design point). `baseline` = `mono`, the system ignores the reference.", ""]
     for src in dict.fromkeys(s["source"] for s in summ):
-        L += [f"## {src}", "", "| system | condition | n | SIG | BAK | OVRL | dOVRL vs raw | atten>20dB |",
-              "|---|---|---|---|---|---|---|---|"]
+        L += [f"## {src}", "", "| row | system | condition | n | SIG | BAK | OVRL | dOVRL vs raw | atten>20dB |",
+              "|---|---|---|---|---|---|---|---|---|"]
         for s in (x for x in summ if x["source"] == src):
-            L.append(f"| {s['system']} | {s['condition']} | {s['n_clips']} | {_fmt(s, 'dnsmos_sig')} | "
+            lab = f"**{s['row']}**" if s["row"].endswith("headline") else s["row"]
+            L.append(f"| {lab} | {s['system']} | {s['condition']} | {s['n_clips']} | {_fmt(s, 'dnsmos_sig')} | "
                      f"{_fmt(s, 'dnsmos_bak')} | {_fmt(s, 'dnsmos_ovrl')} | {_fmt(s, 'd_ovrl_vs_raw')} | "
                      f"{_fmt(s, 'atten20_frac')} |")
         L.append("")
@@ -253,6 +291,9 @@ def main(argv=None):
     ap.add_argument("--allow-pure-python", action="store_true", help="run without numba (slow; smoke tests only)")
     ap.add_argument("--summarise-only", action="store_true")
     ap.add_argument("--out", default=str(OUT), help="output folder (default results_r2/real)")
+    ap.add_argument("--name", default=ENGINE[0], help="stream system label (default r7; its rows cache is rows.jsonl)")
+    ap.add_argument("--onnx", default=ENGINE[1], help="StreamEngine ONNX (default deploy/r7/cascade.onnx)")
+    ap.add_argument("--config", default=ENGINE[2], help="its model_config.json (default deploy/r7/model_config.json)")
     a = ap.parse_args(argv)
     OUT = Path(a.out)
     if not a.summarise_only:

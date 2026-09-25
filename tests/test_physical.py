@@ -100,3 +100,57 @@ def test_score_real_subset_is_one_clip_per_video_and_deterministic():
     assert len(sr.select_subset(rows, 200, 0)) == 10
     assert sr._video_id("https://www.youtube.com/watch?v=abc123&t=5", "x") == "abc123"
     assert sr._video_id("not a url", "fb") == "fb"
+
+
+@pytest.mark.skipif(not HAVE_R7, reason="deploy/r7 artefacts missing")
+def test_run_engine_ref_valid_false_leaves_r7_unchanged():
+    """r7 takes no validity input: ref_valid=False must not change its call (the r7 ref_zero rows stay bit-exact)."""
+    _, mix = _speechish(0.5)
+    mix[1] = 0
+    assert not physical.engine_takes_valid()
+    y0, d0 = physical.run_engine(mix)
+    y1, d1 = physical.run_engine(mix, ref_valid=False)
+    assert np.array_equal(y0, y1) and d0 == d1
+
+
+def test_run_engine_forwards_ref_valid_only_to_validity_models(monkeypatch):
+    calls = []
+
+    class Eng:
+        def __init__(self, *a, **kw):
+            self.takes_valid, self.last = takes, {}
+
+        def process(self, p, r, **kw):
+            calls.append(kw); return np.zeros_like(p)
+
+    monkeypatch.setattr(physical.live, "load_model_config", lambda c: {"controller_on": True, "dsp": {}})
+    monkeypatch.setattr(physical.live, "StreamEngine", Eng)
+    mix = np.zeros((2, 3 * physical.HOP), np.float32)
+    for takes, rv, want in [(False, False, {}), (True, True, {}), (True, False, {"ref_valid": False})]:
+        calls.clear()
+        physical.run_engine(mix, "x.onnx", "x.json", ref_valid=rv)
+        assert calls and all(c == want for c in calls)
+
+
+def test_score_real_rows_put_ref_zero_first_and_ref_dup_as_stress():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("score_real", physical.REPO / "scripts/score_real.py")
+    sr = importlib.util.module_from_spec(spec); spec.loader.exec_module(sr)
+    rows = [{"system": s, "condition": c} for s, c in [("raw", "mono"), ("r7", "ref_dup"), ("r7", "ref_zero"),
+                                                        ("r8", "ref_zero"), ("r7", "stereo_LR")]]
+    order = sr.row_order(rows)
+    assert order[:5] == [("raw", "mono"), ("gtcrn_pretrained", "mono"), ("r7", "ref_zero"), ("r7", "stereo_LR"),
+                         ("r7", "ref_dup")] and order[5] == ("r8", "ref_zero")
+    assert sr.ROW["ref_zero"].endswith("headline") and sr.ROW["ref_dup"] == "stress"
+
+
+def test_score_real_pools_caches_and_keeps_baselines_once(tmp_path):
+    import importlib.util, json
+    spec = importlib.util.spec_from_file_location("score_real", physical.REPO / "scripts/score_real.py")
+    sr = importlib.util.module_from_spec(spec); spec.loader.exec_module(sr)
+    row = lambda s, c, v: {"source": "m", "clip": "c", "system": s, "condition": c, "v": v}
+    (tmp_path / "rows.jsonl").write_text(json.dumps([row("raw", "mono", 1), row("r7", "ref_zero", 2)]) + "\n")
+    (tmp_path / "rows_r8.jsonl").write_text(json.dumps([row("raw", "mono", 9), row("r8", "ref_zero", 3)]) + "\n")
+    rows = sr.load_rows(tmp_path)
+    assert sorted((r["system"], r["v"]) for r in rows) == [("r7", 2), ("r8", 3), ("raw", 1)]
+    assert sr._cache(tmp_path, "r7").name == "rows.jsonl" and sr._cache(tmp_path, "r8").name == "rows_r8.jsonl"

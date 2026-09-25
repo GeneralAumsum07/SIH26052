@@ -2,23 +2,23 @@
 
 DNSMOS P.835 and the attenuation proxy are reference-free proxies, **not** SNR/STOI/PESQ: these clips have no clean reference. Mean [95% bootstrap CI over clips, 1000 resamples, vaani.report.ci]; one clip gives a point value. `atten>20dB` = fraction of active 20 ms input frames (energy within 30 dB of the clip's p99; not a VAD) that the output cut by more than 20 dB. `dOVRL` = paired per-clip OVRL minus raw.
 
-Conditions: `mono` = system ignores the reference; `stereo_LR` = the recording's own R channel as reference; `ref_zero` = reference mic all zeros (a fault case for r7); `ref_dup` = reference = primary (a degenerate copy, never seen in training).
+Rows: `single-channel headline` = `ref_zero`, the reference zeroed (validity 0 where the model takes a validity input; r7 has none, so for r7 it is a dead-reference fault case). `stress` = `ref_dup`, reference = primary (a duplicated mono feed): a labelled stress row, never the headline. `as recorded` = `stereo_LR`, the recording's own R channel as reference (two-channel sources only; the only row at the two-mic design point). `baseline` = `mono`, the system ignores the reference.
 
 ## mad_communication
 
-| system | condition | n | SIG | BAK | OVRL | dOVRL vs raw | atten>20dB |
-|---|---|---|---|---|---|---|---|
-| raw | mono | 192 | 2.40 [2.29, 2.52] | 2.05 [1.94, 2.17] | 1.79 [1.72, 1.88] | 0.00 [0.00, 0.00] | 0.00 [0.00, 0.00] |
-| gtcrn_pretrained | mono | 192 | 2.58 [2.52, 2.65] | 3.70 [3.65, 3.75] | 2.25 [2.19, 2.31] | 0.45 [0.40, 0.50] | 0.30 [0.27, 0.33] |
-| r7 | ref_zero | 192 | 2.55 [2.49, 2.61] | 3.11 [3.03, 3.17] | 2.04 [1.98, 2.09] | 0.25 [0.19, 0.29] | 0.15 [0.13, 0.17] |
-| r7 | ref_dup | 192 | 2.54 [2.51, 2.56] | 3.70 [3.67, 3.73] | 1.98 [1.96, 2.00] | 0.19 [0.11, 0.27] | 1.00 [0.99, 1.00] |
+| row | system | condition | n | SIG | BAK | OVRL | dOVRL vs raw | atten>20dB |
+|---|---|---|---|---|---|---|---|---|
+| baseline | raw | mono | 192 | 2.40 [2.29, 2.52] | 2.05 [1.94, 2.17] | 1.79 [1.72, 1.88] | 0.00 [0.00, 0.00] | 0.00 [0.00, 0.00] |
+| baseline | gtcrn_pretrained | mono | 192 | 2.58 [2.52, 2.65] | 3.70 [3.65, 3.75] | 2.25 [2.19, 2.31] | 0.45 [0.40, 0.50] | 0.30 [0.27, 0.33] |
+| **single-channel headline** | r7 | ref_zero | 192 | 2.55 [2.49, 2.61] | 3.11 [3.03, 3.17] | 2.04 [1.98, 2.09] | 0.25 [0.19, 0.29] | 0.15 [0.13, 0.17] |
+| stress | r7 | ref_dup | 192 | 2.54 [2.51, 2.56] | 3.70 [3.67, 3.73] | 1.98 [1.96, 2.00] | 0.19 [0.11, 0.27] | 1.00 [0.99, 1.00] |
 
 ## web_abcd
 
-| system | condition | n | SIG | BAK | OVRL | dOVRL vs raw | atten>20dB |
-|---|---|---|---|---|---|---|---|
-| raw | mono | 1 | 1.21 | 1.13 | 1.12 | 0.00 | 0.00 |
-| gtcrn_pretrained | mono | 1 | 2.22 | 3.42 | 1.95 | 0.83 | 0.33 |
-| r7 | stereo_LR | 1 | 2.05 | 2.79 | 1.61 | 0.49 | 0.79 |
-| r7 | ref_zero | 1 | 2.28 | 2.67 | 1.81 | 0.70 | 0.14 |
-| r7 | ref_dup | 1 | 2.74 | 3.95 | 2.16 | 1.04 | 1.00 |
+| row | system | condition | n | SIG | BAK | OVRL | dOVRL vs raw | atten>20dB |
+|---|---|---|---|---|---|---|---|---|
+| baseline | raw | mono | 1 | 1.21 | 1.13 | 1.12 | 0.00 | 0.00 |
+| baseline | gtcrn_pretrained | mono | 1 | 2.22 | 3.42 | 1.95 | 0.83 | 0.33 |
+| **single-channel headline** | r7 | ref_zero | 1 | 2.28 | 2.67 | 1.81 | 0.70 | 0.14 |
+| as recorded | r7 | stereo_LR | 1 | 2.05 | 2.79 | 1.61 | 0.49 | 0.79 |
+| stress | r7 | ref_dup | 1 | 2.74 | 3.95 | 2.16 | 1.04 | 1.00 |

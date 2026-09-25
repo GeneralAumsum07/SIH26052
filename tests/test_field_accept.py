@@ -119,3 +119,27 @@ def test_end_to_end_synthetic_passthrough(tmp_path, monkeypatch):
     again = fa.main(["--system", "raw", "--name", "smoke", "--n-utt", "1", "--snrs", "5", "--beds", "web",
                      "--summarise-only", "--out", str(tmp_path / "field")])
     assert again["part1"]["web/M"]["loss_mean"] == m["loss_mean"]
+
+
+def test_report_order_headlines_z_and_puts_m_last():
+    st, _ = fa.summarise_part1(_rows(0.01, 6.0))
+    keys = [k for k, _ in fa._part1_rows(st)]
+    assert keys == ["web/gtcrn_pretrained", "web/Z", "web/W", "web/H4", "web/H8", "web/G", "web/M"]
+    assert fa.ROW["Z"].endswith("headline") and fa.ROW["M"].startswith("stress")
+    assert fa.SHOW2[0] == "ref_zero" and fa.SHOW2[-1] == "mono_dup"
+
+
+def test_z_runs_at_validity_zero_and_the_rest_valid(monkeypatch):
+    seen = {}
+
+    def sysfn(p, r, trace=False, ref_valid=True):
+        seen.setdefault(("Z" if not r.any() else "other"), set()).add(ref_valid)
+        return p, {}
+    sysfn.stream, sysfn.validity0 = True, lambda: True
+    monkeypatch.setattr(fa, "system", lambda spec: sysfn)
+    monkeypatch.setattr(fa, "utterance", lambda i, split, seed: _speech(seed=i))
+    noise = lambda bed, i, seed, mad: tuple(np.random.default_rng(k).standard_normal(fa.NS).astype(np.float32)
+                                            * 0.02 for k in (0, 1))
+    monkeypatch.setattr(fa, "bed_noise", noise)
+    fa.part1_task(("x", "web", 0, 5.0, "val", 0, []))
+    assert seen == {"Z": {False}, "other": {True}}

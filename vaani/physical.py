@@ -102,21 +102,26 @@ def load_clip(row: dict) -> tuple[np.ndarray, np.ndarray | None]:
 
 
 def run_engine(mix: np.ndarray, onnx=ONNX, config=CONFIG, threads: int = 1, dsp: dict | None = None,
-               trace: bool = False):
+               trace: bool = False, ref_valid: bool = True, guards=None):
     """(2, T) at 16 kHz through a fresh StreamEngine hop by hop -> ((T,) output aligned to the input, diagnostics).
 
     The input is zero-padded by one hop so the engine's one-hop lag is flushed; the first output hop (the left
     context) is dropped. `dsp` overrides the config's DSP block (probe use only; None = the shipping config).
-    trace=True also returns every hop's `eng.last` dict under diag["trace"] (validity-flag latency, guards)."""
+    trace=True also returns every hop's `eng.last` dict under diag["trace"] (validity-flag latency, guards).
+    ref_valid=False is the reference-zeroed construction at validity 0: passed to process() only when the engine
+    takes a validity input (VaaniFE); r7 has none, so it keeps its default call and the caller's zeroed reference.
+    guards: StreamEngine's `guards=` (None = off, the r7 default path)."""
     cfg = live.load_model_config(config)
-    eng = live.StreamEngine(onnx, cfg["controller_on"], cfg["dsp"] if dsp is None else dsp, threads=threads)
+    kw = {"guards": guards} if guards else {}
+    eng = live.StreamEngine(onnx, cfg["controller_on"], cfg["dsp"] if dsp is None else dsp, threads=threads, **kw)
+    pkw = {"ref_valid": False} if not ref_valid and getattr(eng, "takes_valid", False) else {}
     mix = np.asarray(mix, np.float32)
     T = mix.shape[1]
     n = -(-T // HOP) + 1
     x = np.pad(mix, ((0, 0), (0, n * HOP - T)))
     ys, gate, burst, lim, tr = [], [], [], [], []
     for j in range(n):
-        ys.append(eng.process(x[0, j * HOP:(j + 1) * HOP], x[1, j * HOP:(j + 1) * HOP]))
+        ys.append(eng.process(x[0, j * HOP:(j + 1) * HOP], x[1, j * HOP:(j + 1) * HOP], **pkw))
         d = eng.last or {}                             # diagnostics only; NaN if a refactor drops a key
         gate.append(d.get("gate", np.nan)); burst.append(d.get("burst", np.nan)); lim.append(d.get("limiter", np.nan))
         if trace:
@@ -127,6 +132,18 @@ def run_engine(mix: np.ndarray, onnx=ONNX, config=CONFIG, threads: int = 1, dsp:
     if trace:
         diag["trace"] = tr                             # tr[j] was computed on input hop j (starts at j*HOP)
     return y, diag
+
+
+_TAKES_VALID: dict = {}
+
+
+def engine_takes_valid(onnx=ONNX, config=CONFIG) -> bool:
+    """Whether the StreamEngine for this ONNX has a validity input (so ref_valid=False reaches the model)."""
+    key = (str(onnx), str(config))
+    if key not in _TAKES_VALID:
+        cfg = live.load_model_config(config)
+        _TAKES_VALID[key] = bool(live.StreamEngine(onnx, cfg["controller_on"], cfg["dsp"]).takes_valid)
+    return _TAKES_VALID[key]
 
 
 def _frames_db(v: np.ndarray, n: int = FRAME) -> np.ndarray:

@@ -13,20 +13,26 @@ System: `r7` = deploy/r7/cascade.onnx through `vaani.live.StreamEngine` with dep
 Utterances: 20 x 6 s, val split, seed 0, at 0 and +5 dB (pooled, n = 40 per row). Beds: `web` = C:/Users/Rachit/Downloads/abcd.wav,
 `mad` = MAD communication clips (one per video, seed 0, as scripts/score_real.py).
 
+Rows (Rachit, 2026-09-25): single-channel audio is headlined by Z / ref_zero (reference zeroed, at validity 0 where
+the model takes a validity input; r7 has none, so its Z is the plain zeroed reference); M / mono_dup (duplicated
+primary) is a labelled stress row. Criteria are unchanged; `r7.md` / `r7.json` were rebuilt from the cached runs
+(`uv run --with numba python scripts/field_accept.py --name r7 --summarise-only`, 2026-09-25): every number is
+identical to the 2026-09-24 run (json compared key by key), only the order, labels and provenance keys changed.
+
 ## Verdict: Part 1 FAIL, Part 2 FAIL (expected, plan 11.1)
 
 Key numbers (from `r7.json` / `r7.md`):
 
-| bed/cons | loss mean | loss p95 | lost run max s | STOI in -> out | dSNR dB | verdict |
-|---|---|---|---|---|---|---|
-| web/M | 1.000 | 1.000 | 2.08 | 0.778 -> 0.535 | -0.59 | FAIL |
-| web/W | 0.976 | 1.000 | 1.98 | 0.778 -> 0.316 | -1.18 | FAIL |
-| web/Z | 0.022 | 0.073 | 0.18 | 0.778 -> 0.774 | +2.65 | FAIL (dSNR) |
-| web/H8 | 0.043 | 0.148 | 0.30 | 0.778 -> 0.847 | +8.61 | FAIL (PS targets) |
-| mad/M | 1.000 | 1.000 | 2.08 | 0.736 -> 0.534 | -0.59 | FAIL |
-| mad/W | 0.979 | 1.000 | 2.08 | 0.736 -> 0.449 | -0.47 | FAIL |
-| mad/Z | 0.033 | 0.078 | 0.14 | 0.736 -> 0.729 | +1.07 | FAIL (dSNR) |
-| mad/H8 | 0.034 | 0.137 | 1.16 | 0.736 -> 0.911 | +12.24 | FAIL (lost run, PS targets) |
+| row | bed/cons | loss mean | loss p95 | lost run max s | STOI in -> out | dSNR dB | verdict |
+|---|---|---|---|---|---|---|---|
+| **single-channel headline** | web/Z | 0.022 | 0.073 | 0.18 | 0.778 -> 0.774 | +2.65 | FAIL (dSNR) |
+| two-channel | web/W | 0.976 | 1.000 | 1.98 | 0.778 -> 0.316 | -1.18 | FAIL |
+| two-channel | web/H8 | 0.043 | 0.148 | 0.30 | 0.778 -> 0.847 | +8.61 | FAIL (PS targets) |
+| stress (duplicated primary) | web/M | 1.000 | 1.000 | 2.08 | 0.778 -> 0.535 | -0.59 | FAIL |
+| **single-channel headline** | mad/Z | 0.033 | 0.078 | 0.14 | 0.736 -> 0.729 | +1.07 | FAIL (dSNR) |
+| two-channel | mad/W | 0.979 | 1.000 | 2.08 | 0.736 -> 0.449 | -0.47 | FAIL |
+| two-channel | mad/H8 | 0.034 | 0.137 | 1.16 | 0.736 -> 0.911 | +12.24 | FAIL (lost run, PS targets) |
+| stress (duplicated primary) | mad/M | 1.000 | 1.000 | 2.08 | 0.736 -> 0.534 | -0.59 | FAIL |
 
 gtcrn_pretrained on the same primaries: dSNR +7.82 dB (web), +2.31 dB (mad); loss 0.056 / 0.085.
 H8 at +5 dB (targets SNR_out > 15, STOI > 0.85, PESQ > 2.5): web 11.0 / 0.880 / 1.96; mad 14.5 / 0.934 / 2.47.
