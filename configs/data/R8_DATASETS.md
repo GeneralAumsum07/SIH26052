@@ -24,7 +24,7 @@ python scripts/r8_datasets.py fetch --parallel 8 && python scripts/r8_datasets.p
 
 | What | Why | Steps |
 |---|---|---|
-| `MDC_API_KEY` | Common Voice 27.0 Hindi (`cv_hi`), in the first fetch group, so the box blocks without it | 1. Sign in at mozilladatacollective.com.<br>2. Open Common Voice Scripted Speech 27.0 Hindi and accept its terms.<br>3. Create an API key under the account.<br>4. Export it on the box.<br>The quota is 30 downloads/day per organisation, and a resumed fetch reuses its presigned link while it is valid. |
+| `MDC_API_KEY` | Common Voice 27.0 Hindi (`cv_hi`), in the first fetch group, so the box blocks without it | 1. Sign in at mozilladatacollective.com.<br>2. Open Common Voice Scripted Speech 27.0 Hindi and accept its terms.<br>3. Create an API key under the account.<br>4. Export it on the box.<br>The quota is 30 downloads/day per organisation. Each fetch run spends one, and it resumes the partial file. |
 | `HF_TOKEN`, `MIRROR_HF_REPO` | The private mirror: the frozen val set and `mad_v2.parquet` | Use a read token for the mirror repo. The repo id is kept out of this public file. |
 | `RIR_BANK_URL` | The RIR banks (`configs/data/r8_banks.json`) | Use the release asset base URL. |
 | `KAGGLE_USERNAME` + `KAGGLE_KEY` (or `KAGGLE_API_TOKEN`) | MAD. Optional: the anonymous Kaggle download URL is tried first | Only needed if the anonymous URL starts refusing. Create the token at kaggle.com, Settings, API. |

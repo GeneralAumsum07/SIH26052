@@ -97,8 +97,8 @@ datasets:
       r8_mini_refvalid, r8_refvalid_v2, 'gate:G1']
     licence: CC0-1.0; MDC terms forbid speaker re-identification and re-hosting
     notes: 'Common Voice Scripted Speech 27.0 Hindi. POST mdc_api with ''Authorization: Bearer $MDC_API_KEY'' returns a
-      presigned downloadUrl. Quota 30 downloads/day per organisation: a resumed fetch re-POSTs only when the presigned URL
-      has expired. The sha256 is MDC''s and equals the laptop copy.'
+      presigned downloadUrl (kept in memory, never written). Quota 30 downloads/day per organisation: each fetch run POSTs
+      once and resumes the .part; a failed transfer re-POSTs once. The sha256 is MDC''s and equals the laptop copy.'
     fetch: mdc
     mdc_dataset: cmu5vlext009to107ev1s9lk8
     mdc_api: https://mozilladatacollective.com/api/datasets/{id}/download
