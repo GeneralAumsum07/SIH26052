@@ -103,6 +103,115 @@ def test_fe_pesq_weight_zero_without_differentiable_pesq():
         assert fn.w["pesq"] == 0.0
 
 
+def test_fe_pesq_required_fails_loudly_without_torch_pesq(monkeypatch):
+    monkeypatch.setattr(losses, "_pesq_module", lambda: None)
+    with pytest.raises(ImportError, match="pesq_required"):
+        losses.build_loss("fe", {"pesq_required": True})
+    assert losses.build_loss("fe", {"pesq_required": True, "w_pesq": 0.0}).w["pesq"] == 0.0
+    assert losses.build_loss("fe").w["pesq"] == 0.0     # default: silent fallback, as before
+
+
 def test_existing_losses_unchanged_by_registry():
     pred, true = _pair()
     assert torch.allclose(losses.build_loss("hybrid")(pred, true), losses.HybridLoss()(pred, true))
+
+
+# --- differentiable PESQ term (torch_pesq, the `train` extra) ---
+def _speechish(n=4 * 16000, sr=16000):
+    """Harmonic 120 Hz voice with syllable envelope and exact-zero pauses (the case that makes torch_pesq's |.| NaN)."""
+    t = torch.arange(n) / sr
+    ph = 2 * math.pi * torch.cumsum(120 + 30 * torch.sin(2 * math.pi * 0.5 * t), 0) / sr
+    x = sum(torch.sin(k * ph) / k for k in range(1, 20))
+    env = torch.sin(2 * math.pi * 3 * t).clamp(min=0) ** 0.5 * ((t % 1.0) < 0.7)
+    return (0.1 * x * env).float()
+
+
+def _at_snr(c, snr_db, seed=0):
+    nz = torch.randn(c.shape, generator=torch.Generator().manual_seed(seed))
+    return c + nz * c.norm() / nz.norm() * 10 ** (-snr_db / 20)
+
+
+def test_pesq_term_known_answer_against_reference_pesq():
+    pytest.importorskip("torch_pesq")
+    from pesq import pesq
+    pq = losses._pesq_module()
+    c = _speechish()
+    prev = -1.0
+    for snr in (40, 20, 10):
+        d = _at_snr(c, snr)
+        # torch_pesq's MOS tracks ITU P.862.2 wide-band PESQ on the same pair (measured gap <= 0.03 on these)
+        assert abs(float(pq.mos(c[None], d[None])) - pesq(16000, c.numpy(), d.numpy(), "wb")) < 0.15, snr
+        v, n = losses.pesq_term(pq, d[None], c[None])
+        assert n == 1 and float(v) > prev   # more noise, more distortion
+        prev = float(v)
+    v, _ = losses.pesq_term(pq, c[None], c[None])
+    assert float(v) < 0.01                  # transparent output: ~0 (the -120 dBFS dither only), vs 2.5 at 40 dB
+
+
+def test_pesq_term_gradients_finite_on_silence_and_exact_zeros():
+    pytest.importorskip("torch_pesq")
+    pq = losses._pesq_module()
+    c = _speechish()
+    true = torch.stack([c, c, torch.zeros_like(c), c])
+    pred = torch.stack([c, torch.zeros_like(c), _at_snr(c, 5), _at_snr(c, 10)]).requires_grad_(True)
+    v, n = losses.pesq_term(pq, pred, true)
+    assert n == 3                           # the silent target is left out
+    v.backward()
+    assert torch.isfinite(v) and torch.isfinite(pred.grad).all()
+    assert float(pred.grad[2].abs().sum()) == 0.0          # left-out item: no PESQ gradient
+    assert float(pred.grad[1].abs().sum()) > 0             # fully suppressed output still pulled back (dither)
+    assert float(pred.grad[3].abs().sum()) > 0
+    z, n0 = losses.pesq_term(pq, pred[2:3], true[2:3])
+    assert n0 == 0 and float(z) == 0.0
+
+
+def test_fe_pesq_term_live_when_importable():
+    pytest.importorskip("torch_pesq")
+    c = _speechish(n=16384 * 4)
+    true = stft.stft(torch.stack([c, c]))
+    pred = stft.stft(torch.stack([_at_snr(c, 5), torch.zeros_like(c)])).requires_grad_(True)
+    fn = losses.FELoss()
+    assert fn.w["pesq"] == 0.001
+    loss = fn(pred, true)
+    loss.backward()
+    assert float(fn.last_terms["pesq"]) > 0 and fn.last_pesq_items == 2
+    assert torch.isfinite(loss) and torch.isfinite(pred.grad).all()
+    no = losses.FELoss(w_pesq=0.0)
+    assert no.pesq is None and float(no(pred.detach(), true)) < float(loss.detach())
+
+
+def test_pesq_term_gradient_is_live_on_a_near_clean_output():
+    # the near-clean case is where torch_pesq's own gradient is all-NaN (L6 pooling of an underflowed disturbance);
+    # here it must be finite, non-zero and agree with central differences where the reference holds the peak
+    pytest.importorskip("torch_pesq")
+    from torch_pesq import PesqLoss
+    g = torch.Generator().manual_seed(3)
+    ref = torch.randn(2, 32000, generator=g) * 0.2
+    x = (0.5 * ref + 0.01 * torch.randn(2, 32000, generator=g)).requires_grad_(True)
+    pq = losses._pesq_module()
+    v, _ = losses.pesq_term(pq, x, ref)
+    (gx,) = torch.autograd.grad(v, x)
+    assert torch.isfinite(gx).all() and float(gx.abs().sum()) > 0
+    x2 = x.detach().clone().requires_grad_(True)
+    dith = losses.PESQ_DITHER * torch.randn(32000, generator=torch.Generator().manual_seed(0))
+    v2 = PesqLoss(1.0, sample_rate=16000).float()(ref, x2 + dith).float().mean()
+    assert abs(float(v) - float(v2)) <= losses.PESQ_DIST_FLOOR   # the floor's bound on the score shift
+    (gx2,) = torch.autograd.grad(v2, x2)
+    assert not torch.isfinite(gx2).any()                        # the library's own: all NaN (why the floor exists)
+    for d in (gx / gx.norm(), -gx / gx.norm()):
+        eps = 3e-3
+        with torch.no_grad():
+            fd = (float(losses.pesq_term(pq, x + eps * d, ref)[0]) - float(losses.pesq_term(pq, x - eps * d, ref)[0])) / (2 * eps)
+        an = float((gx * d).sum())
+        assert abs(fd - an) <= 0.2 * abs(an), (fd, an)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="no CUDA device")
+def test_pesq_term_runs_on_cuda_without_moving_the_loss():
+    pytest.importorskip("torch_pesq")
+    pq = losses._pesq_module()
+    c = _speechish().cuda()
+    p = _at_snr(c.cpu(), 10).cuda().requires_grad_(True)
+    v, _ = losses.pesq_term(pq, p[None], c[None])
+    v.backward()
+    assert v.device.type == "cuda" and torch.isfinite(p.grad).all()

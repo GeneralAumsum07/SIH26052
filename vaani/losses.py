@@ -92,13 +92,81 @@ class SpeechPreservationLoss(HybridLoss):
         return base
 
 
+class _PeakCut(nn.Module):
+    """Stands in for torch_pesq's resampler, an identity at 16 kHz, which PesqLoss.raw() applies right after dividing
+    both signals by their joint peak. That peak depends on the output, so the reference's path (whose |STFT| has
+    NaN gradients at exact-zero bins) reached the output's gradient through it and turned all of it NaN whenever the
+    output held the peak. Here the reference comes back detached and the output as `deg / peak` with the peak held
+    constant: same values, and the gradient the level-invariant score should have anyway."""
+    def __init__(self):
+        super().__init__()
+        self.deg = None
+
+    def forward(self, x):
+        if self.deg is not None and x.requires_grad:   # raw() resamples the output first, then the reference
+            out, self.deg = self.deg, None
+            return out
+        return x.detach()
+
+
 def _pesq_module():
-    """A differentiable PESQ if one is importable (torch_pesq), else None: the term then carries weight 0."""
+    """A differentiable PESQ if one is importable (torch_pesq, the `train` extra), else None: the term then carries
+    weight 0. fp32: its Bark/loudness tables are float64 numpy, which would promote the whole term to fp64 on the GPU."""
     try:
         from torch_pesq import PesqLoss
-        return PesqLoss(1.0, sample_rate=16000)
+        m = PesqLoss(1.0, sample_rate=16000).float()
+        m.resampler = _PeakCut()
+        return m
     except Exception:
         return None
+
+
+PESQ_MIN_RMS = 1e-4   # ~-80 dBFS: a silent target has no PESQ (torch_pesq divides by the joint peak -> NaN)
+PESQ_DITHER = 1e-6    # -120 dBFS: an exactly-zero output bin has a NaN |.| gradient inside torch_pesq
+PESQ_DIST_FLOOR = 1e-4   # added to the per-frame disturbance before raw()'s L6 pooling: shifts the score by <= 1e-4
+
+
+def _floored_unfold(unfold):
+    """raw() pools the per-frame disturbance as (unfold(d) ** 6).mean() ** (1/6); on a near-clean output d sits at
+    its 1e-20 clamp, d ** 6 underflows to 0 in fp32 and pow(1/6)'s gradient at 0 is inf, and align_level's global
+    power then spreads the NaN to every sample (the sanitised gradient came back all-zero). A small floor keeps
+    every base normal: by the triangle inequality the pooled value moves by at most the floor."""
+    def f(x, *a, **k):
+        return unfold(x + PESQ_DIST_FLOOR, *a, **k)
+    return f
+
+
+def _sanitize_grad(g):
+    return torch.nan_to_num(g, nan=0.0, posinf=0.0, neginf=0.0)
+
+
+def pesq_term(pesq, y_p, y_t):
+    """Mean torch_pesq distortion (0 = transparent) over items whose target is audible; (value, items scored).
+    Silent-target items are left out before the call, the output gets a fixed -120 dBFS dither so a fully suppressed
+    prediction still has a gradient, and any non-finite gradient left inside torch_pesq is zeroed on this branch
+    only: a NaN there would pass train.py's finite-loss check and poison the weights through the optimiser."""
+    keep = y_t.pow(2).mean(-1).sqrt() > PESQ_MIN_RMS
+    if not bool(keep.any()):
+        return y_p.new_zeros(()), 0
+    pesq.to(y_p.device)   # train.py never moves the loss module; torch_pesq keeps its filters as nn.Parameters
+    ref = y_t[keep].detach()
+    g = torch.Generator().manual_seed(0)
+    deg = y_p[keep] + PESQ_DITHER * torch.randn(y_p.shape[-1], generator=g).to(y_p.device)
+    if deg.requires_grad:
+        deg.register_hook(_sanitize_grad)
+        if isinstance(pesq.resampler, _PeakCut):   # raw()'s own joint-peak normalisation, with the peak constant
+            peak = torch.maximum(deg.abs().amax(1, keepdim=True), ref.abs().amax(1, keepdim=True)).detach()
+            pesq.resampler.deg = deg / peak
+    import torch_pesq.loss as tpl
+    unfold = tpl.unfold
+    tpl.unfold = _floored_unfold(unfold)   # scoped to this call: other PesqLoss users keep the library's pooling
+    try:
+        v = pesq(ref, deg).float()
+    finally:
+        tpl.unfold = unfold
+        if isinstance(pesq.resampler, _PeakCut):
+            pesq.resampler.deg = None
+    return torch.where(torch.isfinite(v), v, torch.zeros_like(v)).mean(), int(keep.sum())
 
 
 def anti_wrap(x):
@@ -133,7 +201,7 @@ class FELoss(nn.Module):
     TERMS = ("mag", "over", "complex", "consistency", "wave", "pesq", "snr", "mrstft", "phase")
 
     def __init__(self, w_mag=0.3, w_complex=0.2, w_consistency=0.3, w_wave=0.2, w_pesq=0.001, w_snr=0.002,
-                 snr_max_db=30.0, kappa=1.0, w_mrstft=0.0, w_phase=0.0, p=0.3, dominance_db=0.0):
+                 snr_max_db=30.0, kappa=1.0, w_mrstft=0.0, w_phase=0.0, p=0.3, dominance_db=0.0, pesq_required=False):
         super().__init__()
         if kappa < 1:
             raise ValueError("kappa must be >= 1 (1 = symmetric magnitude loss)")
@@ -141,10 +209,12 @@ class FELoss(nn.Module):
                       mrstft=w_mrstft, phase=w_phase)
         self.kappa, self.p, self.snr_max_db, self.dominance_db = kappa, p, snr_max_db, dominance_db
         self.pesq = _pesq_module() if w_pesq else None
+        if pesq_required and w_pesq and self.pesq is None:   # a box missing the `train` extra must not train without it
+            raise ImportError("loss_cfg.pesq_required: torch_pesq is not importable (uv sync --extra train)")
         self.w["pesq"] = w_pesq if self.pesq is not None else 0.0   # TBD: no differentiable PESQ importable -> 0
         self.w_snr = w_snr   # the trainer reads w_snr / last_snr_clamp_fraction like HybridLoss
         self.last_snr_clamp_fraction = torch.tensor(0.)
-        self.last_terms = {}
+        self.last_terms, self.last_pesq_items = {}, 0
 
     def forward(self, pred, true, frame_weight=None, is_clean=None, noisy=None):
         pr, pi, pm = _compress(pred, self.p); tr, ti, tm = _compress(true, self.p)
@@ -164,7 +234,7 @@ class FELoss(nn.Module):
         snr = absolute_snr(y_p, y_t)
         self.last_snr_clamp_fraction = (snr.detach() >= self.snr_max_db).float().mean()
         t["snr"] = -snr.clamp(max=self.snr_max_db).mean()
-        t["pesq"] = self.pesq(y_t, y_p).mean() if self.w["pesq"] else pred.new_zeros(())
+        t["pesq"], self.last_pesq_items = pesq_term(self.pesq, y_p, y_t) if self.w["pesq"] else (pred.new_zeros(()), 0)
         t["mrstft"] = mr_stft(y_p, y_t) if self.w["mrstft"] else pred.new_zeros(())
         if self.w["phase"]:
             # speech-dominant bins: clean power above the residual noise (noisy - clean) by dominance_db;
