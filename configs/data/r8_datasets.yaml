@@ -262,11 +262,14 @@ datasets:
     extract: zip
     scanner: vaani.data.sources.scan_demand
     manifest: [data/manifests/demand.parquet, data/manifests/demand_pairs.parquet]
-    needed_by: ['gate:G1']
+    needed_by: ['gate:G1', ab1_fe_mini_s0, ab1_fe_mini_s1, ab1_refvalid_s0, ab1_refvalid_s1, ab2_p_s0, ab2_p_s1, ab2_pr_nhat_s0,
+      ab2_pr_nhat_s1, ab2_pr_pld_s0, ab2_pr_pld_s1, ab3_refdrop00_s0, ab3_refdrop00_s1, ab3_refdrop30_s0,
+      ab3_refdrop30_s1, ab3b_tail00, ab3b_tail10, ab4_bounded_df0, ab4_bounded_df3, ab4_unbounded_df3, ab6_kappa1,
+      ab6_kappa2, ab6_kappa4, r8_fe_mini, r8_refvalid_v2]
     licence: 'conflict: Zenodo field CC BY 4.0, record text CC BY-SA 3.0'
     notes: 17 x 16 kHz zips + SCAFE_48k (no SCAFE_16k exists; scan_demand resamples). demand.parquet is the r7 one-pair
-      (ch01+ch09) scan G1 reads; demand_pairs.parquet holds every measured 12 cm-like pair (plan 11.5), which no r8 config
-      names yet. The laptop's SCAFE_16k.zip is the 48k file under a 16k name.
+      (ch01+ch09) scan G1 reads; demand_pairs.parquet holds every measured 12 cm-like pair (plan 11.5), which every mixer v2
+      r8 config trains on. The laptop's SCAFE_16k.zip is the 48k file under a 16k name.
     root: .
     scans:
     - {scanner: vaani.data.sources.scan_demand, manifest: data/manifests/demand.parquet}
@@ -346,6 +349,103 @@ datasets:
     hf_repo_type: model
     hf_revision: 536b0662742c02347bc0e980a01041f333bce120
     hf_cache: true
+  lombard_grid:
+    access: direct
+    credentials: []
+    urls: ['https://zenodo.org/records/3736465']
+    files:
+    - name: lombardgrid_audio.zip
+      url: https://zenodo.org/api/records/3736465/files/lombardgrid_audio.zip/content
+      size_bytes: 652614041
+      md5: fa0cfc739705323b53ba50e148b3a144
+      mirrors: ['https://spandh.dcs.shef.ac.uk/avlombard/data/lombardgrid_audio.zip']
+    size_gb: 0.653
+    dest: data/raw/lombard_grid_src
+    extract: zip
+    scanner: vaani.data.sources.scan_lombard_grid
+    manifest: data/manifests/lombard_grid.parquet
+    needed_by: [ab1_fe_mini_s0, ab1_fe_mini_s1, ab1_refvalid_s0, ab1_refvalid_s1, ab2_p_s0, ab2_p_s1, ab2_pr_nhat_s0,
+      ab2_pr_nhat_s1, ab2_pr_pld_s0, ab2_pr_pld_s1, ab3_refdrop00_s0, ab3_refdrop00_s1, ab3_refdrop30_s0,
+      ab3_refdrop30_s1, ab3b_tail00, ab3b_tail10, ab4_bounded_df0, ab4_bounded_df3, ab4_unbounded_df3, ab6_kappa1,
+      ab6_kappa2, ab6_kappa4, r8_fe_mini, r8_refvalid_v2]
+    licence: CC BY 4.0
+    notes: 'TBD: the file-name pattern inside the zip is not inspected (the scanner assumes <spk>_<l|p>_<sentence>.wav).'
+    root: .
+  fsd50k:
+    access: direct
+    credentials: []
+    urls: ['https://zenodo.org/records/4060432']
+    files:
+    - {name: FSD50K.dev_audio.zip, url: 'https://zenodo.org/api/records/4060432/files/FSD50K.dev_audio.zip/content', size_bytes: 2306663327,
+      md5: c480d119b8f7a7e32fdb58f3ea4d6c5a}
+    - {name: FSD50K.dev_audio.z01, url: 'https://zenodo.org/api/records/4060432/files/FSD50K.dev_audio.z01/content', size_bytes: 3221225472,
+      md5: faa7cf4cc076fc34a44a479a5ed862a3}
+    - {name: FSD50K.dev_audio.z02, url: 'https://zenodo.org/api/records/4060432/files/FSD50K.dev_audio.z02/content', size_bytes: 3221225472,
+      md5: 8f9b66153e68571164fb1315d00bc7bc}
+    - {name: FSD50K.dev_audio.z03, url: 'https://zenodo.org/api/records/4060432/files/FSD50K.dev_audio.z03/content', size_bytes: 3221225472,
+      md5: 1196ef47d267a993d30fa98af54b7159}
+    - {name: FSD50K.dev_audio.z04, url: 'https://zenodo.org/api/records/4060432/files/FSD50K.dev_audio.z04/content', size_bytes: 3221225472,
+      md5: d088ac4e11ba53daf9f7574c11cccac9}
+    - {name: FSD50K.dev_audio.z05, url: 'https://zenodo.org/api/records/4060432/files/FSD50K.dev_audio.z05/content', size_bytes: 3221225472,
+      md5: 81356521aa159accd3c35de22da28c7f}
+    - {name: FSD50K.eval_audio.zip, url: 'https://zenodo.org/api/records/4060432/files/FSD50K.eval_audio.zip/content', size_bytes: 3037675767,
+      md5: 6fa47636c3a3ad5c7dfeba99f2637982}
+    - {name: FSD50K.eval_audio.z01, url: 'https://zenodo.org/api/records/4060432/files/FSD50K.eval_audio.z01/content', size_bytes: 3221225472,
+      md5: 3090670eaeecc013ca1ff84fe4442aeb}
+    - {name: FSD50K.metadata.zip, url: 'https://zenodo.org/api/records/4060432/files/FSD50K.metadata.zip/content', size_bytes: 6700838,
+      md5: b9ea0c829a411c1d42adb9da539ed237}
+    - {name: FSD50K.ground_truth.zip, url: 'https://zenodo.org/api/records/4060432/files/FSD50K.ground_truth.zip/content',
+      size_bytes: 334701, md5: ca27382c195e37d2269c4c866dd73485}
+    size_gb: 24.679
+    dest: data/raw/fsd50k_src
+    extract: zip_split
+    scanner: vaani.data.sources.scan_fsd50k
+    manifest: data/manifests/fsd50k.parquet
+    needed_by: [ab1_fe_mini_s0, ab1_fe_mini_s1, ab1_refvalid_s0, ab1_refvalid_s1, ab2_p_s0, ab2_p_s1, ab2_pr_nhat_s0,
+      ab2_pr_nhat_s1, ab2_pr_pld_s0, ab2_pr_pld_s1, ab3_refdrop00_s0, ab3_refdrop00_s1, ab3_refdrop30_s0,
+      ab3_refdrop30_s1, ab3b_tail00, ab3b_tail10, ab4_bounded_df0, ab4_bounded_df3, ab4_unbounded_df3, ab6_kappa1,
+      ab6_kappa2, ab6_kappa4, r8_fe_mini, r8_refvalid_v2]
+    licence: per clip; the scanner keeps CC0 and CC BY only
+    notes: Split zips are joined with Info-ZIP 'zip -s 0' (apt install zip) and need ~2x space while joining.
+    root_find: FSD50K.ground_truth
+  c3gd:
+    access: direct
+    credentials: []
+    urls: ['https://zenodo.org/records/22286299']
+    files:
+    - {name: C3GD.zip, url: 'https://zenodo.org/api/records/22286299/files/C3GD.zip/content', size_bytes: 771109714, md5: a7d1961da8b7733c7019853b80d706d4}
+    size_gb: 0.771
+    dest: data/raw/c3gd_src
+    extract: zip
+    scanner: vaani.data.sources.scan_c3gd
+    manifest: data/manifests/c3gd.parquet
+    needed_by: [ab1_fe_mini_s0, ab1_fe_mini_s1, ab1_refvalid_s0, ab1_refvalid_s1, ab2_p_s0, ab2_p_s1, ab2_pr_nhat_s0,
+      ab2_pr_nhat_s1, ab2_pr_pld_s0, ab2_pr_pld_s1, ab3_refdrop00_s0, ab3_refdrop00_s1, ab3_refdrop30_s0,
+      ab3_refdrop30_s1, ab3b_tail00, ab3b_tail10, ab4_bounded_df0, ab4_bounded_df3, ab4_unbounded_df3, ab6_kappa1,
+      ab6_kappa2, ab6_kappa4, r8_fe_mini, r8_refvalid_v2]
+    licence: CC BY 4.0
+    notes: Zip root C3GD/ with data/{ClassId}-{EventId}-{Platform}-{MicId}-{FileId}-{ClipId}.wav (Zenodo preview listing,
+      993/993 names parse) and metadata.csv.
+    root_find: data/*.wav
+  avq_drone:
+    access: direct
+    credentials: []
+    urls: ['https://zenodo.org/records/4553667']
+    files:
+    - {name: all_drone_noises.zip, url: 'https://zenodo.org/api/records/4553667/files/all_drone_noises.zip/content', size_bytes: 60045688,
+      md5: d92ba84946d91e81422ff29ab49fe4ac}
+    size_gb: 0.06
+    dest: data/raw/avq_drone_src
+    extract: zip
+    scanner: vaani.data.sources.scan_avq_drone
+    manifest: data/manifests/avq_drone.parquet
+    needed_by: [ab1_fe_mini_s0, ab1_fe_mini_s1, ab1_refvalid_s0, ab1_refvalid_s1, ab2_p_s0, ab2_p_s1, ab2_pr_nhat_s0,
+      ab2_pr_nhat_s1, ab2_pr_pld_s0, ab2_pr_pld_s1, ab3_refdrop00_s0, ab3_refdrop00_s1, ab3_refdrop30_s0,
+      ab3_refdrop30_s1, ab3b_tail00, ab3b_tail10, ab4_bounded_df0, ab4_bounded_df3, ab4_unbounded_df3, ab6_kappa1,
+      ab6_kappa2, ab6_kappa4, r8_fe_mini, r8_refvalid_v2]
+    licence: CC BY 4.0
+    notes: Zip root noises-train-drones/n116-n120.wav, noises-test-drones/n121-n122.wav (Zenodo preview listing).
+    root: .
 optional:
   ears_more:
     access: direct
@@ -581,75 +681,6 @@ optional:
     licence: CC BY 4.0
     notes: Plan 11.5 candidate, 24 kHz.
     root: .
-  lombard_grid:
-    access: direct
-    credentials: []
-    urls: ['https://zenodo.org/records/3736465']
-    files:
-    - name: lombardgrid_audio.zip
-      url: https://zenodo.org/api/records/3736465/files/lombardgrid_audio.zip/content
-      size_bytes: 652614041
-      md5: fa0cfc739705323b53ba50e148b3a144
-      mirrors: ['https://spandh.dcs.shef.ac.uk/avlombard/data/lombardgrid_audio.zip']
-    size_gb: 0.653
-    dest: data/raw/lombard_grid_src
-    extract: zip
-    scanner: vaani.data.sources.scan_lombard_grid
-    manifest: data/manifests/lombard_grid.parquet
-    needed_by: []
-    licence: CC BY 4.0
-    notes: 'TBD: the file-name pattern inside the zip is not inspected (the scanner assumes <spk>_<l|p>_<sentence>.wav).'
-    root: .
-  fsd50k:
-    access: direct
-    credentials: []
-    urls: ['https://zenodo.org/records/4060432']
-    files:
-    - {name: FSD50K.dev_audio.zip, url: 'https://zenodo.org/api/records/4060432/files/FSD50K.dev_audio.zip/content', size_bytes: 2306663327,
-      md5: c480d119b8f7a7e32fdb58f3ea4d6c5a}
-    - {name: FSD50K.dev_audio.z01, url: 'https://zenodo.org/api/records/4060432/files/FSD50K.dev_audio.z01/content', size_bytes: 3221225472,
-      md5: faa7cf4cc076fc34a44a479a5ed862a3}
-    - {name: FSD50K.dev_audio.z02, url: 'https://zenodo.org/api/records/4060432/files/FSD50K.dev_audio.z02/content', size_bytes: 3221225472,
-      md5: 8f9b66153e68571164fb1315d00bc7bc}
-    - {name: FSD50K.dev_audio.z03, url: 'https://zenodo.org/api/records/4060432/files/FSD50K.dev_audio.z03/content', size_bytes: 3221225472,
-      md5: 1196ef47d267a993d30fa98af54b7159}
-    - {name: FSD50K.dev_audio.z04, url: 'https://zenodo.org/api/records/4060432/files/FSD50K.dev_audio.z04/content', size_bytes: 3221225472,
-      md5: d088ac4e11ba53daf9f7574c11cccac9}
-    - {name: FSD50K.dev_audio.z05, url: 'https://zenodo.org/api/records/4060432/files/FSD50K.dev_audio.z05/content', size_bytes: 3221225472,
-      md5: 81356521aa159accd3c35de22da28c7f}
-    - {name: FSD50K.eval_audio.zip, url: 'https://zenodo.org/api/records/4060432/files/FSD50K.eval_audio.zip/content', size_bytes: 3037675767,
-      md5: 6fa47636c3a3ad5c7dfeba99f2637982}
-    - {name: FSD50K.eval_audio.z01, url: 'https://zenodo.org/api/records/4060432/files/FSD50K.eval_audio.z01/content', size_bytes: 3221225472,
-      md5: 3090670eaeecc013ca1ff84fe4442aeb}
-    - {name: FSD50K.metadata.zip, url: 'https://zenodo.org/api/records/4060432/files/FSD50K.metadata.zip/content', size_bytes: 6700838,
-      md5: b9ea0c829a411c1d42adb9da539ed237}
-    - {name: FSD50K.ground_truth.zip, url: 'https://zenodo.org/api/records/4060432/files/FSD50K.ground_truth.zip/content',
-      size_bytes: 334701, md5: ca27382c195e37d2269c4c866dd73485}
-    size_gb: 24.679
-    dest: data/raw/fsd50k_src
-    extract: zip_split
-    scanner: vaani.data.sources.scan_fsd50k
-    manifest: data/manifests/fsd50k.parquet
-    needed_by: []
-    licence: per clip; the scanner keeps CC0 and CC BY only
-    notes: Split zips are joined with Info-ZIP 'zip -s 0' (apt install zip) and need ~2x space while joining.
-    root_find: FSD50K.ground_truth
-  c3gd:
-    access: direct
-    credentials: []
-    urls: ['https://zenodo.org/records/22286299']
-    files:
-    - {name: C3GD.zip, url: 'https://zenodo.org/api/records/22286299/files/C3GD.zip/content', size_bytes: 771109714, md5: a7d1961da8b7733c7019853b80d706d4}
-    size_gb: 0.771
-    dest: data/raw/c3gd_src
-    extract: zip
-    scanner: vaani.data.sources.scan_c3gd
-    manifest: data/manifests/c3gd.parquet
-    needed_by: []
-    licence: CC BY 4.0
-    notes: Zip root C3GD/ with data/{ClassId}-{EventId}-{Platform}-{MicId}-{FileId}-{ClipId}.wav (Zenodo preview listing,
-      993/993 names parse) and metadata.csv.
-    root_find: data/*.wav
   musan_noise:
     access: direct
     credentials: []
@@ -666,22 +697,6 @@ optional:
     notes: Only musan/noise is extracted. md5 from openslr checksum.md5.
     members: [musan/noise]
     root: musan
-  avq_drone:
-    access: direct
-    credentials: []
-    urls: ['https://zenodo.org/records/4553667']
-    files:
-    - {name: all_drone_noises.zip, url: 'https://zenodo.org/api/records/4553667/files/all_drone_noises.zip/content', size_bytes: 60045688,
-      md5: d92ba84946d91e81422ff29ab49fe4ac}
-    size_gb: 0.06
-    dest: data/raw/avq_drone_src
-    extract: zip
-    scanner: vaani.data.sources.scan_avq_drone
-    manifest: data/manifests/avq_drone.parquet
-    needed_by: []
-    licence: CC BY 4.0
-    notes: Zip root noises-train-drones/n116-n120.wav, noises-test-drones/n121-n122.wav (Zenodo preview listing).
-    root: .
   wham_noise:
     access: direct
     credentials: []
