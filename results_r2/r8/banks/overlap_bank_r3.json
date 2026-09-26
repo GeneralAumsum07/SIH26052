@@ -1,0 +1,134 @@
+{
+ "spec": {
+  "bank": {
+   "seed": 0,
+   "namespace": null,
+   "n": 5000,
+   "armoured_frac": 0.0,
+   "shuffle": false
+  },
+  "bank_r3": {
+   "seed": 0,
+   "namespace": null,
+   "n": 5000,
+   "armoured_frac": 0.2,
+   "shuffle": true
+  },
+  "bank_r8": {
+   "seed": 8,
+   "namespace": "train",
+   "n": 5000,
+   "armoured_frac": 0.2,
+   "shuffle": true
+  },
+  "bank_eval_r8": {
+   "seed": 2610,
+   "namespace": "eval",
+   "n": 1000,
+   "armoured_frac": 0.0,
+   "shuffle": true
+  }
+ },
+ "derivation_check": {
+  "bank": {
+   "rt60_equal": 5000,
+   "n": 5000
+  },
+  "bank_r3": {
+   "rt60_equal": 5000,
+   "n": 5000
+  },
+  "bank_r8": {
+   "rt60_equal": 5000,
+   "n": 5000
+  },
+  "bank_eval_r8": {
+   "rt60_equal": 1000,
+   "n": 1000
+  }
+ },
+ "derived": {
+  "bank_r3~bank": {
+   "shared_rooms": 1394,
+   "of_a": 5000,
+   "of_b": 5000,
+   "share_of_b": 0.2788,
+   "shared_armoured_in_a": 0,
+   "first_pairs": [
+    [
+     8,
+     209
+    ],
+    [
+     10,
+     211
+    ],
+    [
+     13,
+     214
+    ],
+    [
+     14,
+     215
+    ],
+    [
+     15,
+     216
+    ]
+   ]
+  },
+  "bank_r3~bank_eval_r8": {
+   "shared_rooms": 0,
+   "of_a": 5000,
+   "of_b": 1000,
+   "share_of_b": 0.0,
+   "shared_armoured_in_a": 0,
+   "first_pairs": []
+  },
+  "bank_r8~bank": {
+   "shared_rooms": 0,
+   "of_a": 5000,
+   "of_b": 5000,
+   "share_of_b": 0.0,
+   "shared_armoured_in_a": 0,
+   "first_pairs": []
+  },
+  "bank_r8~bank_eval_r8": {
+   "shared_rooms": 0,
+   "of_a": 5000,
+   "of_b": 1000,
+   "share_of_b": 0.0,
+   "shared_armoured_in_a": 0,
+   "first_pairs": []
+  },
+  "bank_r3~bank_r8": {
+   "shared_rooms": 0,
+   "of_a": 5000,
+   "of_b": 5000,
+   "share_of_b": 0.0,
+   "shared_armoured_in_a": 0,
+   "first_pairs": []
+  }
+ },
+ "files": {
+  "bank_r3~bank": {
+   "pairs": 1394,
+   "rt60_equal": 1394,
+   "speech_rir_bitequal_on_prefix": 1394,
+   "speech_rir_maxdiff": 0.0,
+   "tail_beyond_prefix_nonzero": 0,
+   "shapes": {
+    "bank_r3": [
+     5000,
+     2,
+     16000
+    ],
+    "bank": [
+     5000,
+     2,
+     9600
+    ]
+   }
+  }
+ }
+}

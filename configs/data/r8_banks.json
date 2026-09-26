@@ -4,14 +4,16 @@
     "sha256": "dafb2e84e34099ff4a92db4e0941fbceb6aa2ef85c5408c8f3f336c652e1f988",
     "sidecars": {},
     "asset": "bank.npz",
-    "built_with": "python scripts/make_rir_bank.py --out data/rirs/bank.npz"
+    "built_with": "python scripts/make_rir_bank.py --out data/rirs/bank.npz",
+    "note": "built before the armoured mode (c053f7b): the current builder shuffles the armoured mask even at frac 0, so built_with no longer rebuilds it; fetch by sha256 (results_r2/r8/banks/README.md)"
   },
   "bank_r3": {
     "file": "data/rirs/bank_r3.npz",
     "sha256": "e4e67463072e1dca14b94bef97a99bb85da34ebee7ec657a1f1dc7554df1b59f",
     "sidecars": {},
     "asset": "bank_r3.npz",
-    "built_with": "python scripts/make_rir_bank.py --out data/rirs/bank_r3.npz --armoured-frac 0.2 --max-len-s 1.0"
+    "built_with": "python scripts/make_rir_bank.py --out data/rirs/bank_r3.npz --armoured-frac 0.2 --max-len-s 1.0",
+    "note": "shares 1394 plain rooms with bank.npz, the eval_r2 val render; the laptop copy is sha256 99dcfb26..., not this published one (results_r2/r8/banks/README.md)"
   },
   "bank_r8": {
     "file": "data/rirs/bank_r8.npz",

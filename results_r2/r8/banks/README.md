@@ -89,6 +89,39 @@ Stats per room class, median [p10, p90], all 5000 rooms:
 
 The rest (T30 at the reference, plain-room envelope rows) is in `validate.csv`.
 
+## bank_r3 as an ablation arm: room overlap with the val render (2026-09-26)
+
+Question: can a pilot on bank_r3 (to separate the bank change from the recipe change) be compared with
+`ab1_fe_mini_s0` on val? The val render that selects checkpoints (`data/eval_r2/val`, hash b5f7a4d43bee) used
+`data/rirs/bank.npz`: `scripts/render_all_eval_sets.sh` and `scripts/remote_setup.sh` render it with no `--bank`, and
+`render_eval_sets.py --bank` defaults to `data/rirs/bank.npz`.
+
+```
+.venv/Scripts/python.exe results_r2/r8/banks/overlap_bank_r3.py results_r2/r8/banks/overlap_bank_r3.json
+```
+The script re-derives every bank's drawn room parameters from the builder's seed code (`rirs.bank_rng`,
+`draw_room_params`), with no simulation, and then checks the shared pairs on the laptop files.
+
+- The derivations are the banks. They reproduce every stored rt60: bank 5000/5000, bank_r3 5000/5000, bank_r8
+  5000/5000, bank_eval_r8 1000/1000. bank.npz is the legacy `default_rng(0)` stream with no armoured shuffle. It
+  predates c053f7b, and the current `build_bank(armoured_frac=0)` shuffles the all-plain mask, which consumes draws, so
+  it no longer rebuilds bank.npz. The stored rt60 match 0/5000 under the shuffled stream.
+- **bank_r3 and bank.npz share 1394 rooms**, 27.9 % of bank.npz (plan 3.5's "28 %"). All 1394 are plain rooms, and the
+  streams realign after bank_r3's armoured draws (first pairs: bank_r3 room 8 is bank.npz room 209, 10 is 211, and so
+  on). On the laptop files, all 1394 speech RIR pairs are bit-equal over bank.npz's 0.6 s, and bank_r3's extra 0.4 s
+  is all zeros. bank_r3 is the laptop copy (sha256 99dcfb26...). The plain rooms are image-source only, so the
+  published copy is inferred to share the same rooms.
+- 0 shared rooms for bank_r3 ~ bank_eval_r8 (the r8 test bank), bank_r8 ~ bank.npz, bank_r8 ~ bank_eval_r8 and
+  bank_r3 ~ bank_r8.
+- Val exposure: 884 of the 1480 val items take the room path (596 take the parametric path; count of `path` in the
+  item JSONs). With the uniform room draw, about 0.279 x 884 = 246 val items (about 1 in 6) use a room that is also in
+  bank_r3 (inferred; the item JSONs do not record the room index).
+
+So an arm trained on bank_r3 trains on the exact RIRs of about a sixth of the val items, and ab1 on bank_r8 does not.
+Its val scores, and the checkpoint selection built on them, would be biased toward bank_r3. The arm was **not added**
+to `configs/retraining/r8_ablations/` (docs/impl/2026-09-24/reports/boxplan.md, Decisions). r7 trained on bank_r3 and
+was selected on this val set, so r7's own selection carried the same overlap (plan 3.5).
+
 ## sha256
 
 | file | sha256 |
@@ -157,3 +190,5 @@ microphone delay"; per-mic absolute and speaker-relative positions are in `env_f
 - `bench_radius.py` / `bench_radius.json`: radius smoke and bank_r3 re-derivation check.
 - `probe_tail_variance.py` / `probe_tail_variance.json`: run-to-run tail variance at a fixed radius.
 - `validate_bank.py` / `validate.json` / `validate.csv`: loader, mixer v2 draws, stats, overlap, sha256.
+- `overlap_bank_r3.py` / `overlap_bank_r3.json`: re-derived room draws of bank, bank_r3, bank_r8 and bank_eval_r8,
+  their shared rooms, and the bank_r3 ~ bank.npz pairs checked on the files.
