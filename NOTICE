@@ -42,6 +42,20 @@ the r7 refiner inherits the backbone's data). Generated table: docs/licences.md.
 Room impulse responses are simulated in-repo with pyroomacoustics (vaani/data/rirs.py,
 data/rirs/bank_r3.npz); no recorded third-party RIRs enter the r7 recipe.
 
+The r8 retraining recipes (configs/retraining/r8_fe_mini.yaml, r8_refvalid_v2.yaml and
+r8_ablations/) are not shipped. They drop drone and noisex92 (eval-only), read mad_v2.parquet in
+place of mad.parquet, and add, as recorded in configs/data/r8_datasets.yaml:
+
+  demand        data/manifests/demand_pairs.parquet  CC BY-SA (sources conflict)  yes, share-alike
+  avq_drone     data/manifests/avq_drone.parquet     CC BY 4.0                    yes
+  c3gd          data/manifests/c3gd.parquet          CC BY 4.0                    yes
+  fsd50k        data/manifests/fsd50k.parquet        CC0 / CC BY per clip         yes
+                                                     (the scanner drops NC and Sampling+ clips)
+  lombard_grid  data/manifests/lombard_grid.parquet  CC BY 4.0                    yes
+
+Their RIRs are the in-repo simulated bank data/rirs/bank_r8.npz. Weights trained on them are
+research-only on the same terms as above, since ears, esc50 and mad remain in the recipe.
+
 The r7 backbone was initialised from results of the r6_e256 recipe (init_from runs/r6_e256/best.pt),
 which reads the same manifest list.
 
