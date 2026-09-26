@@ -3,20 +3,26 @@
 
     python scripts/r8_test_table.py            # the three PROTOCOL CSVs -> results_r2/r8/testset/table.md + table_cells.csv
 
-Reads the three per-item CSVs that PROTOCOL.md's scoring commands write (`vaani.eval` on data/eval_r8_test, the
+Reads the three per-item CSVs that PROTOCOL.md's scoring commands write (`vaani.eval` on data/eval_r8_test_b, the
 selected r8 checkpoint, r7 and raw) and writes the pre-registered layout:
 - headline rows per subset (v1-nominal envelope, v1, defence, heldout, the Lombard/loud bucket, v2 scenes; fault apart);
 - per category x input SNR: mean [95% clustered-bootstrap CI] of SNR_out / STOI / PESQ / DNSMOS OVRL, the per-clip
   all-three pass rate `pass3`, and PASS / ~ / FAIL against the PS targets (15 dB / 0.85 / 2.5, strict);
 - r8 minus r7 and r8 minus raw, paired per item, clustered the same way;
 - v2 per scene (SNR is a mixer output there) with the snr_in quantiles alongside, and fixed snr_in bands;
-- the fault subset separately (as vaani/report.py), and recovery_s where the CSV has it.
+- the fault subset separately (as vaani/report.py), and recovery_s where the CSV has it;
+- `pesq_nan` beside every PESQ column and the pesq 0.0.4 footnote under every PESQ table (Rachit, 2026-09-26).
+
+Test root (Rachit, 2026-09-26): data/eval_r8_test_b (EVALSET_HASH 5bfda53eacbf). data/eval_r8_test (ed024af085a2) is
+superseded, frozen and unscored: a root with that hash, or a CSV whose v2 rows carry that render's snr_in, is refused
+unless --allow-superseded (the table is then labelled as not the pre-registered test).
 
 Cluster (PROTOCOL): `impulse_source` for the gunshot category, `noise_source` otherwise; an item whose cluster key is
 empty (fault/*, v1/clean: no noise bed) is its own cluster. Resamples: 1,000, seed 0 (vaani.report.cluster_ci).
 Written before any r8 test score existed and tested only on synthetic CSVs (tests/test_r8_test_table.py).
 """
 import argparse
+import hashlib
 import sys
 from pathlib import Path
 
@@ -32,7 +38,12 @@ TESTSET = "results_r2/r8/testset"
 DEFAULTS = {"r8": f"{TESTSET}/r8_selected.csv", "r7": f"{TESTSET}/r7_e256_wr64_cascade.csv", "raw": f"{TESTSET}/raw.csv"}
 ROLES = ("r8", "r7", "raw")
 CONTRASTS = (("r8", "r7"), ("r8", "raw"))
-EVALSET_HASH = "ed024af085a2"     # PROTOCOL.md; a CSV set scored on anything else is refused
+EVALSET_HASH = "5bfda53eacbf"     # test root B (Rachit, 2026-09-26); a set scored on anything else is refused
+EVAL_ROOT = "data/eval_r8_test_b/test"
+SUPERSEDED = {"ed024af085a2": "data/eval_r8_test/test"}     # the original render: frozen, never scored
+# sha256[:12] of the sorted "bucket,id,snr_in:.3f" lines of the v2 rows (clip meta snr_db == index.csv snr_db): the renders
+# share every (bucket, id) and differ in snr_in on v2 rows only, so this names the root a CSV was scored on
+V2_DIGEST = {"5bfda53eacbf": "8a4f3615fdb7", "ed024af085a2": "bac5e7e0cc92"}
 N_ITEMS = 2308
 METRICS = [("snr_out", "SNR_out dB", 2), ("stoi", "STOI", 3), ("pesq_wb", "PESQ", 2), ("dnsmos_ovrl", "OVRL", 2)]
 DELTAS = [("snr_out", "dSNR_out dB", 2), ("stoi", "dSTOI", 3), ("pesq_wb", "dPESQ", 2), ("dnsmos_ovrl", "dOVRL", 2),
@@ -49,6 +60,16 @@ ORDER = {"v1": ["stationary", "changing", "impulsive", "impulsive+stationary", "
 # v2 snr_in bands, fixed before scoring (descriptive only; PROTOCOL registers the per-scene rows)
 V2_BANDS = [(-np.inf, -5.0), (-5.0, 5.0), (5.0, 15.0), (15.0, np.inf)]
 V2_QUANTILES = (0.1, 0.5, 0.9)
+# decision 6 (Rachit, 2026-09-26): accept the garbage reads, count the NaNs, footnote every PESQ table
+PESQ_NOTE = ("PESQ note (every PESQ column marked †): pesq 0.0.4 (the ITU P.862 reference C code) reads before the start "
+             "of a heap buffer in `utterance_split` on some noise-dominated inputs (results_r2/r8/native_crash/README.md). "
+             "Where that read faults, the isolated child of `vaani.metrics.pesq_wb` dies and the item scores NaN: it is "
+             "counted in `pesq_nan`, left out of the PESQ mean, CI and mark, and counts as not passing in `pass3`. Where "
+             "it does not fault, PESQ returns a value computed from out-of-bounds memory, which cannot be detected per "
+             "item. Measured rate: 2 of 2,280 raw noisy eval_r2_relabel/test inputs (0.09 %) under ASan "
+             "(results_r2/r8/native_crash/asan/sweep_relabel_test.tsv); the rate on model outputs was not measured.")
+PESQ_FOOT = ("† PESQ: `pesq_nan` = items whose isolated PESQ child failed (NaN, outside the mean); about 0.09 % of raw "
+             "inputs read garbage undetectably (PESQ note, top).")
 
 
 def _bool(s):
@@ -92,7 +113,35 @@ def load(paths, expect_items=N_ITEMS, allow_partial=False):
     df["cluster"] = np.where(key == "", "item:" + df.bucket.astype(str) + "|" + df.id.astype(str), key)
     df["pass3"] = pass_all(df).astype(float)       # a NaN metric (failed clip) fails
     df["failed"] = df.snr_out.isna()
+    df["pesq_nan"] = df.pesq_wb.isna() & ~df.failed     # the PESQ child alone failed; a failed clip is counted apart
     return df
+
+
+def v2_digest(g):
+    """V2_DIGEST key of one system's rows: which render its v2 snr_in values come from."""
+    v = g[g.subset == "v2"]
+    lines = sorted(f"{b},{i},{s:.3f}" for b, i, s in zip(v.bucket.astype(str), v.id.astype(str), v.snr_in))
+    return hashlib.sha256("\n".join(lines).encode()).hexdigest()[:12]
+
+
+def check_render(df, allow_superseded=False, allow_partial=False):
+    """Note for the header; refuses a CSV scored on the superseded root (or on neither known render)."""
+    notes = []
+    for r in [x for x in ROLES if x in set(df.role)]:
+        d = v2_digest(df[df.role == r]); root = next((h for h, v in V2_DIGEST.items() if v == d), None)
+        if root == EVALSET_HASH:
+            continue
+        if root in SUPERSEDED:
+            if not allow_superseded:
+                raise ValueError(f"{r}: CSV scored on the superseded root {root} ({SUPERSEDED[root]}); the r8 test root "
+                                 f"is {EVALSET_HASH} ({EVAL_ROOT}). --allow-superseded overrides (labelled)")
+            notes.append(f"**`{r}` was scored on the SUPERSEDED root {root} ({SUPERSEDED[root]}; --allow-superseded): "
+                         "not the pre-registered test.**")
+        elif allow_partial:
+            notes.append(f"`{r}`: v2 rows match no known render (digest {d}; partial draft, render not verified).")
+        else:
+            raise ValueError(f"{r}: v2 snr_in digest {d} matches no known render {V2_DIGEST}")
+    return " ".join(notes) or f"Every CSV's v2 snr_in matches the `{EVALSET_HASH}` render."
 
 
 def _v1_nominal(g):
@@ -135,11 +184,20 @@ def paired(df, a, b):
     """Per item a - b for every delta metric, on the items both scored; cluster and cell keys from a's rows."""
     cols = [m for m, _, _ in DELTAS]
     A = df[df.role == a].set_index(["bucket", "id"]); B = df[df.role == b].set_index(["bucket", "id"])
-    j = A[cols + ["cluster", "subset", "name", "snr", "snr_in", "clipped", "ref_dropout", "fault"]].join(
-        B[cols], rsuffix="_b", how="inner")
+    j = A[cols + ["pesq_nan", "cluster", "subset", "name", "snr", "snr_in", "clipped", "ref_dropout", "fault"]].join(
+        B[cols + ["pesq_nan"]], rsuffix="_b", how="inner")
     for m in cols:
         j[m] = j[m] - j[f"{m}_b"]
-    return j.drop(columns=[f"{m}_b" for m in cols]).reset_index()
+    j["pesq_nan"] = j.pesq_nan | j.pesq_nan_b          # dPESQ is NaN when either side's child failed
+    return j.drop(columns=[f"{m}_b" for m in cols + ["pesq_nan"]]).reset_index()
+
+
+def _heads(spec):
+    """Column heads: PESQ marked with the footnote dagger and followed by a pesq_nan count column."""
+    out = []
+    for m, h, _ in spec:
+        out += [h + "†", "pesq_nan"] if m == "pesq_wb" else [h]
+    return out
 
 
 class Table:
@@ -148,39 +206,46 @@ class Table:
         self.roles = [r for r in ROLES if r in set(df.role)]
         self.pairs = {(a, b): paired(df, a, b) for a, b in CONTRASTS if a in self.roles and b in self.roles}
 
-    def _cell(self, section, subset, category, snr, system, st, n):
+    def _cell(self, section, subset, category, snr, system, st, n, pesq_nan=None):
         for m, t in st.items():
             self.cells.append({"section": section, "subset": subset, "category": category, "snr_in": snr,
                                "system": system, "metric": m, "mean": t[0], "lo": t[1], "hi": t[2], "n": n})
+        if pesq_nan is not None:
+            self.cells.append({"section": section, "subset": subset, "category": category, "snr_in": snr,
+                               "system": system, "metric": "pesq_nan", "mean": pesq_nan, "lo": np.nan, "hi": np.nan,
+                               "n": n})
 
     def _rows(self, section, head, groups):
         """groups: [(label cells, subset, category, snr, frame of all roles)] -> one row per role."""
-        self.L += [f"| {head} | system | n | " + " | ".join(h for _, h, _ in METRICS) + " | pass3 | targets |",
-                   "|---" * (head.count("|") + len(METRICS) + 5) + "|"]
+        self.L += [f"| {head} | system | n | " + " | ".join(_heads(METRICS)) + " | pass3 | targets |",
+                   "|---" * (head.count("|") + len(METRICS) + 6) + "|"]
         for lab, subset, cat, snr, g in groups:
             for r in self.roles:
                 x = g[g.role == r]
                 if x.empty:
                     continue
-                st = stats(x, self.n_boot); self._cell(section, subset, cat, snr, r, st, len(x))
+                k = int(x.pesq_nan.sum()); st = stats(x, self.n_boot)
+                self._cell(section, subset, cat, snr, r, st, len(x), k)
                 cs = [fmt(st[m], d) + (f" {mark(m, st[m])}" if m in TARGETS else "") for m, _, d in METRICS]
+                cs.insert(3, str(k))
                 self.L.append(f"| {lab} | {r} | {len(x)} | " + " | ".join(cs) + f" | {fmt(st['pass3'])} | {verdict(st)} |")
-        self.L.append("")
+        self.L += ["", PESQ_FOOT, ""]
 
     def _deltas(self, section, head, groups):
         """groups: [(label, subset, category, snr, mask fn on a paired frame)]."""
         for (a, b), j in self.pairs.items():
             self.L += [f"{a} minus {b}, paired per item:", "",
-                       f"| {head} | n | " + " | ".join(h for _, h, _ in DELTAS) + " |",
-                       "|---" * (head.count("|") + len(DELTAS) + 2) + "|"]
+                       f"| {head} | n | " + " | ".join(_heads(DELTAS)) + " |",
+                       "|---" * (head.count("|") + len(DELTAS) + 3) + "|"]
             for lab, subset, cat, snr, sel in groups:
                 x = sel(j)
                 if x.empty:
                     continue
                 st = {m: cluster_ci(x[m], x.cluster, n=self.n_boot) for m, _, _ in DELTAS}
-                self._cell(section, subset, cat, snr, f"{a}-{b}", st, len(x))
-                self.L.append(f"| {lab} | {len(x)} | " + " | ".join(fmt(st[m], d) for m, _, d in DELTAS) + " |")
-            self.L.append("")
+                k = int(x.pesq_nan.sum()); self._cell(section, subset, cat, snr, f"{a}-{b}", st, len(x), k)
+                cs = [fmt(st[m], d) for m, _, d in DELTAS]; cs.insert(3, str(k))
+                self.L.append(f"| {lab} | {len(x)} | " + " | ".join(cs) + " |")
+            self.L += ["", PESQ_FOOT, ""]
 
     def headline(self):
         df = self.df
@@ -264,7 +329,9 @@ def build(df, n_boot=1000, hash_note=""):
     t.L += ["# r8 test set (G6): the single post-selection scoring", "",
             f"Generated by `scripts/r8_test_table.py` from the per-item CSVs of PROTOCOL.md. {hash_note}", "",
             "Systems: " + "; ".join(f"`{r}` = `{specs[r]}` ({int((df.role == r).sum())} rows, "
-                                    f"{int((df.failed & (df.role == r)).sum())} failed clips)" for r in t.roles) + ".", "",
+                                    f"{int((df.failed & (df.role == r)).sum())} failed clips, "
+                                    f"{int((df.pesq_nan & (df.role == r)).sum())} pesq_nan)" for r in t.roles) + ".", "",
+            PESQ_NOTE, "",
             "PS targets (SIH26052): SNR_out > 15 dB, STOI > 0.85, PESQ > 2.5, strict. Cells: mean [95% CI]. Mark: PASS = "
             "lower bound above target, ~ = mean above but bound not, FAIL = mean not above. `targets` = all three at "
             "once on the row (PASS / ~ / FAIL). `pass3` = share of clips meeting all three at once; a failed clip "
@@ -284,34 +351,44 @@ def build(df, n_boot=1000, hash_note=""):
             "tilt only (no F0 shift).",
             "- Siren has two ESC-50 test recordings and NOISEX-92 three held-out files: their CIs are wide.",
             "- v2 `clipped` = input past the 123 dB SPL rails; the v2 clean target is pre-saturation, so v2 scores "
-            "include saturation loss by design.", ""]
+            "include saturation loss by design.",
+            "- PESQ garbage reads (PESQ note, top; accepted, Rachit 2026-09-26): about 0.09 % of raw inputs, not "
+            "detectable per item; `pesq_nan` counts only the reads that faulted.", ""]
     return "\n".join(t.L), pd.DataFrame(t.cells)
 
 
-def check_hash(eval_root):
+def check_hash(eval_root, allow_superseded=False):
     """Note for the header; raises if the set on disk is not the pre-registered one."""
     h = Path(eval_root) / "EVALSET_HASH"
     if not h.exists():
         return f"Eval set hash not checked here ({h} absent); PROTOCOL registers `{EVALSET_HASH}`."
     got = h.read_text().strip()
+    if got in SUPERSEDED and allow_superseded:
+        return f"**Eval set EVALSET_HASH `{got}`: the SUPERSEDED root (--allow-superseded), not PROTOCOL's.**"
+    if got in SUPERSEDED:
+        raise ValueError(f"{h} = {got!r}: the superseded root ({SUPERSEDED[got]}); the r8 test root is {EVALSET_HASH!r} "
+                         f"({EVAL_ROOT}). --allow-superseded overrides (labelled)")
     if got != EVALSET_HASH:
         raise ValueError(f"{h} = {got!r}, PROTOCOL registers {EVALSET_HASH!r}")
-    return f"Eval set `data/eval_r8_test/test`, EVALSET_HASH `{got}` (matches PROTOCOL)."
+    return f"Eval set `{EVAL_ROOT}`, EVALSET_HASH `{got}` (matches PROTOCOL)."
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     for r in ROLES:
         ap.add_argument(f"--{r}", default=str(REPO / DEFAULTS[r]), help=f"per-item CSV of {r} (default {DEFAULTS[r]})")
-    ap.add_argument("--eval-root", default=str(REPO / "data/eval_r8_test/test"))
+    ap.add_argument("--eval-root", default=str(REPO / EVAL_ROOT))
     ap.add_argument("--boot", type=int, default=1000)
     ap.add_argument("--expect-items", type=int, default=N_ITEMS)
     ap.add_argument("--allow-partial", action="store_true", help="accept short or mismatched CSVs (drafts only)")
+    ap.add_argument("--allow-superseded", action="store_true",
+                    help=f"accept the superseded root {', '.join(SUPERSEDED)} (never for the G6 table; labelled)")
     ap.add_argument("--out", default=str(REPO / TESTSET / "table.md"))
     ap.add_argument("--cells", help="long-format CSV of every number in the table (default: <out stem>_cells.csv)")
     a = ap.parse_args(argv)
     df = load({r: getattr(a, r) for r in ROLES}, a.expect_items, a.allow_partial)
-    md, cells = build(df, a.boot, check_hash(a.eval_root))
+    note = check_hash(a.eval_root, a.allow_superseded) + " " + check_render(df, a.allow_superseded, a.allow_partial)
+    md, cells = build(df, a.boot, note)
     out = Path(a.out); out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(md, encoding="utf-8")
     cells.to_csv(a.cells or out.with_name(out.stem + "_cells.csv"), index=False)

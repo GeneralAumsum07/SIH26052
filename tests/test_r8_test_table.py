@@ -158,14 +158,22 @@ def test_fault_section_is_separate_and_cells_csv_holds_every_row(tmp_path):
     assert {"r8-r7", "r8-raw"} <= set(cells.system)
 
 
-def test_hash_check_and_main_end_to_end(tmp_path):
+def _bless(monkeypatch, paths):
+    """Register the synthetic CSVs' v2 digest as root B's, so main() takes them as scored on the test root."""
+    df = T.load(paths, expect_items=N)
+    d = T.v2_digest(df[df.role == "r8"])
+    monkeypatch.setattr(T, "V2_DIGEST", {T.EVALSET_HASH: d, "ed024af085a2": "0" * 12})
+    return df, d
+
+
+def test_hash_check_and_main_end_to_end(tmp_path, monkeypatch):
     root = tmp_path / "set"; root.mkdir()
     assert "not checked" in T.check_hash(root)
     (root / "EVALSET_HASH").write_text("deadbeef0000\n")
     with pytest.raises(ValueError, match="registers"):
         T.check_hash(root)
     (root / "EVALSET_HASH").write_text(T.EVALSET_HASH + "\n")
-    p = _paths(tmp_path)
+    p = _paths(tmp_path); _bless(monkeypatch, p)
     md, cells = T.main(["--r8", str(p["r8"]), "--r7", str(p["r7"]), "--raw", str(p["raw"]), "--eval-root", str(root),
                         "--expect-items", str(N), "--boot", "20", "--out", str(tmp_path / "out/table.md")])
     assert (tmp_path / "out/table.md").read_text(encoding="utf-8") == md and "matches PROTOCOL" in md
@@ -177,3 +185,94 @@ def test_defaults_are_the_protocol_paths():
     for p in T.DEFAULTS.values():
         assert p in proto
     assert T.EVALSET_HASH in proto and f"{T.N_ITEMS:,}" in proto
+
+
+def _cols(line):
+    return [c.strip() for c in line.strip().strip("|").split("|")]
+
+
+def test_pesq_nan_counts_and_footnote_under_every_pesq_table(tmp_path):
+    p = _paths(tmp_path)
+    d = pd.read_csv(p["r8"], dtype={"id": str})
+    d.loc[d.category == "defence/gunshot", "pesq_wb"] = np.nan                                 # 4 PESQ-child failures
+    d.loc[d.category == "v1/clean", ["snr_out", "stoi", "pesq_wb", "dnsmos_ovrl"]] = np.nan    # 4 failed clips, apart
+    d.to_csv(p["r8"], index=False)
+    r = pd.read_csv(p["raw"], dtype={"id": str}); r.loc[r.id == "0000", "pesq_wb"] = np.nan; r.to_csv(p["raw"], index=False)
+    df = T.load(p, expect_items=N)
+    assert int(df[df.role == "r8"].pesq_nan.sum()) == 4 and int(df[df.role == "raw"].pesq_nan.sum()) == 1
+    md, cells = T.build(df, n_boot=20)
+    assert "4 failed clips, 4 pesq_nan" in md and "0 failed clips, 1 pesq_nan" in md and T.PESQ_NOTE in md
+    assert "2 of 2,280" in T.PESQ_NOTE and "results_r2/r8/native_crash/asan/sweep_relabel_test.tsv" in T.PESQ_NOTE
+    lines = md.splitlines()
+    heads = [i for i, l in enumerate(lines) if l.startswith("|") and "PESQ" in l and "---" not in l
+             and ("| system |" in l or "dPESQ" in l)]
+    assert len(heads) > 10
+    for i in heads:                                              # every PESQ table: marked head, pesq_nan, footnote
+        c = _cols(lines[i]); k = c.index("PESQ†") if "PESQ†" in c else c.index("dPESQ†")
+        assert c[k + 1] == "pesq_nan"
+        j = next(n for n in range(i, len(lines)) if not lines[n].startswith("|"))
+        assert lines[j] == "" and lines[j + 1] == T.PESQ_FOOT
+    assert md.count(T.PESQ_FOOT) == len(heads)
+    sec = _section(md, "## defence").splitlines()
+    g8 = _cols([l for l in sec if l.startswith("| gunshot | 0 | r8 |")][0])
+    g7 = _cols([l for l in sec if l.startswith("| gunshot | 0 | r7 |")][0])
+    assert g8[6] == "n/a" and g8[7] == "4" and g7[7] == "0"      # PESQ n/a (all NaN), pesq_nan 4 vs 0
+    c = cells[(cells.section == "cell") & (cells.category == "defence/gunshot") & (cells.metric == "pesq_nan")]
+    assert c.set_index("system")["mean"].to_dict() == {"r8": 4, "r7": 0, "raw": 0, "r8-r7": 4, "r8-raw": 4}
+    h = cells[(cells.section == "headline") & (cells.category == "all") & (cells.subset == "v1")
+              & (cells.metric == "pesq_nan")].set_index("system")["mean"].to_dict()
+    assert h == {"r8": 0, "r7": 0, "raw": 1, "r8-r7": 0, "r8-raw": 1}   # paired: either side's NaN counts
+    for tab in md.split("\n\n"):                                 # still rectangular with the new column
+        rows = [l for l in tab.splitlines() if l.startswith("|")]
+        assert len({l.count("|") for l in rows}) <= 1
+
+
+def test_superseded_root_is_refused_unless_flagged(tmp_path, monkeypatch):
+    root = tmp_path / "set"; root.mkdir(); (root / "EVALSET_HASH").write_text("ed024af085a2\n")
+    with pytest.raises(ValueError, match="superseded"):
+        T.check_hash(root)
+    assert "SUPERSEDED" in T.check_hash(root, allow_superseded=True)
+    p = _paths(tmp_path); df, d = _bless(monkeypatch, p)
+    assert T.check_render(df).startswith("Every CSV")
+    monkeypatch.setattr(T, "V2_DIGEST", {T.EVALSET_HASH: "0" * 12, "ed024af085a2": d})   # the CSVs came from root A
+    with pytest.raises(ValueError, match="superseded root ed024af085a2"):
+        T.check_render(df)
+    assert T.check_render(df, allow_superseded=True).count("SUPERSEDED") == 3
+    monkeypatch.setattr(T, "V2_DIGEST", {T.EVALSET_HASH: "0" * 12, "ed024af085a2": "1" * 12})
+    with pytest.raises(ValueError, match="no known render"):
+        T.check_render(df)
+    assert "not verified" in T.check_render(df, allow_partial=True)
+    monkeypatch.setattr(T, "V2_DIGEST", {T.EVALSET_HASH: "0" * 12, "ed024af085a2": d})
+    args = ["--r8", str(p["r8"]), "--r7", str(p["r7"]), "--raw", str(p["raw"]), "--eval-root", str(root),
+            "--expect-items", str(N), "--boot", "10", "--out", str(tmp_path / "o/table.md")]
+    with pytest.raises(ValueError, match="superseded"):
+        T.main(args)
+    (root / "EVALSET_HASH").write_text(T.EVALSET_HASH + "\n")            # right root, CSVs from the old render
+    with pytest.raises(ValueError, match="superseded root"):
+        T.main(args)
+    (root / "EVALSET_HASH").write_text("ed024af085a2\n")
+    md, _ = T.main(args + ["--allow-superseded"])
+    assert md.count("SUPERSEDED") == 4                                  # the root and each of the three CSVs
+
+
+def test_v2_digests_match_the_rendered_indexes():
+    """V2_DIGEST against both roots' index.csv (read only); skipped where no r8 test root is on disk (the box)."""
+    repo = Path(__file__).resolve().parents[1]
+    seen = 0
+    for h, r in {T.EVALSET_HASH: T.EVAL_ROOT, **T.SUPERSEDED}.items():
+        idx = repo / r / "index.csv"
+        if not idx.exists():
+            continue
+        assert (repo / r / "EVALSET_HASH").read_text().strip() == h
+        x = pd.read_csv(idx, dtype={"id": str, "bucket": str}, usecols=["bucket", "id", "category", "snr_db"])
+        x = x.assign(subset=x.category.str.split("/", n=1).str[0], snr_in=pd.to_numeric(x.snr_db))
+        assert T.v2_digest(x) == T.V2_DIGEST[h]; seen += 1
+    if not seen:
+        pytest.skip("no r8 test root on this machine")
+
+
+def test_default_root_is_b_and_matches_the_testset_hash_file():
+    assert T.EVAL_ROOT == "data/eval_r8_test_b/test" and T.EVALSET_HASH == "5bfda53eacbf"
+    assert "ed024af085a2" in T.SUPERSEDED
+    h = Path(__file__).resolve().parents[1] / T.TESTSET / "EVALSET_HASH"
+    assert h.read_text().strip() == T.EVALSET_HASH
