@@ -24,15 +24,17 @@ tests/test_train_smoke.py cover this). Whether r8 replaces r7 is Rachit's call a
 
 ## Before renting (Rachit's checklist)
 
-1. **Dataset accounts.** Log in / register and accept terms for each dataset whose access is not `direct`, then
-   create the API tokens the fetcher reads from the environment.
-   <!-- TBD(ds-wire): access table -->
-   Until ds-wire's table lands (configs/data/r8_datasets.yaml, `credentials` per dataset), the research notes
-   (docs/impl/2026-09-24/research/datasets_astra.md) name these: Mozilla Data Collective account + API key
-   (Common Voice Hindi, `MDC_API_KEY`), Kaggle API token (MAD), a Hugging Face account approved for gated sets
-   (Svarah) whose read token can double as the mirror's `HF_TOKEN`, and a CADRE site registration (manual download,
-   no headless path confirmed). The box prints every missing variable in its first seconds
-   (`bash scripts/r8_box_setup.sh --env-check`).
+1. **Dataset accounts.** The access table, with the steps per account, is
+   [configs/data/R8_DATASETS.md](../data/R8_DATASETS.md) ("Needs Rachit"); the machine-readable one is
+   configs/data/r8_datasets.yaml (`credentials` per entry). What the r8 configs need:
+   - `MDC_API_KEY` (**required**): Mozilla Data Collective account, Common Voice 27.0 Hindi terms accepted, API key.
+     cv_hi is in the first fetch group, so the box blocks without it. Quota: 30 downloads/day per organisation.
+   - `HF_TOKEN` + `MIRROR_HF_REPO` (**required**): read token for the private mirror (item 2).
+   - `RIR_BANK_URL` (**required**): the release base URL (item 3).
+   - `KAGGLE_USERNAME` + `KAGGLE_KEY` (optional): MAD tries the anonymous Kaggle URL first.
+   - CADRE registration, the Svarah HF gate and the IndicTTS licence request are for `optional:` entries no r8 config
+     trains on; skip them.
+   The box prints every missing variable in its first seconds (`bash scripts/r8_box_setup.sh --env-check`).
 2. **Private Hugging Face mirror** of the laptop-only artefacts (licensed audio: the repo must be private):
    ```bash
    bash scripts/r8_mirror_stage.sh            # laptop; stages into data/mirror_stage, uploads nothing
@@ -49,20 +51,29 @@ tests/test_train_smoke.py cover this). Whether r8 replaces r7 is Rachit's call a
    laptop's backslashes, so they resolve on Linux once the box has the audio.
 3. **RIR banks on the GitHub release.** Every asset in configs/data/r8_banks.json must be downloadable, without a
    token, at `$RIR_BANK_URL/<asset>`: `bank.npz`, `bank_r3.npz`, `bank_r8.npz` and bank_r8's three `.npy` sidecars.
-   The banks lane recommends adding the bank_r8 files to the existing release `rir-banks-2026-09-21`
+   **Every r8 mixer v2 config trains on bank_r8** (`data.bank: data/rirs/bank_r8.npz`, sha256 325ef372...), so the
+   setup fails without it. Add the four bank_r8 files (bank_r8.npz, bank_r8.speech.npy, bank_r8.noise.npy,
+   bank_r8.rt60.npy; sha256 in r8_banks.json) to the existing release `rir-banks-2026-09-21`
    (docs/impl/2026-09-24/reports/banks.md). Upload `bank_r3.npz` from `deploy/rir_banks/` (sha256 e4e67463..., the
    published copy); the laptop's `data/rirs/bank_r3.npz` is a different file (99dcfb26...). A bank is never rebuilt on
    the box: pyroomacoustics differs across machines, so a rebuilt bank is a different file. bank_r8.noise.npy is
    1.92 GB, under GitHub's 2 GiB per-asset limit. If the sidecars are left off the release, RirBank rebuilds them on
-   first load and the preflight checks their sha256 (the banks lane found them reproducible with np.save).
-4. **Config changes that must be in main before the box clones it** (wire4 owns the configs):
-   - FE loss PESQ term: `loss_cfg: {w_pesq: 0.001, pesq_required: true}` in r8_fe_mini and the VaaniFE pilots, so a
+   first load and the preflight checks their sha256 (docs/impl/2026-09-24/reports/banks.md found them reproducible with np.save).
+4. **Config state in main** (commits 015f044, f21a63b; `tests/test_r8_configs.py` pins it):
+   - FE loss PESQ term: `loss_cfg: {w_pesq: 0.001, pesq_required: true}` in r8_fe_mini and every VaaniFE pilot, so a
      box without torch_pesq fails at start instead of silently training with the term at 0.
-   - `data.bank`: bank_r3 (comparable with r7) or bank_r8 (M6 armoured rooms). See reports/banks.md for the choice.
-   - `mix.v2.tail_share`: the full configs set 0.25; the mixer default (G1 c5) is 0.40. The box gate gates whatever
-     the full configs train (`scripts/r8_preflight.py --g1-cmd`). Laptop prediction on the published bank_r3, seed 202,
-     200 items: 0.25 passes by thin margins (param AUC 0.738, CI95 0.692-0.779; M2 share 0.252 against a 0.24 cutoff),
-     and 0.40 passes clearly (0.699 / 0.665, M2 0.398). Evidence: docs/impl/2026-09-24/ckpt/box/g1_predict/README.md.
+   - `data.bank: data/rirs/bank_r8.npz` (M6 armoured rooms) in all 24 mixer v2 configs. r7 stays on bank_r3.
+   - `mix.v2.tail_share: 0.4`, the mixer default G1 confirmed (c5); the ab3b arms keep 0.0 and 0.1. `tail_mix` scales
+     with the share, so the 0.1 arm is 2.5 % mono, 1.25 % stereo and 6.25 % low-ILD items (r8_ablations/README.md).
+   - Corpora: the r7 list (mad_v2 in place of mad; drone and noisex92 stay eval-only) plus DEMAND pairs, AVQ drone,
+     C3GD, FSD50K and Lombard GRID (section "Corpora" below).
+   - Held-out groups: configs/data/r8_heldout_exclude.json also drops 1,571 DNS chunks and 3 ESC-50 clips that share
+     a Freesound recording with an r8 test noise source (`scripts/heldout_freesound.py`; "Corpora" below).
+   - **Not yet in main (open):** the four added corpora sit under `optional:` in configs/data/r8_datasets.yaml, so the
+     setup's dataset stage does not fetch them and the preflight fails on their manifests. Until they move to
+     `datasets:`, fetch them by hand after the first group:
+     `.venv/bin/python scripts/r8_datasets.py fetch --only avq_drone,c3gd,fsd50k,lombard_grid --parallel 8 && .venv/bin/python scripts/r8_datasets.py scan --only avq_drone,c3gd,fsd50k,lombard_grid && .venv/bin/python scripts/r8_datasets.py verify --only avq_drone,c3gd,fsd50k,lombard_grid`.
+     demand_pairs.parquet is already written by the `demand` entry's second scan.
 5. **Box spec** (send it before renting):
 
    | Item | Minimum | Rule |
@@ -71,7 +82,7 @@ tests/test_train_smoke.py cover this). Whether r8 replaces r7 is Rachit's call a
    | NVIDIA driver | >= 570 (CUDA 12.8) | torch 2.11.0+cu128; the setup's per-GPU matmul fails fast on a mismatch |
    | vCPU | **64** (96 preferred) | see the sizing rule below |
    | RAM | TBD | no per-worker RSS has been measured; watch `free -g` during the setup's bench stage (question: what RSS does one v2 loader worker reach?) |
-   | Disk | TBD(ds-wire): dataset download + extracted size | + about 20 GB fixed (venv 4.7 GB on the laptop, more on Linux with the CUDA libs; banks 4.6 GB; val tar 2.3 GB and its extracted copy) + the pack (about the int16 size of the manifested audio, inferred) + 50 GB headroom for runs/ (the preflight's `--need-gb` default) |
+   | Disk | **300 GB** (inferred) | datasets 156 GB: `r8_datasets.py plan` gives 52.3 GB of archives and 156.0 GB on disk for `datasets:` plus the four added corpora (archive x 3 for archive + tree + FLAC, an inferred upper bound; FSD50K alone is 24.7 GB of archives, 74.0 GB on disk, and its split-zip join needs about 2x its size while it runs). Without the four: 26.2 / 77.6 GB. + about 20 GB fixed (venv 4.7 GB on the laptop, more on Linux with the CUDA libs; banks 4.6 GB; val tar 2.3 GB and its extracted copy) + the pack (int16 16 kHz is 115 MB per hour; the laptop-scanned r8 manifests hold about 156 h, so about 18 GB plus the box-only corpora, TBD: their hours) + 50 GB headroom for runs/ (the preflight's `--need-gb` default) |
 
    **vCPU sizing rule.** The loader is the bottleneck (r7: about 130 of each 144 ms step was CPU), so the box is
    rented for cores. `run_r8.sh` gives each queue W = (nproc - 4) / 2 loader workers. A run's rate is
@@ -92,7 +103,9 @@ tests/test_train_smoke.py cover this). Whether r8 replaces r7 is Rachit's call a
    ```bash
    export MIRROR_HF_REPO=<user>/vaani-r8-mirror HF_TOKEN=<read token>
    export RIR_BANK_URL=https://github.com/<owner>/<repo>/releases/download/<tag>
-   # + every dataset credential in configs/data/r8_datasets.yaml (TBD(ds-wire): the list)
+   export MDC_API_KEY=<key>                          # Common Voice 27.0 Hindi (cv_hi); required
+   # optional: export KAGGLE_USERNAME=<user> KAGGLE_KEY=<key>   (MAD, only if the anonymous URL refuses)
+   export VAANI_R8_BOX=1                             # box-only manifests missing -> tests fail instead of skip
    ```
 
 ## Bootstrap timeline (estimates, inferred; the log has the real times)
@@ -104,8 +117,9 @@ tests/test_train_smoke.py cover this). Whether r8 replaces r7 is Rachit's call a
 | 3-8 | `uv sync --all-extras --frozen` (torch cu128 from download.pytorch.org, numba, torch-pesq, faster-whisper; pesq builds from sdist) | yes |
 | 8 | GPU check: a matmul on each device, numba and torch_pesq import | yes |
 | 8 | background: banks (about 4.6 GB by sha256: three npz of 0.4-0.8 GB plus bank_r8's sidecars, noise 1.92 GB and speech 0.64 GB), mirror (about 2.3 GB, SHA256SUMS then verify_eval_set), datasets (the first fetch group first) | - |
-| 8 + TBD(ds-wire) | first dataset group fetched, scanned, verified: the datasets the two queue heads and the G1 gate read | yes |
-| + 2 | tests that guard silent corruption (test_r8_box, test_losses, test_pack, test_mixer_v2, test_data_gates, test_golden_vectors) | yes |
+| 8 + TBD | first dataset group fetched, scanned, verified: the datasets the two queue heads and the G1 gate read (`r8_preflight.py --fetch-order` FIRST: librispeech, ears, cv_hi, esc50, dns_freesound_000, dns_audioset_000, mad, gunshots, demand; 25.0 GB of archives in `plan`). TBD: the box's download rate; zenodo.org is held to 2 files x 1 connection | yes |
+| + TBD | the four added corpora by hand (Before renting, item 4; 26.2 GB of archives, FSD50K most of it), then `.venv/bin/python scripts/heldout_freesound.py --check` (rerun without `--check` if it reports OUT OF DATE: FSD50K clips can share Freesound ids with r8 test noise) | yes |
+| + 2 | tests that guard silent corruption (test_r8_box, test_losses, test_pack, test_mixer_v2, test_data_gates, test_golden_vectors), then by hand with `VAANI_R8_BOX=1`: `uv run python -m pytest -q -p no:cacheprovider tests/test_heldout_disjoint.py tests/test_r8_configs.py tests/test_scenes_r8.py tests/test_dropout_parity.py` | yes |
 | + TBD | pack the corpus (speed only; verified bit-identical by tests/test_pack.py) | yes |
 | + 3 | G1 on the box (laptop: 2 min 14 s for two gates) | yes: the full runs refuse without it |
 | + 3 | loader bench (sizes workers) and step time, then the preflight | yes |
@@ -122,6 +136,10 @@ tmux new -s box
 export ...                                         # "Before renting" item 6
 bash scripts/r8_box_setup.sh --env-check           # seconds; exit 1 names what is missing
 bash scripts/r8_box_setup.sh --launch              # bootstrap, G1, preflight, then both queues in tmux session "r8"
+# until the four added corpora move to `datasets:` (Before renting, item 4): in a second tmux window, once
+# .venv/bin/python exists (after `uv sync`), run the item-4 fetch/scan/verify line with .venv/bin/python, then
+# `.venv/bin/python scripts/heldout_freesound.py --check`. If the setup reaches `bench` first, it stops there (the
+# configs name their manifests); rerun the --launch line once the fetch is done.
 bash scripts/run_r8.sh status                      # DONE / RUNNING / FAILED / DROPPED / PENDING per run, and the G1 line
 bash scripts/run_r8.sh next                        # the run each queue starts next
 # after the pilots: copy the winning settings into r8_fe_mini.yaml / r8_refvalid_v2.yaml, then
@@ -130,7 +148,7 @@ bash scripts/run_r8.sh go-full
 
 `r8_box_setup.sh` is idempotent: every finished stage leaves `runs/box_setup/<stage>.ok`, a background stage that is
 still alive is joined rather than relaunched, and the log is `runs/box_setup.log`. After a dropped SSH session, rerun
-the same line. `--dry-run` prints every stage without installing or downloading anything. Knobs: `GPUS`,
+the same line. Rows missing from the pack (a corpus scanned after the `pack` stage) are decoded from their files, so the result is unchanged and only slower; `rm runs/box_setup/pack.ok` and rerun to pack them. `--dry-run` prints every stage without installing or downloading anything. Knobs: `GPUS`,
 `FETCH_PARALLEL` (8), `G1_SEED` (202), `G1_ITEMS` (200), `SKIP_TESTS/SKIP_PACK/SKIP_BENCH=1`, `PREFLIGHT_SMOKE=N`
 (N train steps per config into runs/preflight_*), `ALLOW_MISSING_ENV=1`.
 
@@ -149,7 +167,24 @@ eval "$(.venv/bin/python scripts/r8_preflight.py --g1-cmd)"     # data_gates v2,
 ```
 Pass: the v2 ILD-only AUC <= 0.75 on both paths and the M2 share >= 0.24 (results_r2/r8/data_gates/box_g1/v2.json).
 If it fails, do not start the full runs, and do not override: report it. `run_r8.sh` refuses the pilots too unless
-`ALLOW_PILOTS_WITHOUT_G1=1`.
+`ALLOW_PILOTS_WITHOUT_G1=1`. The command gates the full configs' own bank (bank_r8) and mix.v2 block
+(`{"tail_share": 0.4}`).
+
+**Status on the laptop: CONFIRMED** for the committed c5 defaults on two fresh seeds, 200 items each, on bank_r3
+(results_r2/r8/data_gates/README.md; seed 5150 from docs/impl/2026-09-24/reports/calib-verify.md): seed 202 param
+0.699 / room 0.665; seed 5150 param 0.732 [0.689, 0.775] / room 0.701 [0.657, 0.742]. Room path on **bank_r8**, fresh
+seed 7331, 200 items: 0.659 [0.609, 0.708], gate_pass true, M2 share of the draw 0.398
+(results_r2/r8/g1_bank_r8/v2.json; `uv run --with numba python scripts/data_gates.py
+--versions 2 --paths room --items 200 --seed 7331 --bank data/rirs/bank_r8.npz --bootstrap 2000 --out results_r2/r8/g1_bank_r8`).
+Caveats:
+- The pass comes from the 40 % out-of-physics reference tail: physical-mode items alone give 0.87-0.90 on bank_r3
+  (seed 5150: 0.897 / 0.849) and 0.817 on the bank_r8 room run above (115 items; `hist_auc` over the physical rows of
+  its items_v2_room.npz). Ablation 3b measures what the tail costs. Recommendation: accept the gate as written and
+  report the physical-only AUC beside it (calib Decision 2).
+- The plan's M2 threshold is 25 %; `data_gates.py` passes at >= 0.24 (open issue for its owner).
+- G1 draws noise from `data_gates.V2_NOISE` (mad, dns freesound_000 and audioset_000, demand one-pair, esc50), not
+  from the r8 training list: the added corpora are not in the gate's pool (inferred to matter little for DEMAND's
+  one-pair vs all-pairs scan, unmeasured for AVQ drone and FSD50K; open issue).
 
 ## 2. Schedule (plan 11.6; per GPU, `scripts/run_r8.sh`)
 
@@ -189,17 +224,32 @@ Record its sha256 in results_r2/r8/testset/PROTOCOL.md **before** step 6.
 
 ## 4. G3 quality sweep on val, and G4 field acceptance
 
+G3 (reference conditions on eval_r2 val):
 ```bash
 CUDA_VISIBLE_DEVICES=-1 uv run --with tabulate python scripts/eval_refvalid.py \
     --system ckpt:runs/r8_fe_mini/best.pt --out results_r2/r8/r8_fe_mini_refconditions_val --per-bucket 4 --workers 3
 CUDA_VISIBLE_DEVICES=-1 uv run --with tabulate python scripts/eval_refvalid.py \
     --system ckpt:runs/r8_refvalid_v2/best.pt --out results_r2/r8/r8_refvalid_v2_refconditions_val --per-bucket 4 --workers 3
-uv run python scripts/field_accept.py --system ckpt:runs/r8_fe_mini/best.pt --name r8_fe_mini --workers 3
-uv run python scripts/field_accept.py --system ckpt:runs/r8_refvalid_v2/best.pt --name r8_refvalid_v2 --workers 3
 ```
-The r7 baselines on the same scripts are results_r2/r8/r7_refconditions_val.md and results_r2/field/r7.md. G4 Part 2's
-Whisper word-survival and Silero VAD hooks are described in results_r2/field/README.md; faster-whisper is in the box's
-venv (`asr` extra) and its model downloads on the box.
+G4 runs the exported step graph through `vaani.live.StreamEngine` (the board path). A `ckpt:` spec would run the
+offline path, which passes no `ref_avail`, so its Z (ref_zero) rows would be at validity 1 with a zeroed reference
+instead of the headline validity-0 row. Export first (the G2 commands in step 5 write the same graphs), bind each
+graph to its checkpoint's DSP settings, then run Part 1 and Part 2 with the runtime guards and the ASR hooks:
+```bash
+uv run python -c "from vaani import export as E, live as L; c='runs/r8_fe_mini/best.pt'; o='runs/r8_fe_mini/export/fe_mini.onnx'; E.export_fe(E.fe_load(c), o); L.write_model_config(c, 'runs/r8_fe_mini/export/model_config.json', o)"
+uv run python -c "from vaani import export as E, live as L; c='runs/r8_refvalid_v2/best.pt'; o=E.export_refvalid(c, 'runs/r8_refvalid_v2/export/refvalid.onnx'); L.write_model_config(c, 'runs/r8_refvalid_v2/export/model_config.json', o)"
+uv run python scripts/field_accept.py --system stream:runs/r8_fe_mini/export/fe_mini.onnx@runs/r8_fe_mini/export/model_config.json \
+    --name r8_fe_mini --guards --asr auto --web-wav data/field/abcd.wav --workers 3
+uv run python scripts/field_accept.py --system stream:runs/r8_refvalid_v2/export/refvalid.onnx@runs/r8_refvalid_v2/export/model_config.json \
+    --name r8_refvalid_v2 --guards --asr auto --web-wav data/field/abcd.wav --workers 3
+```
+`--web-wav`: the stereo web WAV (the laptop's C:/Users/Rachit/Downloads/abcd.wav) is Part 1's web bed and all of
+Part 2. TBD: the mirror does not stage it yet (open issue for scripts/r8_mirror_stage.sh); copy it to
+data/field/abcd.wav on the box until it does. `--guards` is on for the r8 candidates only, since it is the only way to
+time the validity flag; the r7 baseline (results_r2/field/r7.md) ran with guards off, its default path, and the two
+are labelled as such. The r7 baselines on the same scripts are results_r2/r8/r7_refconditions_val.md and
+results_r2/field/r7.md. G4 Part 2's Whisper word-survival and Silero VAD hooks are described in
+results_r2/field/README.md; faster-whisper is in the box's venv (`asr` extra) and its model downloads on the box.
 
 ## 5. G2 export gate (the selected VaaniFE checkpoint)
 
@@ -218,7 +268,47 @@ uv run python -c "from vaani import export as E; o = E.export_refvalid('runs/r8_
 
 Download the selected `best.pt` to the laptop, then follow results_r2/r8/testset/PROTOCOL.md exactly: verify the hash
 of data/eval_r8_test, then run the three scoring commands once (`<r8 spec>` = `ckpt:runs/<selected>/best.pt`), on
-Rachit's say-so. The eval_r2 test split is not used for anything.
+Rachit's say-so, and build the pre-registered table with `uv run python scripts/r8_test_table.py` (its defaults are the PROTOCOL.md CSV paths). The eval_r2 test split is
+not used for anything.
+
+r7 trained on DNS and ESC-50 clips that share a Freesound recording with 294 of the 2,308 test items (v1 281, v2 13;
+284 by noise source, 10 more by impulse source); r8 does not (Corpora, below). The r8 - r7 difference on those items
+therefore favours r7 (inferred). Report v1 with and without them: an item is affected when a `noise_source` or
+`impulse_source` id has the Freesound id (`scripts.heldout_freesound.freesound_id`) of a `freesound_*` source in
+configs/data/r8_heldout_exclude.json.
+
+## Corpora (plan 11.5)
+
+Added to every mixer v2 config, with the scene roles vaani/data/scenes.py gives them (`tests/test_scenes_r8.py`
+checks every scanner corpus has a role and that the recipe fills every scene's bed, point and event roles; the recipe's
+manifests present on the laptop (dns_noise, esc50, gunshots, mad_v2) give no rows for the drone, ambient_outdoor,
+babble or radio tags, per `ScenePool(noise rows).tags()`, so without the additions those roles fall back to any
+continuous row):
+- **demand_pairs**: every 12 cm-like DEMAND pair (real two-channel noise; beds by environment). Its groups equal
+  demand.parquet's, so the splits match (the r8 test set drew STRAFFIC test rows from demand.parquet).
+- **avq_drone**: drone point sources (the dropped DroneAudioDataset's role). 7 files in the archive listing
+  (n116-n122), so the pool is small; TBD: its hours after the box scan.
+- **c3gd**: gunshot events (impulsive), grouped by event and platform.
+- **fsd50k**: labelled beds, points and events (siren, engine, wind, crowd, gunfire, ...); CC0 and CC BY clips only.
+- **lombard_grid**: Lombard and plain speech. TBD: the zip's file-name pattern is not inspected (registry note), and
+  the mixer's M11 Lombard tilt is applied to its already-Lombard `l` utterances too (a double tilt, inferred; open
+  issue for the mixer's owner).
+
+Deferred (decision for Rachit; not in any config):
+- **LibriTTS-R** (37.1 GB for clean 100+360; sizes here from docs/impl/2026-09-24/research/datasets_final.md): it re-cuts LibriSpeech, and its `lttsr-spk-*` groups hash to other
+  splits than `ls-spk-*`, so train-clean-100 would put the 17 val and 18 test speakers of
+  librispeech_100h.parquet back into training. Only train-clean-360 is speaker-disjoint from train-clean-100 (inferred from
+  LibriSpeech's published subsets). It would also dilute cv_hi. `tests/test_heldout_disjoint.py` fails if a LibriTTS-R
+  manifest with a val/test LibriSpeech speaker is ever added.
+- **MUSAN noise** (11.1 GB): plan 11.5 asks for noise types, not hours; FSD50K covers the types.
+- **WHAM!** (18.2 GB, CC BY-NC): babble is already covered by DEMAND's O/P environments; scenes.py maps it to
+  babble/indoor if it is added.
+
+Held-out groups (configs/data/r8_heldout_exclude.json): the render's drone, NOISEX, EARS and MAD groups, plus the
+Freesound siblings. DNS noise rows are grouped per 10 s chunk (`dnsn-<stem>`), so chunks of one Freesound upload sit in
+different splits; 1,571 train/val DNS chunks (4.35 of the 19.82 train+val hours) and 3 ESC-50 clips shared a Freesound id with an r8
+test noise source. `scripts/heldout_freesound.py` lists them; re-rendering the test set with the extended file gives
+the same pools (checked on the laptop manifests). On the box, rerun it after FSD50K is scanned.
 
 ## Laptop evidence behind this runbook (smoke on a loaded laptop, RTX 5060; not reportable)
 
@@ -226,6 +316,12 @@ Rachit's say-so. The eval_r2 test split is not used for anything.
   a gate on a different mixer, bank, item count or with scene overrides; bank plan; fetch order; env check without
   printing values; run_r8.sh dry run, refusal without G1, `next`/`status`; mirror staging on a fake tree; the setup's
   env check and dry run; requirements files against uv.lock). 28 passed.
+- Configs: tests/test_r8_configs.py (every r8 config parsed and built the way the trainer does, ablation arms differ
+  from their parent only in their arm, bank_r8 sha against r8_banks.json, a synthetic draw per data path). 77 passed.
+  Scenes: tests/test_scenes_r8.py, 6 passed. Licence table: tests/test_licence_table_r8.py, 10 passed.
+- Held-out: tests/test_heldout_disjoint.py 8 passed, 2 skipped (the box-only manifests and the LibriTTS-R guard; with
+  `VAANI_R8_BOX=1` the missing box manifests fail instead); tests/test_heldout_freesound.py 2 passed.
+- G1 on bank_r8 (room path, seed 7331): results_r2/r8/g1_bank_r8/ (section 1 has the command and the numbers).
 - Box G1 prediction on the published bank_r3: docs/impl/2026-09-24/ckpt/box/g1_predict/README.md.
 - FE loss PESQ term: docs/impl/2026-09-24/ckpt/box/pesq_smoke/README.md (20 steps, term finite and non-zero).
 - 30-step smokes plus resume, composite/EMA selection and the fe export: `tests/test_train_r8_smoke.py`, results in
