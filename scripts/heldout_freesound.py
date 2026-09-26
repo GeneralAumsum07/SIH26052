@@ -75,14 +75,19 @@ def registered_hash(root):
     return _read_hash(root / EVALSET_HASH)
 
 
+def index_hash_problems(root, index_csv=INDEX):
+    """Why the index is not the registered test set ([] when it matches or cannot be told)."""
+    reg, got = registered_hash(root), _read_hash((root / index_csv).parent / "EVALSET_HASH")
+    if reg is None or not (root / index_csv).exists() or got in (None, reg):
+        return []
+    return [f"{index_csv} belongs to set {got}, not the registered {reg}"]
+
+
 def hash_problems(root, index_csv=INDEX, sources=SOURCES):
     """Why the index or the committed list is not the registered test set ([] when both match or cannot be told)."""
-    reg, out = registered_hash(root), []
+    reg, out = registered_hash(root), index_hash_problems(root, index_csv)
     if reg is None:
         return out
-    got = _read_hash((root / index_csv).parent / "EVALSET_HASH")
-    if (root / index_csv).exists() and got not in (None, reg):
-        out.append(f"{index_csv} belongs to set {got}, not the registered {reg}")
     if (root / sources).exists():
         pin = json.loads((root / sources).read_text(encoding="utf-8")).get("evalset_hash")
         if pin != reg:
@@ -151,9 +156,10 @@ def main(argv=None):
     stale_list = where == "index" and (not sp.exists() or list_sources(root, a.sources) != src)
     print(f"test sources from the {where}: {len(src['speech'])} speech, {len(src['noise'])} noise/impulse")
     bad_hash = hash_problems(root, INDEX, a.sources)
-    if bad_hash and where == "list" and not a.check:
-        # without the index the list is the only record of the test sources: never rewrite exclusions from a stale one
-        raise SystemExit("; ".join(bad_hash))
+    # exclusions come from the registered set only: a stale list without the index, or an index from another set
+    refuse = bad_hash if where == "list" else index_hash_problems(root, INDEX)
+    if refuse and not a.check:
+        raise SystemExit("; ".join(refuse))
     j = json.loads(path.read_text(encoding="utf-8"))
     sib, n_ids = sibling_sources(root, INDEX, sources=a.sources)
     new = {k: v for k, v in j["sources"].items() if not k.startswith("freesound_")}

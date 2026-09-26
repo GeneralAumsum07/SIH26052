@@ -109,3 +109,7 @@ def test_write_sources_refuses_an_index_from_another_set(tmp_path):
     with pytest.raises(SystemExit, match="registers 5bfda53eacbf"):
         hf.main(["--root", str(root), "--write-sources"])
     assert hf.main(["--root", str(root), "--check"]) == 1
+    ex = (root / "configs/data/r8_heldout_exclude.json").read_text()
+    with pytest.raises(SystemExit, match="belongs to set ed024af085a2"):
+        hf.main(["--root", str(root)])   # no exclusions written from an unregistered index either
+    assert (root / "configs/data/r8_heldout_exclude.json").read_text() == ex
