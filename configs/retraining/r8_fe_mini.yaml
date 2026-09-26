@@ -4,17 +4,25 @@
 # so each speech second is seen 7,111 / 102.0 = ~70x. Here: 320 epochs x 20,000 = 6.4 M items / B 32 = 200,000
 # optimiser steps (625 per epoch), the same exposure. At r7's 192 items/s rental loader rate that is ~9.3 h of
 # loader time (inferred; this box's rate: results_r2/r8/loader_bench.json).
-# Data: mixer v2 (M1-M4, M7, M8 scenes, M10, M11; tail_share 0.25), M9 reference faults (15 %) + reference absent
-# (15 %, validity 0), held-out test groups dropped (configs/data/r8_heldout_exclude.json; a missing file warns).
+# The train speech pool grows by the Lombard GRID train split (TBD: its hours, from the box scan; zip 652,614,041 B),
+# so the ~70x per speech second above is an upper bound.
+# Data: mixer v2 (M1-M4, M7, M8 scenes, M10, M11) with the G1-confirmed c5 defaults (tail_share 0.40,
+# results_r2/r8/data_gates/README.md), M9 reference faults (15 %) + reference absent (15 %, validity 0), held-out test
+# groups dropped (configs/data/r8_heldout_exclude.json; a missing file warns), RIR bank bank_r8 (M6 receiver radius,
+# train seed namespace; configs/data/r8_banks.json). Plan 11.5 corpora added for the M8 scene roles: DEMAND pairs
+# (ambient_outdoor / babble / vehicle beds), AVQ drone (the drone scene had no drone rows), C3GD and FSD50K
+# (gunshot, explosion, siren, wind, engine, helicopter), Lombard GRID (M11 speech). Deferred: LibriTTS-R, MUSAN, WHAM!
+# (configs/retraining/R8_RUNBOOK.md "Datasets").
+# Loss: FastEnhancer mix with PESQ 0.001 (plan 11.6); pesq_required fails the run if torch_pesq is missing.
 # Selection: val.select composite (per-clip all-three pass rate on a VAL subset with G3's ILD-sweep speech-loss and
 # mono/web-stereo dSNR filters), scored for the raw and the EMA weights every 4 val points and at the end.
-# TBD (Rachit, plan 11.9 Q7): the final selection metric. Set val.select: stoi for r7-style STOI selection.
+# Composite is the final selection rule (Rachit, 2026-09-25); val.select: stoi reverts to r7-style STOI selection.
 # lr 5e-4 / warmup 2,000 / EMA 0.999 are inferred starting points (FastEnhancer-style from-scratch training).
 amp: true
 batch_size: 32
 controller_on: true
 data:
-  bank: data/rirs/bank_r3.npz
+  bank: data/rirs/bank_r8.npz
   crop_s: 4.0
   epoch_len: 20000
   exclude_groups_file: configs/data/r8_heldout_exclude.json
@@ -26,6 +34,11 @@ data:
   - data/manifests/dns_datasets_fullband.noise_fullband.freesound_000.tar.parquet
   - data/manifests/mad_v2.parquet
   - data/manifests/gunshots.parquet
+  - data/manifests/demand_pairs.parquet
+  - data/manifests/avq_drone.parquet
+  - data/manifests/c3gd.parquet
+  - data/manifests/fsd50k.parquet
+  - data/manifests/lombard_grid.parquet
   mix:
     impulse_kinds:
     - blast
@@ -33,7 +46,7 @@ data:
     - burst
     - click_train
     v2:
-      tail_share: 0.25
+      tail_share: 0.4
     version: 2
   ref_corrupt:
     p: 0.15
@@ -54,7 +67,9 @@ epochs: 320
 loss: fe
 loss_cfg:
   kappa: 3.0
+  pesq_required: true
   w_mrstft: 0.0
+  w_pesq: 0.001
   w_phase: 0.0
 model: vaani_fe
 model_cfg:

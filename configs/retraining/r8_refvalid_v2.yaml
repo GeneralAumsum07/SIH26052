@@ -4,13 +4,14 @@
 # family gate compares models under the same data and the same selection rule. Loss stays r7's hybrid (warm start).
 # Exposure: 320 epochs x 20,000 items = 6.4 M items = 200,000 steps at B 32, equal to r8_fe_mini (fixed-exposure
 # comparison, spec 8); the r7 init adds r7's own ~7,111 h before this. Not launched here.
-# TBD (Rachit, plan 11.9 Q2): NLMS in the default path. Here it runs (the C16 model reads n_hat), robust kernel.
-# TBD (plan 11.9 Q7): the selection metric; composite by default, val.select: stoi reverts to r7's rule.
+# Data as r8_fe_mini.yaml: bank_r8, tail_share 0.40 (G1 c5), the plan 11.5 corpora (DEMAND pairs, AVQ drone, C3GD,
+# FSD50K, Lombard GRID). NLMS stays in the default path (Rachit, 2026-09-25): the C16 model reads n_hat, robust kernel.
+# Selection: composite (final, Rachit 2026-09-25); val.select: stoi reverts to r7's rule.
 amp: true
 batch_size: 32
 controller_on: true
 data:
-  bank: data/rirs/bank_r3.npz
+  bank: data/rirs/bank_r8.npz
   crop_s: 4.0
   epoch_len: 20000
   exclude_groups_file: configs/data/r8_heldout_exclude.json
@@ -22,6 +23,11 @@ data:
   - data/manifests/dns_datasets_fullband.noise_fullband.freesound_000.tar.parquet
   - data/manifests/mad_v2.parquet
   - data/manifests/gunshots.parquet
+  - data/manifests/demand_pairs.parquet
+  - data/manifests/avq_drone.parquet
+  - data/manifests/c3gd.parquet
+  - data/manifests/fsd50k.parquet
+  - data/manifests/lombard_grid.parquet
   mix:
     impulse_kinds:
     - blast
@@ -29,7 +35,7 @@ data:
     - burst
     - click_train
     v2:
-      tail_share: 0.25
+      tail_share: 0.4
     version: 2
   ref_corrupt:
     p: 0.15

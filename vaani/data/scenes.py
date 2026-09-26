@@ -131,6 +131,11 @@ ESC50_TAGS = {"wind": ["wind"], "rain": ["nature"], "thunderstorm": ["nature", "
 # v2 pools: corpora that stay eval-only (NOISEX-92, vehicle_interior) or are dropped (DroneAudioDataset: indoor,
 # two toy drones, 0.37 h, no licence) never enter a training scene
 V2_EXCLUDED_CORPORA = {"noisex92", "vehicle_interior", "drone"}
+# noise corpora the scanners emit (vaani.data.sources `corpus` values) and whether noise_tags gives them scene roles
+# beyond "general"; tests/test_scenes_r8.py fails when a scanner's corpus is missing here
+NOISE_CORPORA = {"mad": True, "gunshots": True, "cadre": True, "c3gd": True, "demand": True, "esc50": True,
+                 "avq_drone": True, "fsd50k": True, "wham": True, "dns_noise": False, "musan": False,
+                 "noisex92": False, "vehicle_interior": False, "drone": False}
 
 
 def noise_tags(row) -> list[str]:
@@ -156,7 +161,9 @@ def noise_tags(row) -> list[str]:
     if corpus == "fsd50k":
         lab = sid.split(":", 1)[1].split("/", 1)[0]
         return list(FSD50K_TAGS.get(lab, ["general"])) + (["impulsive"] if impulsive else [])
-    if corpus in ("dns_noise", "musan") or corpus.startswith("dns_"):
+    if corpus == "wham":   # restaurants, cafes, bars (and some parks): crowd babble, never an outdoor bed
+        return ["babble", "indoor"]
+    if corpus in ("dns_noise", "musan") or corpus.startswith("dns_"):   # no class labels: the general pool only
         return ["general"] + (["impulsive"] if impulsive else [])
     return ["general"]
 

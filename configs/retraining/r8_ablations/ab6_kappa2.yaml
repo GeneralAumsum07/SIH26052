@@ -4,7 +4,7 @@ amp: true
 batch_size: 32
 controller_on: true
 data:
-  bank: data/rirs/bank_r3.npz
+  bank: data/rirs/bank_r8.npz
   crop_s: 4.0
   epoch_len: 20000
   exclude_groups_file: configs/data/r8_heldout_exclude.json
@@ -16,6 +16,11 @@ data:
   - data/manifests/dns_datasets_fullband.noise_fullband.freesound_000.tar.parquet
   - data/manifests/mad_v2.parquet
   - data/manifests/gunshots.parquet
+  - data/manifests/demand_pairs.parquet
+  - data/manifests/avq_drone.parquet
+  - data/manifests/c3gd.parquet
+  - data/manifests/fsd50k.parquet
+  - data/manifests/lombard_grid.parquet
   mix:
     impulse_kinds:
     - blast
@@ -23,7 +28,7 @@ data:
     - burst
     - click_train
     v2:
-      tail_share: 0.25
+      tail_share: 0.4
     version: 2
   ref_corrupt:
     p: 0.15
@@ -44,7 +49,9 @@ epochs: 48
 loss: fe
 loss_cfg:
   kappa: 2.0
+  pesq_required: true
   w_mrstft: 0.0
+  w_pesq: 0.001
   w_phase: 0.0
 model: vaani_fe
 model_cfg:
