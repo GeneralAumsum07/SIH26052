@@ -4,6 +4,7 @@ usage (repo root):
     python scripts/gen_r8_configs.py              # rewrite every pilot from r8_fe_mini.yaml / r8_refvalid_v2.yaml
     python scripts/gen_r8_configs.py --check      # exit 1 if any pilot on disk differs from what this would write
     python scripts/gen_r8_configs.py --bank-arm   # also write ab7_bank_r3 (NOT in the default set: see below)
+Once ab7_bank_r3.yaml exists, every mode treats it as a pilot: --check verifies it and a rewrite refreshes it.
 
 The full configs are the source: each pilot is a full config with 48 epochs, its own name and seed, and the one field
 (or DSP block) its arm varies, so the untouched fields cannot drift. The full configs are only read, never written.
@@ -88,9 +89,11 @@ def main(argv=None):
     ap.add_argument("--bank-arm", action="store_true", help="include ab7_bank_r3 (val-biased: see the module doc)")
     a = ap.parse_args(argv)
     root = Path(a.root)
-    want = {f"{stem}.yaml": render(cfg, what)
-            for stem, cfg, what in arms(load(root, FULL["fe"]), load(root, FULL["refvalid"]), a.bank_arm)}
     d = root / OUT
+    # once generated, the opt-in arm is a pilot like the rest: --check verifies it (not EXTRA), a rewrite keeps it current
+    bank_arm = a.bank_arm or (d / "ab7_bank_r3.yaml").exists()
+    want = {f"{stem}.yaml": render(cfg, what)
+            for stem, cfg, what in arms(load(root, FULL["fe"]), load(root, FULL["refvalid"]), bank_arm)}
     if a.check:
         have = {p.name for p in d.glob("*.yaml")}
         # CRLF-normalised: a Windows checkout with core.autocrlf rewrites line ends, not content

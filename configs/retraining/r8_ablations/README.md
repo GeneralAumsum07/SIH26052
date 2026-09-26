@@ -37,7 +37,9 @@ Priority order when rental hours run short (plan 11.6):
 1 (gates the family), 3b, 2, 3, 4, 6. Two seeds where listed; single-seed arms are read as directional only.
 
 Ablation 7 (decision 2026-09-26: separate the bank change from the recipe change) is generated only with
-`python scripts/gen_r8_configs.py --bank-arm` and is not queued by `scripts/run_r8.sh`. bank_r3 shares 1,394 rooms
+`python scripts/gen_r8_configs.py --bank-arm` and is not in this directory by default. Generating it is the whole
+opt-in: once `ab7_bank_r3.yaml` exists, `scripts/run_r8.sh` queues it last on GPU 0 (beside its baseline), `--check` and
+the box tests stage verify it like any pilot, and the box setup fetches bank_r3 as a trained-on bank. bank_r3 shares 1,394 rooms
 (27.9 %) with `bank.npz`, the bank of the eval_r2 val render that selects checkpoints (about 246 of 1,480 val items,
 inferred), while bank_r8 shares none (`results_r2/r8/banks/README.md`, `overlap_bank_r3.json`). The arm's val scores
 would therefore be biased in its favour against its baseline; whether to run it anyway is Rachit's call. If it runs,

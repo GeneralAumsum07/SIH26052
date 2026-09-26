@@ -37,6 +37,8 @@ PILOTS_0=(ab1_fe_mini_s0 ab1_fe_mini_s1 ab2_pr_nhat_s0 ab2_pr_nhat_s1 ab2_p_s0 a
           ab4_bounded_df0 ab4_unbounded_df3 ab4_bounded_df3)
 PILOTS_1=(ab1_refvalid_s0 ab1_refvalid_s1 ab3b_tail00 ab3b_tail10 ab3_refdrop00_s0 ab3_refdrop00_s1
           ab3_refdrop30_s0 ab3_refdrop30_s1 ab6_kappa1 ab6_kappa2 ab6_kappa4)
+# opt-in bank arm (gen_r8_configs.py --bank-arm): queued last beside its baseline ab1_fe_mini_s0 only once generated
+[ -f "$A/ab7_bank_r3.yaml" ] && PILOTS_0+=(ab7_bank_r3)
 FULL_0=(r8_fe_mini); FULL_1=(r8_refvalid_v2)
 
 PY="${PY:-}"
@@ -73,6 +75,10 @@ workers() {  # per-queue loader workers: two concurrent runs split the cores, an
   local n; n=$(nproc 2>/dev/null || echo 8); v=$(( (n - RESERVE_CPUS) / 2 )); [ "$v" -lt 2 ] && v=2
   # each queue holds 2 persistent loaders of v workers (train + val, runtime.loader_kwargs) + the screen pool
   local ma m r="${VAANI_WORKER_RSS_GB:-$WORKER_RSS_GB_DEFAULT}"
+  if ! awk -v r="$r" 'BEGIN { exit !(r ~ /^[0-9]*\.?[0-9]+$/ && r + 0 > 0) }'; then   # 0 or junk must not lift the cap
+    echo "workers gpu$g: VAANI_WORKER_RSS_GB='$r' is not a positive number; using $WORKER_RSS_GB_DEFAULT" >&2
+    r=$WORKER_RSS_GB_DEFAULT
+  fi
   ma=$(awk '/^MemAvailable:/ {print $2; exit}' "$MEMINFO" 2>/dev/null)
   if [ -n "$ma" ]; then
     m=$(awk -v kb="$ma" -v r="$r" -v s="$VAANI_SCREEN_WORKERS" \

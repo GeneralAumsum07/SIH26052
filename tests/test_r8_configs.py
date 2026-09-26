@@ -103,6 +103,18 @@ def test_generator_reproduces_the_committed_pilots():
     assert G.main(["--check"]) == 0   # every pilot byte-identical to gen_r8_configs.py output, none hand-made
 
 
+def test_generated_bank_arm_passes_check_and_a_hand_edit_does_not(tmp_path):
+    for f in FULL.values():   # the generator reads only the two full configs from --root
+        (tmp_path / f).parent.mkdir(parents=True, exist_ok=True); (tmp_path / f).write_bytes((REPO / f).read_bytes())
+    assert G.main(["--root", str(tmp_path)]) == 0 and G.main(["--root", str(tmp_path), "--check"]) == 0
+    assert not (tmp_path / G.OUT / "ab7_bank_r3.yaml").exists()
+    assert G.main(["--root", str(tmp_path), "--bank-arm"]) == 0
+    ab7 = tmp_path / G.OUT / "ab7_bank_r3.yaml"
+    assert G.main(["--root", str(tmp_path), "--check"]) == 0   # the box tests stage runs plain --check
+    ab7.write_text(ab7.read_text(encoding="utf-8").replace("bank_r3.npz", "bank_r8.npz"), encoding="utf-8")
+    assert G.main(["--root", str(tmp_path), "--check"]) == 1
+
+
 def test_bank_arm_is_ab1_on_bank_r3_and_opt_in():
     fe, rv = _cfg(FULL["fe"]), _cfg(FULL["refvalid"])
     assert "ab7_bank_r3" not in {s for s, _, _ in G.arms(fe, rv)}   # val-biased (results_r2/r8/banks/README.md)

@@ -253,6 +253,36 @@ def test_run_r8_workers_capped_by_memavailable(tmp_path, meminfo, env, want, cap
 
 
 @pytest.mark.timeout(900)
+@pytest.mark.parametrize("rss", ["0", "abc", "-2"])
+def test_run_r8_bad_worker_rss_keeps_the_default_cap(tmp_path, rss):
+    got, err = _workers(tmp_path, "MemAvailable: 250000000 kB\n", VAANI_WORKER_RSS_GB=rss)
+    assert got == {"gpu0": 17, "gpu1": 17} and "is not a positive number; using 3" in err, (got, err)
+    assert "capped 46 -> 17 by memory" in err and "awk" not in err and "integer expression" not in err, err
+
+
+@pytest.mark.timeout(900)
+def test_run_r8_queues_the_bank_arm_last_on_gpu0_once_generated(tmp_path):
+    (tmp_path / "scripts").mkdir(); (tmp_path / "scripts/run_r8.sh").write_bytes((REPO / "scripts/run_r8.sh").read_bytes())
+    a = tmp_path / "configs/retraining/r8_ablations"; a.mkdir(parents=True)
+    stems = [p.stem for p in (REPO / "configs/retraining/r8_ablations").glob("*.yaml") if p.stem != "ab7_bank_r3"]
+    g1 = tmp_path / "g1.json"; _g1(g1)
+    env = dict(DRY_RUN="1", RUNS_DIR=str(tmp_path / "runs"), G1_JSON=str(g1), WORKERS_GPU0="7", WORKERS_GPU1="5")
+    for with_arm in (False, True):
+        for s in stems + (["ab7_bank_r3"] if with_arm else []):
+            (a / f"{s}.yaml").write_text("x\n")
+        r = _bash(["scripts/run_r8.sh", "start", "pilots"], env, cwd=tmp_path)
+        assert r.returncode == 0, r.stdout + r.stderr
+        heads = {ln.split(" workers ")[0]: ln.split(": ", 1)[1].split() for ln in r.stdout.splitlines()
+                 if ln.startswith(("gpu0 workers", "gpu1 workers"))}
+        dry0 = [ln for ln in r.stdout.splitlines() if ln.startswith("DRY gpu0")]
+        assert ("ab7_bank_r3" in heads["gpu1"]) is False and len(heads["gpu1"]) == 11, heads
+        if with_arm:
+            assert heads["gpu0"][-1] == "ab7_bank_r3" and len(heads["gpu0"]) == 12 and dry0[-1].endswith("ab7_bank_r3.yaml"), heads
+        else:
+            assert "ab7_bank_r3" not in heads["gpu0"] and len(heads["gpu0"]) == 11, heads
+
+
+@pytest.mark.timeout(900)
 def test_run_r8_explicit_workers_skip_the_memory_cap(tmp_path):
     got, err = _workers(tmp_path, "MemAvailable: 250000000 kB\n", WORKERS_GPU0="60")
     assert got == {"gpu0": 60, "gpu1": 17} and "workers gpu0" not in err, (got, err)
