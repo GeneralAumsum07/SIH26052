@@ -10,7 +10,10 @@ configs/data/r8_heldout_exclude.json (the other sources, written by render_eval_
 
 The test set is not on the box, so its source_ids are committed in SOURCES (written from the index with --write-sources
 on the laptop; tests/test_heldout_disjoint.py reads it too). The index, when present, wins, and --check fails if the
-two disagree.
+two disagree, or if the list was written from a set other than the registered one (results_r2/r8/testset/EVALSET_HASH).
+
+The r8 test root is data/eval_r8_test_b (5bfda53eacbf, PROTOCOL.md Amendment 1). The superseded data/eval_r8_test
+(ed024af085a2) shares every non-v2 item with it and stays frozen and unscored.
 """
 import argparse, json, re, sys
 from pathlib import Path
@@ -27,7 +30,7 @@ FS_ID = [re.compile(r"^dnsn:.*_Freesound_validated_(\d+)_\d+$"),   # DNS: <class
          re.compile(r"^esc50:[^/]+/\d+-(\d+)-[A-Z]-\d+$"),         # ESC-50: <fold>-<freesound id>-<take>-<target>
          re.compile(r"^fsd50k:[^/]+/(\d+)$")]                       # FSD50K: fname is the Freesound id
 RECIPES = ["configs/retraining/r8_fe_mini.yaml", "configs/retraining/r8_refvalid_v2.yaml"]
-INDEX = "data/eval_r8_test/test/index.csv"
+INDEX = "data/eval_r8_test_b/test/index.csv"   # test root B (PROTOCOL.md Amendment 1)
 SOURCES = "configs/data/r8_test_sources.json"
 EVALSET_HASH = "results_r2/r8/testset/EVALSET_HASH"
 
@@ -63,13 +66,40 @@ def load_test_sources(root, index_csv=INDEX, sources=SOURCES):
     return list_sources(root, sources), "list"
 
 
+def _read_hash(p):
+    return p.read_text(encoding="utf-8").strip() if p.exists() else None
+
+
+def registered_hash(root):
+    """The pre-registered r8 test hash (PROTOCOL.md), or None where the results tree is absent."""
+    return _read_hash(root / EVALSET_HASH)
+
+
+def hash_problems(root, index_csv=INDEX, sources=SOURCES):
+    """Why the index or the committed list is not the registered test set ([] when both match or cannot be told)."""
+    reg, out = registered_hash(root), []
+    if reg is None:
+        return out
+    got = _read_hash((root / index_csv).parent / "EVALSET_HASH")
+    if (root / index_csv).exists() and got not in (None, reg):
+        out.append(f"{index_csv} belongs to set {got}, not the registered {reg}")
+    if (root / sources).exists():
+        pin = json.loads((root / sources).read_text(encoding="utf-8")).get("evalset_hash")
+        if pin != reg:
+            out.append(f"{sources} was written from set {pin}, not the registered {reg}; rerun with --write-sources")
+    return out
+
+
 def write_sources(root, index_csv=INDEX, sources=SOURCES):
     if not (root / index_csv).exists():
         raise SystemExit(f"{index_csv} absent: --write-sources runs where the test set is")
+    # the list must name the set it came from: the index's own stamp, which must be the registered one
+    got, reg = _read_hash((root / index_csv).parent / "EVALSET_HASH"), registered_hash(root)
+    if got and reg and got != reg:
+        raise SystemExit(f"{index_csv} belongs to set {got}; PROTOCOL registers {reg}")
     src = index_sources(root, index_csv)
-    h = root / EVALSET_HASH
     j = {"schema": "vaani.r8_test_sources/1", "index": index_csv,
-         "evalset_hash": h.read_text(encoding="utf-8").strip() if h.exists() else None,
+         "evalset_hash": got or reg,
          "generated_by": "python scripts/heldout_freesound.py --write-sources",
          "rule": "speech: speech_source; noise: noise_source + impulse_source; split on ';' and '+'",
          "speech": sorted(src["speech"]), "noise": sorted(src["noise"])}
@@ -120,6 +150,10 @@ def main(argv=None):
     sp = root / a.sources
     stale_list = where == "index" and (not sp.exists() or list_sources(root, a.sources) != src)
     print(f"test sources from the {where}: {len(src['speech'])} speech, {len(src['noise'])} noise/impulse")
+    bad_hash = hash_problems(root, INDEX, a.sources)
+    if bad_hash and where == "list" and not a.check:
+        # without the index the list is the only record of the test sources: never rewrite exclusions from a stale one
+        raise SystemExit("; ".join(bad_hash))
     j = json.loads(path.read_text(encoding="utf-8"))
     sib, n_ids = sibling_sources(root, INDEX, sources=a.sources)
     new = {k: v for k, v in j["sources"].items() if not k.startswith("freesound_")}
@@ -134,7 +168,9 @@ def main(argv=None):
         print("up to date" if ok else f"OUT OF DATE: rerun python scripts/heldout_freesound.py")
         if stale_list:
             print(f"OUT OF DATE: {a.sources} differs from {INDEX}; rerun with --write-sources")
-        return 0 if ok and not stale_list else 1
+        for p in bad_hash:
+            print(f"OUT OF DATE: {p}")
+        return 0 if ok and not stale_list and not bad_hash else 1
     j["sources"] = new
     path.write_text(json.dumps(j, indent=1, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
     return 0

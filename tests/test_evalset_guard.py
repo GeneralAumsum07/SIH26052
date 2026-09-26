@@ -57,3 +57,22 @@ def test_the_guard_runs_before_any_rendering(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "argv", ["render_eval_sets.py"])
     with pytest.raises(SystemExit):
         render_eval_sets.main(_args(tmp_path / "eval_r2"))
+
+
+def test_both_r8_test_roots_are_refused_even_with_force(tmp_path, monkeypatch):
+    # root B is the pre-registered r8 test set and the original render is superseded but frozen: neither is re-rendered
+    assert set(render_eval_sets.PREREGISTERED) == {"data/eval_r8_test_b", "data/eval_r8_test"}
+    monkeypatch.chdir(render_eval_sets.REPO)
+    for rel in render_eval_sets.PREREGISTERED:
+        for out in (rel, rel + "/", str(render_eval_sets.REPO / rel)):
+            with pytest.raises(SystemExit) as e:
+                render_eval_sets.guard_frozen(_args(out, force=True))
+            assert "pre-registered" in str(e.value)
+    # a new root beside them is not caught by the path rule
+    render_eval_sets.guard_frozen(_args(tmp_path / "eval_r8_test_c", force=True))
+
+
+def test_the_guard_names_the_registered_hash():
+    reg = (render_eval_sets.REPO / "results_r2/r8/testset/EVALSET_HASH").read_text(encoding="utf-8").strip()
+    assert render_eval_sets.PREREGISTERED["data/eval_r8_test_b"].startswith(reg)
+    assert render_eval_sets.PREREGISTERED["data/eval_r8_test"].startswith("ed024af085a2")

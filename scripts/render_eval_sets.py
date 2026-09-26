@@ -14,7 +14,7 @@ renders the pre-registered r8 test set (plan 11.2 G6, ex-B3; results_r2/r8/tests
 defence, held-out drone/NOISEX, EARS loud, faults and mixer-v2 scenes, from the held-out groups that
 --write-heldout records in configs/data/r8_heldout_exclude.json. Writes an eval-set hash for run.json.
 """
-import argparse, csv, hashlib, json, re
+import argparse, csv, hashlib, json, os, re
 from pathlib import Path
 
 import numpy as np
@@ -174,10 +174,22 @@ def _write(d, i, m, c, meta, twin):
         sf.write(d / f"{i:04d}.twin.mix.wav", twin.T, SR, subtype="FLOAT")
 
 
+# pre-registered test roots (results_r2/r8/testset/PROTOCOL.md): never re-rendered, not even with --force or a lost stamp
+PREREGISTERED = {"data/eval_r8_test_b": "5bfda53eacbf, the r8 test root (PROTOCOL.md Amendment 1)",
+                 "data/eval_r8_test": "ed024af085a2, the superseded r8 test root (frozen, unscored)"}
+REPO = Path(__file__).resolve().parents[1]
+
+
 def guard_frozen(a):
     """Refuse to re-render over a frozen eval set. Every published number is relative to a specific
     EVALSET_HASH, so overwriting one silently invalidates the whole results tree; its presence is the
-    marker that a set was completed and scored. A partially written set has no hash and may be resumed."""
+    marker that a set was completed and scored. A partially written set has no hash and may be resumed.
+    The PREREGISTERED roots are refused by path whatever --force says: a new render goes to a new --out."""
+    out = os.path.normcase(Path(a.out).resolve())   # Windows paths compare case-blind
+    for rel, what in PREREGISTERED.items():
+        if out == os.path.normcase((REPO / rel).resolve()):
+            raise SystemExit(f"{a.out} is a pre-registered test root ({what}); it is never re-rendered, "
+                             f"--force included. Render to a different --out.")
     stamp = Path(a.out) / a.split / "EVALSET_HASH"
     if stamp.exists() and not getattr(a, "force", False):
         raise SystemExit(f"{stamp} exists: {stamp.parent} is a frozen eval set and results reference its hash "
@@ -291,7 +303,8 @@ def heldout_spec(man_dir="data/manifests") -> dict:
     return {
         "schema": HELDOUT_SCHEMA,
         "apply": ("r8 training and val pools drop every manifest row whose source_id is listed under any source below. "
-                  "These rows exist only for data/eval_r8_test (results_r2/r8/testset/PROTOCOL.md)."),
+                  "These rows exist only for the r8 test set data/eval_r8_test_b (results_r2/r8/testset/PROTOCOL.md, "
+                  "Amendment 1) and the superseded data/eval_r8_test, which drew the same groups."),
         "generated_by": f"python scripts/render_eval_sets.py --write-heldout configs/data/r8_heldout_exclude.json --manifest-dir {man_dir}",
         "sources": {
             "drone": entry(d_rows, manifest="drone.parquet", group="recording: source_id minus its trailing _NNN_ chunk index",

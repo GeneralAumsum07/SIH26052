@@ -26,7 +26,7 @@ HELDOUT = ["data/manifests/vehicle_interior.parquet"]
 BOX_ONLY = {"demand_pairs.parquet", "avq_drone.parquet", "c3gd.parquet", "fsd50k.parquet", "lombard_grid.parquet",
             "libritts_r.parquet"}
 ON_BOX = os.environ.get("VAANI_R8_BOX") == "1"
-R8_TEST_INDEX = REPO / "data/eval_r8_test/test/index.csv"
+R8_TEST_INDEX = REPO / hf.INDEX   # test root B (results_r2/r8/testset/PROTOCOL.md Amendment 1)
 
 
 def _manifest(path, sha1s):
@@ -55,7 +55,7 @@ def _r8_pool(recipe):
 
 
 def _r8_test_sources():
-    # the box has no data/eval_r8_test: the committed list (configs/data/r8_test_sources.json) stands in for the index
+    # the box has no test root: the committed list (configs/data/r8_test_sources.json) stands in for the index
     src, _ = hf.load_test_sources(REPO)
     return src["speech"] | src["noise"]
 
@@ -134,7 +134,7 @@ def test_no_r8_test_source_reaches_an_r8_training_pool():
     _box_only_missing([m for mans, _ in recipes for m in mans if Path(m).name in BOX_ONLY])
 
 
-def test_committed_test_source_list_matches_the_frozen_index():
+def test_committed_test_source_list_matches_the_registered_index():
     if not R8_TEST_INDEX.exists():
         pytest.skip(f"{R8_TEST_INDEX} absent here (the box checks against the committed list)")
     assert hf.list_sources(REPO) == hf.index_sources(REPO), "python scripts/heldout_freesound.py --write-sources"
@@ -149,7 +149,7 @@ def test_freesound_sibling_exclusion_is_current():
 
 def test_libritts_r_speakers_are_not_librispeech_val_or_test_speakers():
     # LibriTTS-R is LibriSpeech re-cut: its lttsr-spk-* groups hash to other splits than ls-spk-*, so a val/test
-    # LibriSpeech speaker (eval_r2, eval_r8_test) would re-enter training unless only disjoint subsets are scanned
+    # LibriSpeech speaker (eval_r2, eval_r8_test_b) would re-enter training unless only disjoint subsets are scanned
     named = sorted({m for r in R8 for m in (yaml.safe_load(open(REPO / r, encoding="utf-8")).get("data") or {}).get("manifests", [])
                     if "libritts" in Path(m).name})
     if not named:

@@ -1,4 +1,7 @@
 import hashlib, json, shutil
+from pathlib import Path
+
+import pytest
 
 from scripts.verify_eval_set import verify
 
@@ -29,3 +32,17 @@ def test_complete_set_verifies_and_partial_copies_fail(tmp_path):
     # a bucket that lost some twins is flagged
     (root / "stationary_0/0001.mix.wav").write_bytes(b"x"); (root / "fault_burst_0/0001.twin.mix.wav").unlink()
     assert any("1/2 twin" in p for p in verify(root, expected))
+
+
+def test_the_r8_test_roots_on_disk_verify_and_b_is_registered():
+    # read-only: recomputes the meta digest of each root present here (the box never receives them)
+    repo = Path(__file__).resolve().parents[1]
+    reg = (repo / "results_r2/r8/testset/EVALSET_HASH").read_text(encoding="utf-8").strip()
+    assert reg == "5bfda53eacbf"   # PROTOCOL.md Amendment 1: root B
+    roots = {"data/eval_r8_test_b/test": reg, "data/eval_r8_test/test": "ed024af085a2"}
+    present = {r: h for r, h in roots.items() if (repo / r).exists()}
+    if not present:
+        pytest.skip("no r8 test root here")
+    for r, h in present.items():
+        assert verify(repo / r, h) == [], r
+        assert (repo / r / "EVALSET_HASH").read_text().strip() == h
