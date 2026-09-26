@@ -116,6 +116,22 @@ After this run c5 became the default (commit 4dcfa90):
   `near_pos_share` 0.9.
 - scenes: `P_NEAR` 0.9.
 
+### Second fresh seed, 5150 (committed defaults, no overrides)
+
+Run once, after c5 became the default, as an adversarial re-check; seed 5150 was never tuned on:
+
+    CUDA_VISIBLE_DEVICES=-1 uv run --with numba python scripts/data_gates.py --versions 2 --items 200 --seed 5150 --bootstrap 2000 --out results_r2/r8/data_gates/confirm200_s5150
+
+| run | param AUC [CI95] | room AUC [CI95] | M2 -6..+3 share (20,000 draws) | gate |
+|---|---|---|---|---|
+| confirm200_s5150 | 0.732 [0.689, 0.775] | 0.701 [0.657, 0.742] | 0.398 | **pass** (`gate_pass: true`) |
+| pooled fresh 400 items (s202 + s5150) | 0.7156 [0.683, 0.748] | 0.6831 [0.653, 0.714] | - | - |
+
+Physical-mode items alone (115 of 200): 0.897 (param) / 0.849 (room). The pooled-fresh row was computed with
+`--from-items` over the two item files (docs/impl/2026-09-24/reports/calib-verify.md, G1 detail). The rule that
+selected c5 ("smallest tail with pooled param and room <= 0.725") has no timestamped record from before pooling; two
+fresh seeds passing is the mitigation.
+
 ### Caveat: the pass rests on the M2 tail
 
 The gate is a pooled AUC, and the out-of-physics M2 tail carries the pass. In confirm200_s202 the physical-mode items
@@ -125,9 +141,12 @@ that meets the intent of G1 is Rachit's call (calib report, Decisions).
 
 ### Training configs must carry these values
 
-`configs/retraining/r8_fe_mini.yaml`, `r8_refvalid_v2.yaml` and the `r8_ablations/*.yaml` pin
-`data.mix.v2.tail_share: 0.25`. With the new `tail_mix`, that gives 6.25 % mono and 3.1 % stereo. That is outside plan
-M2 and is not the confirmed setting. These configs need 0.40 (wire4).
+Done in 015f044: `configs/retraining/r8_fe_mini.yaml`, `r8_refvalid_v2.yaml` and the `r8_ablations/*.yaml` pin
+`data.mix.v2.tail_share: 0.4` (the ab3b arms keep 0.0 and 0.1), and they train on bank_r8. The room path on bank_r8
+passes on fresh seed 7331: results_r2/r8/g1_bank_r8/README.md.
+
+The M2 criterion in `data_gates.py` is `share >= 0.25` (plan M2). Before 2026-09-26 it was `>= 0.24`; every run
+recorded here has a share of 0.251 or more, so no gate result changes.
 
 ## Mixer throughput (smoke, not reportable)
 

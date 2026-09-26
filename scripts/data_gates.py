@@ -547,7 +547,7 @@ def main(argv=None):
             res["m2_draw"] = m2_histogram(v2_over=v2_over)
             aucs = [res[p]["auc_ild"] for p in a.paths if isinstance(res[p], dict)]
             res["gate_auc_le"] = a.gate
-            res["gate_pass"] = bool(aucs and max(aucs) <= a.gate and res["m2_draw"]["share_-6_to_+3"] >= 0.25 - 0.01)
+            res["gate_pass"] = bool(aucs and max(aucs) <= a.gate and res["m2_draw"]["share_-6_to_+3"] >= 0.25)   # plan M2: at least 25 % of draws in -6..+3 dB
         res["spl_round_trip"] = spl_round_trip()
         (out_dir / f"v{v}.json").write_text(json.dumps(res, indent=1))
         results[v] = res
