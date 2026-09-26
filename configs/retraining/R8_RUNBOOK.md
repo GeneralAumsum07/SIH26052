@@ -54,8 +54,9 @@ tests/test_train_smoke.py cover this). Whether r8 replaces r7 is Rachit's call a
    **Every r8 mixer v2 config trains on bank_r8** (`data.bank: data/rirs/bank_r8.npz`, sha256 325ef372...), so the
    setup fails without it. Add the four bank_r8 files (bank_r8.npz, bank_r8.speech.npy, bank_r8.noise.npy,
    bank_r8.rt60.npy; sha256 in r8_banks.json) to the existing release `rir-banks-2026-09-21`
-   (docs/impl/2026-09-24/reports/banks.md). Upload `bank_r3.npz` from `deploy/rir_banks/` (sha256 e4e67463..., the
-   published copy); the laptop's `data/rirs/bank_r3.npz` is a different file (99dcfb26...). A bank is never rebuilt on
+   (docs/impl/2026-09-24/reports/banks.md). `bank.npz` and `bank_r3.npz` are already on that release (its BANKS.sha256
+   matches r8_banks.json, checked 2026-09-26); the laptop's `data/rirs/bank_r3.npz` is a different file (99dcfb26...),
+   so never upload it. A bank is never rebuilt on
    the box: pyroomacoustics differs across machines, so a rebuilt bank is a different file. bank_r8.noise.npy is
    1.92 GB, under GitHub's 2 GiB per-asset limit. If the sidecars are left off the release, RirBank rebuilds them on
    first load and the preflight checks their sha256 (docs/impl/2026-09-24/reports/banks.md found them reproducible with np.save).

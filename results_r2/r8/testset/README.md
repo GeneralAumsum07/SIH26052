@@ -10,6 +10,10 @@ the single post-selection scoring run described in `PROTOCOL.md`.
   prints "verified (2308 items)".
 - `index_summary.csv` has items, buckets, and distinct noise and speech sources per `subset/category`.
 - `v2_snr_quantiles.csv` has the per-scene quantiles of the output SNR (`snr_db`) of the v2 subset.
+- The G6 table is written by `python scripts/r8_test_table.py` from the three per-item CSVs of PROTOCOL.md's
+  scoring commands (`table.md` + `table_cells.csv` here); it refuses partial, duplicate or wrong-hash inputs.
+- `configs/data/r8_test_sources.json` lists this set's speech and noise/impulse source_ids (written by
+  `scripts/heldout_freesound.py --write-sources`), so the box can check held-out groups without the set.
 
 Both CSVs were built from `data/eval_r8_test/test/index.csv` (sha256 `99a62834...`) with:
 
