@@ -3,6 +3,7 @@
 #   bash scripts/run_r8.sh start [all|pilots|full]   launch both queues in tmux session "r8" (default: all)
 #   bash scripts/run_r8.sh status                    every queued run: DONE / RUNNING / FAILED / DROPPED / PENDING
 #   bash scripts/run_r8.sh next [0|1]                the next run each queue would start
+#   bash scripts/run_r8.sh workers                   loader workers per queue (after the memory cap)
 #   bash scripts/run_r8.sh go-full                   release the full runs after the pilots (winning settings copied)
 #   bash scripts/run_r8.sh _queue <gpu> <phase>      the queue itself (what tmux runs)
 # Resumable: a run with runs/<name>/DONE is skipped; any other run is relaunched with the same command, and
@@ -11,7 +12,8 @@
 # ALLOW_PILOTS_WITHOUT_G1=1. "all" runs the pilots, then waits for "go-full" (plan: the winning pilot settings are
 # copied into the full configs first); FULL_GO=1 skips that wait.
 # Env: DRY_RUN=1 (print, run nothing), PILOT_HOURS (12: no pilot starts later than this after its queue began;
-# the rest are logged as dropped), WORKERS_GPU0/WORKERS_GPU1 (default (nproc - RESERVE_CPUS) / 2),
+# the rest are logged as dropped), WORKERS_GPU0/WORKERS_GPU1 (default (nproc - RESERVE_CPUS) / 2, lowered so both
+# queues' loaders and screens fit in MemAvailable at VAANI_WORKER_RSS_GB per process; MEMINFO for tests),
 # VAANI_SCREEN_WORKERS (8), MAX_TRIES (3), TRAIN_CMD, RUNS_DIR (runs), G1_JSON, NO_TMUX=1 (background, no tmux).
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -24,6 +26,10 @@ if [ -z "${TRAIN_CMD:-}" ]; then
   else TRAIN_CMD="uv run --extra fast --extra train python -m vaani.train"; fi
 fi
 PILOT_HOURS="${PILOT_HOURS:-12}"; MAX_TRIES="${MAX_TRIES:-3}"; RESERVE_CPUS="${RESERVE_CPUS:-4}"
+MEMINFO="${MEMINFO:-/proc/meminfo}"   # no MemAvailable there = no memory cap
+# INTERIM per-worker memory (GB) until results_r2/r8/loader_rss/ measures it: a private copy of what one v2 worker loads,
+# bank_r8 sidecars 0.640 speech + 1.920 noise (memmapped, counted as private) + dataset 0.019 (laptop pickle) = 2.58 -> 3
+WORKER_RSS_GB_DEFAULT=3
 export VAANI_SCREEN_WORKERS="${VAANI_SCREEN_WORKERS:-8}"   # two runs' composite screens must not starve the loaders
 A=configs/retraining/r8_ablations
 # priority order (plan 11.6: 1, 3b, 2, 3, 4, 6); ablation 2 leads with pr_nhat, the NLMS read Rachit asked for
@@ -61,10 +67,23 @@ print(f"G1: gate_pass {j.get('gate_pass')}, {items} items, seed {j.get('seed')},
 sys.exit(0 if ok else 1)
 EOF
 }
-workers() {  # per-queue loader workers: two concurrent runs split the cores
+workers() {  # per-queue loader workers: two concurrent runs split the cores, and all their processes must fit in RAM
   local g=$1 v; v=$(eval echo "\${WORKERS_GPU$g:-}")
   [ -n "$v" ] && { echo "$v"; return; }
-  local n; n=$(nproc 2>/dev/null || echo 8); v=$(( (n - RESERVE_CPUS) / 2 )); [ "$v" -lt 2 ] && v=2; echo "$v"
+  local n; n=$(nproc 2>/dev/null || echo 8); v=$(( (n - RESERVE_CPUS) / 2 )); [ "$v" -lt 2 ] && v=2
+  # each queue holds 2 persistent loaders of v workers (train + val, runtime.loader_kwargs) + the screen pool
+  local ma m r="${VAANI_WORKER_RSS_GB:-$WORKER_RSS_GB_DEFAULT}"
+  ma=$(awk '/^MemAvailable:/ {print $2; exit}' "$MEMINFO" 2>/dev/null)
+  if [ -n "$ma" ]; then
+    m=$(awk -v kb="$ma" -v r="$r" -v s="$VAANI_SCREEN_WORKERS" \
+      'BEGIN { w = int((kb * 1024 / 1e9 / 2 / r - s) / 2); print (w < 1 ? 1 : w) }')
+    if [ "$m" -lt "$v" ]; then
+      echo "workers gpu$g: capped $v -> $m by memory (MemAvailable $(awk -v kb="$ma" 'BEGIN { printf "%.1f", kb * 1024 / 1e9 }') GB, $r GB per worker," \
+        "2 loaders x workers + $VAANI_SCREEN_WORKERS screen processes per queue, 2 queues)" >&2
+      v=$m
+    fi
+  fi
+  echo "$v"
 }
 log() { echo "$(date '+%F %T') [gpu$1] $2" | tee -a "$Q/queue.log"; }
 
@@ -91,7 +110,8 @@ run_queue() {  # $1 gpu, $2 phase
       if [ $(( $(date +%s) - t0 )) -gt $(( PILOT_HOURS * 3600 )) ] && [ "$(state_of "$n")" = PENDING ]; then
         echo "$n" >> "$Q/dropped.txt"; log "$g" "DROPPED $n: past PILOT_HOURS=$PILOT_HOURS"; continue; fi
     fi
-    w=$(workers "$g")
+    w=$(workers "$g" 2>"$Q/workers$g.msg")   # a memory cap goes into queue.log beside the run it throttles
+    [ -s "$Q/workers$g.msg" ] && log "$g" "$(cat "$Q/workers$g.msg")"
     local cmd="CUDA_VISIBLE_DEVICES=$g VAANI_WORKERS=$w VAANI_SCREEN_WORKERS=$VAANI_SCREEN_WORKERS $TRAIN_CMD $c"
     if [ "${DRY_RUN:-0}" = 1 ]; then echo "DRY gpu$g: $cmd"; continue; fi
     rm -f "$RUNS_DIR/$n/FAILED"; tries=0; rc=1
@@ -126,6 +146,7 @@ case "$cmd" in
     tmux new-window -t r8 -n gpu1 "bash scripts/run_r8.sh _queue 1 $ph; exec bash"
     echo "started: tmux attach -t r8   (status: bash scripts/run_r8.sh status)";;
   _queue) run_queue "$1" "$2";;
+  workers) for g in 0 1; do echo "gpu$g workers $(workers $g)"; done;;
   go-full) touch "$Q/full_go"; echo "full runs released";;
   status)
     for g in 0 1; do
@@ -143,5 +164,5 @@ case "$cmd" in
         if [ "$s" = PENDING ] || [ "$s" = RUNNING ] || [ "$s" = FAILED ]; then echo "gpu$g $s $n $(cfg_of "$n")"; break; fi
       done
     done;;
-  *) sed -n '2,8p' "$0"; exit 2;;
+  *) sed -n '2,9p' "$0"; exit 2;;
 esac

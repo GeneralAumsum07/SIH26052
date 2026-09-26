@@ -185,12 +185,54 @@ def test_run_r8_dry_run_queues_both_gpus_in_priority_order(tmp_path):
     assert "CUDA_VISIBLE_DEVICES=1 VAANI_WORKERS=5" in g1l[0] and g1l[0].endswith("ab1_refvalid_s0.yaml")
     assert g0[2].endswith("ab2_pr_nhat_s0.yaml")   # the NLMS arm leads ablation 2
     assert not any("r8_fe_mini.yaml" in ln or "r8_refvalid_v2.yaml" in ln for ln in dry)
+    # every generated pilot is queued exactly once, across both GPUs
+    heads = [ln.split(": ", 1)[1].split() for ln in r.stdout.splitlines() if ln.startswith(("gpu0 workers", "gpu1 workers"))]
+    queued = heads[0] + heads[1]
+    stems = sorted(p.stem for p in (REPO / "configs/retraining/r8_ablations").glob("*.yaml"))
+    assert len(heads) == 2 and sorted(queued) == stems and len(set(queued)) == len(queued), heads
     # a finished run is skipped, and `next` names the head of each queue
     (tmp_path / "runs/ab1_fe_mini_s0").mkdir(parents=True); (tmp_path / "runs/ab1_fe_mini_s0/DONE").write_text("x")
     n = _bash(["scripts/run_r8.sh", "next"], env)
     assert "gpu0 PENDING ab1_fe_mini_s1" in n.stdout and "gpu1 PENDING ab1_refvalid_s0" in n.stdout, n.stdout
     s = _bash(["scripts/run_r8.sh", "status"], env)
     assert "DONE     ab1_fe_mini_s0" in s.stdout and "G1: gate_pass True" in s.stdout, s.stdout
+
+
+def _workers(tmp_path, meminfo=None, **env):
+    """run_r8.sh workers on a fake 96-vCPU box; meminfo None = no meminfo file at all."""
+    fake = tmp_path / "bin"; fake.mkdir(exist_ok=True)
+    (fake / "nproc").write_text("#!/bin/sh\necho 96\n", newline="\n"); (fake / "nproc").chmod(0o755)
+    mi = tmp_path / "meminfo"
+    if meminfo is not None:
+        mi.write_text(meminfo, newline="\n")
+    # Git Bash needs POSIX paths on PATH; cygpath is absent on Linux
+    sh = ('u() { cygpath -u "$1" 2>/dev/null || echo "$1"; }; PATH="$(u "$FAKEBIN"):$PATH" MEMINFO="$(u "$MI")" '
+          'exec bash scripts/run_r8.sh workers')
+    r = _bash(["-c", sh], dict(FAKEBIN=str(fake), MI=str(mi), RUNS_DIR=str(tmp_path / "runs"), **env))
+    assert r.returncode == 0, r.stdout + r.stderr
+    got = dict(ln.split(" workers ") for ln in r.stdout.splitlines() if " workers " in ln)
+    return {k: int(v) for k, v in got.items()}, r.stderr
+
+
+@pytest.mark.timeout(900)
+@pytest.mark.parametrize("meminfo, env, want, capped", [
+    (None, {}, 46, False),                                                     # no meminfo: the core rule, (96 - 4) / 2
+    ("MemTotal: 1 kB\n", {}, 46, False),                                        # no MemAvailable line: no cap
+    ("MemAvailable: 9000000000 kB\n", {}, 46, False),                           # plenty: never above the core rule
+    ("MemAvailable: 250000000 kB\n", {}, 17, True),                             # 256 GB / 2 queues / 3 GB - 8 screens, / 2 loaders
+    ("MemAvailable: 250000000 kB\n", {"VAANI_WORKER_RSS_GB": "1"}, 46, False),  # a measured 1 GB lifts the cap
+    ("MemAvailable: 10000000 kB\n", {}, 1, True),                               # tiny box: floor of 1
+])
+def test_run_r8_workers_capped_by_memavailable(tmp_path, meminfo, env, want, capped):
+    got, err = _workers(tmp_path, meminfo, **env)
+    assert got == {"gpu0": want, "gpu1": want}, (got, err)
+    assert ("capped 46 -> %d by memory" % want in err) == capped, err
+
+
+@pytest.mark.timeout(900)
+def test_run_r8_explicit_workers_skip_the_memory_cap(tmp_path):
+    got, err = _workers(tmp_path, "MemAvailable: 250000000 kB\n", WORKERS_GPU0="60")
+    assert got == {"gpu0": 60, "gpu1": 17} and "workers gpu0" not in err, (got, err)
 
 
 @pytest.mark.timeout(900)
