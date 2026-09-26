@@ -11,6 +11,17 @@ The only defect was the meaning of the `overloaded` flag, fixed below. It means 
 true on every item in every scene. The questionable parts are model choices (knee curve, HPF order, near-source level
 rule, mic full scale). They are implemented as v2 options and left for Rachit's decision (report: Decisions).
 
+## Decisions (Rachit, 2026-09-26)
+
+- **Mic full scale: 120 dB SPL for r8** (`mix.v2.mic_fs_spl_db` 120.0, the ICS-43434 default in vaani/data/mixer.py).
+  It matches the rig: the demo hardware is two ICS-43434 breakouts (H5 below). No r8 config overrides it.
+- **For the pitch:** a fielded boom wants a mic rated **>= 130 dB AOP**. The H5 column below shows why: with a 130 dB
+  full scale the share of items past the rails falls from 0.958 / 0.975 / 0.883 to 0.383 / 0.508 / 0.492 in helicopter
+  / APC / firefight (trace_r8test, the pre-4dcfa90 v2 defaults). It still rails a third to a half of those items, so
+  the 130 dB figure is a floor, not a fix (inferred).
+- **Unchanged:** knee curve (`fe_curve: knee105`), HPF order (`fe_hpf_order: pre`) and the near-source rule
+  (`near_mode: add`) stay as they are. The alternatives below remain options, off in every r8 config.
+
 ## Chain as implemented (vaani/data/mixer.py mix_v2, vaani/data/calib.py)
 
 | stage | rule | level definition |
