@@ -93,7 +93,9 @@ def main(argv=None):
     d = root / OUT
     if a.check:
         have = {p.name for p in d.glob("*.yaml")}
-        bad = sorted(f for f, t in want.items() if not (d / f).exists() or (d / f).read_bytes() != t.encode())
+        # CRLF-normalised: a Windows checkout with core.autocrlf rewrites line ends, not content
+        bad = sorted(f for f, t in want.items()
+                     if not (d / f).exists() or (d / f).read_bytes().replace(b"\r\n", b"\n") != t.encode())
         extra = sorted(have - set(want))
         for f in bad:
             print(f"DIFFERS {OUT}/{f}")
