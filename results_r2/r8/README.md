@@ -1,4 +1,4 @@
-# results_r2/r8: reference validity and the fallback Mini
+# results_r2/r8: r8 gates, data checks, reference validity and the fallback Mini
 
 Everything here is VAL or a deterministic count. No test-set number lives in this folder.
 
@@ -61,7 +61,11 @@ The zero-init ref_conv weight moved to norm 0.0018, so gradient reaches the new 
 
 | file | what | command / source |
 |---|---|---|
-| `data_gates/{README.md,v1.json,v2.json}` | G1 ILD-shortcut gate: v2 ILD-only AUC 0.727 (param) / 0.697 (room), gate <= 0.75; v1 0.989 / 0.874 | see [data_gates/README.md](data_gates/README.md) |
+| `data_gates/` | G1 ILD-shortcut gate: the 48-item seed-55 pass (0.727 / 0.697) is superseded; confirmed with the c5 defaults on fresh seed 202, 200 items: param 0.699, room 0.665 (gate <= 0.75) | see [data_gates/README.md](data_gates/README.md) |
+| `g1_bank_r8/` | G1 room path on bank_r8 (the r8 training bank), fresh seed 7331, 200 items: 0.659 [0.609, 0.708], pass; physical-mode items alone 0.817 | see [g1_bank_r8/README.md](g1_bank_r8/README.md) |
+| `calib/` | mixer v2 level chain: the 123 dB clipping is physics under the mic model, not a calibration bug; `overloaded` flag meaning fixed | see [calib/README.md](calib/README.md) |
+| `banks/` | bank_r8 (M6 receiver radius 0.05 m) build, validation and sidecar checks | see [banks/README.md](banks/README.md) |
+| `native_crash/` | eval segfaults root-caused to a pesq 0.0.4 out-of-bounds read; repro inputs and ASan output | see [native_crash/README.md](native_crash/README.md) |
 | `mad_speech_filter.json` | MAD speech-contamination pass: 477 of 6,483 clips (0.60 h) flagged; writes `data/manifests/mad_v2.parquet` (git-ignored) | `source <diag env.sh> && .venv/Scripts/python.exe scripts/mad_speech_filter.py`; the VAD is Silero (threshold 0.5) from the faster-whisper bundle in the uv cache, reached through the diag env.sh PYTHONPATH |
 | `mixer_bench.json` | mixer v1 vs v2 ms/item (smoke, loaded machine, not reportable) | `python scripts/data_gates.py --bench 200` (in the JSON as `command`) |
 | `loader_bench.json` | dataset items/s per worker for r8_fe_mini / r8_refvalid_v2 / r7 (smoke, laptop RTX 5060 box, not reportable) | embedded in the JSON as `command` |
