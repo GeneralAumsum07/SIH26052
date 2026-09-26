@@ -474,7 +474,9 @@ def mix_v2(rng, speech, noises, impulse, impulse_onsets_s, bank, cfg: MixConfig,
             "speech_spl_db": float(scene["speech_spl"])}
     speech = np.asarray(speech, np.float32)
     meta["lombard"] = bool(p["lombard"] and scene.get("lombard"))
-    if meta["lombard"]:
+    if scene.get("speech_lombard"):   # recorded Lombard speech (Lombard GRID "l") already carries the tilt
+        meta["speech_lombard"] = True
+    if meta["lombard"] and not scene.get("speech_lombard"):
         speech = calib.lombard_tilt(speech)   # alpha ratio only; the +1.9 st F0 shift is TBD (not applied)
 
     # --- reference mode (M2 physics or its deliberate tail) ---

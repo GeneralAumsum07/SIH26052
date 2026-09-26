@@ -142,6 +142,21 @@ def test_snr_follows_scene_levels():
     assert abs(meta["snr_db"] - 10.0) < 0.5
 
 
+def test_recorded_lombard_speech_is_not_tilted_twice():
+    s = _speech()
+    sc = dict(name="t", rir="outdoor", speech_spl=100.0, effort="loud", lombard=True, wind_mps=0.0, event=None,
+              sources=[dict(role="bed", tags=["general"], spl=95.0, weighting="rms")])
+    cfg = mixer.MixConfig(version=2, p_clean=0.0, v2={"front_end": False, "tail_share": 0.0})
+    n = np.random.default_rng(1).standard_normal(5 * SR).astype(np.float32)
+    run = lambda sc, c=cfg: mixer.mix(np.random.default_rng(7), s, [n], None, [], None, c, scene=dict(sc))
+    tilted, plain = run(sc), run(sc, mixer.MixConfig(version=2, p_clean=0.0, v2={"front_end": False, "tail_share": 0.0,
+                                                                                   "lombard": False}))
+    rec = run(dict(sc, speech_lombard=True))
+    assert tilted[2]["lombard"] and not np.array_equal(tilted[1], plain[1])
+    assert np.array_equal(rec[0], plain[0]) and np.array_equal(rec[1], plain[1])   # scene still Lombard, no second tilt
+    assert rec[2]["lombard"] and rec[2]["speech_lombard"] and "speech_lombard" not in tilted[2]
+
+
 def test_unknown_v2_key_and_bad_version_raise():
     with pytest.raises(ValueError):
         mixer.v2_params(mixer.MixConfig(version=2, v2={"no_such": 1}))

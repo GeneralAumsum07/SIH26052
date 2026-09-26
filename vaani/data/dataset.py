@@ -1,7 +1,7 @@
 """Train = dynamic mixing (a fresh mixture every item, infinite variety).
 Val/test = rendered once, frozen, so numbers across runs are comparable.
 """
-import json, warnings
+import json, re, warnings
 from pathlib import Path
 
 import numpy as np
@@ -22,6 +22,7 @@ from vaani.dsp.limiter import Limiter
 SR = 16000
 BUCKET_SNRS = [-10, -5, 0, 5, 10, 15]
 NOISE_CLASSES = ["stationary", "changing", "impulsive", "impulsive+stationary", "clean"]
+LOMBARD_SPEECH = re.compile(r"^lgrid:[^/]+/l/")   # scan_lombard_grid: lgrid:<spk>/<l|p>/<stem>; "l" is recorded Lombard speech
 
 
 def _load(path: str, n: int | None, rng, pack=None) -> np.ndarray:
@@ -258,10 +259,12 @@ class DynamicMixDataset(Dataset):
         # epoch rides in the index (see EpochSampler): persistent workers never see attribute changes
         epoch, i = divmod(int(idx), self.epoch_len)
         rng = np.random.default_rng([self.seed, epoch, i])
-        s = _load(self.speech.path.iloc[int(rng.integers(len(self.speech)))], self.n, rng, self.pack)
+        j = int(rng.integers(len(self.speech)))
+        s = _load(self.speech.path.iloc[j], self.n, rng, self.pack)
         s = np.pad(s, (0, self.n - len(s)))
         if self.scene_pool is not None:
-            mixed, clean, meta = self._mix_v2(rng, s)
+            sid = str(self.speech.source_id.iloc[j]) if "source_id" in self.speech else ""
+            mixed, clean, meta = self._mix_v2(rng, s, speech_lombard=LOMBARD_SPEECH.match(sid) is not None)
             return self._finish(epoch, i, mixed, clean, meta)
         # noise draw: continuous class(es) plus optionally an impulsive one
         k = int(rng.integers(1, 3))
@@ -284,9 +287,12 @@ class DynamicMixDataset(Dataset):
         meta["noise_class"] = "clean" if meta["clean_bucket"] else noise_class
         return self._finish(epoch, i, mixed, clean, meta)
 
-    def _mix_v2(self, rng, s):
-        """M8 scene -> rows -> mix_v2. Sources without an eligible row leave the scene, so rows and levels stay aligned."""
+    def _mix_v2(self, rng, s, speech_lombard=False):
+        """M8 scene -> rows -> mix_v2. Sources without an eligible row leave the scene, so rows and levels stay aligned.
+        speech_lombard: the utterance is recorded Lombard speech, so mix_v2 skips the M11 tilt (no double tilt)."""
         scene = sample_scene(rng, weights=self.scene_weights, crop_s=self.n / SR)
+        if speech_lombard:
+            scene["speech_lombard"] = True
         rows, imp_row = self.scene_pool.draw(rng, scene)
         keep = [k for k, r in enumerate(rows) if r is not None]
         scene["sources"] = [scene["sources"][k] for k in keep]

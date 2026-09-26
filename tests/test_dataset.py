@@ -162,6 +162,19 @@ def test_v2_scene_items(tmp_path):
     assert torch.equal(again["mix"], ds[5]["mix"])
 
 
+@pytest.mark.parametrize("style,want", [("l", True), ("p", False)])
+def test_v2_flags_recorded_lombard_speech(tmp_path, style, want):
+    # Lombard GRID "l" utterances already carry the Lombard tilt: the mixer is told, so it does not tilt them again
+    m = _tiny_manifest(tmp_path)
+    ds = dataset.DynamicMixDataset([m], "train", None, mixer.MixConfig(version=2, p_room=0.0), crop_s=1.0, epoch_len=4, seed=0)
+    ds.speech = ds.speech.assign(source_id=f"lgrid:s1/{style}/bbaf2n")
+    seen = []
+    real = ds._mix_v2
+    ds._mix_v2 = lambda rng, s, speech_lombard=False: (seen.append(speech_lombard), real(rng, s, speech_lombard))[1]
+    it = ds[0]
+    assert seen == [want] and it["meta"].get("speech_lombard", False) is want
+
+
 def test_front_end_matches_pipeline_mix():
     rng = np.random.default_rng(0)
     x = (rng.standard_normal((2, 16000)) * 0.3).astype(np.float32); x[:, 4000:4300] *= 8
