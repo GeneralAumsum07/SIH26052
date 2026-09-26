@@ -90,11 +90,15 @@ faster_whisper_small follow.
 | svarah | 1.095 | **HF gate** | CC BY 4.0 |
 | indictts | TBD | **licence request** | TBD |
 
+LibriTTS-R, MUSAN and WHAM! stay deferred for r8 (Rachit, 2026-09-26): no r8 config reads them, the box does not
+fetch them by default, and adding any of them would be a new recipe change outside the ablation plan.
+
 ## Disk
 
 `plan` prints the need per dataset and in total, and `fetch` refuses to start a dataset that would not fit. The
 estimate is the archive size times 3: the archive, the extracted tree, and the 16 kHz FLAC the scanners write
-(inferred upper bound, not measured). Keep `--root` on the box's large volume.
+(inferred upper bound, not measured). Keep `--root` on the box's large volume. The planned box has more than
+300 GB of disk (Rachit, 2026-09-26), above the inferred 156 GB for the default datasets.
 
 ## Tools on the box
 
