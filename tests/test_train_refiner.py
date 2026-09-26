@@ -135,3 +135,18 @@ def test_base_checkpoint_falls_back_to_the_tracked_copy(tmp_path, monkeypatch):
     monkeypatch.chdir(ROOT)
     cfg = yaml.safe_load(open("configs/retraining/r7_e256_wr64_refiner.yaml"))
     verify_checkpoint_hash("results_r2/runs/r7_e256_wr64/best.pt", cfg["base_checkpoint_sha256"])
+
+
+def test_screen_pool_map_fails_loudly_instead_of_hanging(monkeypatch):
+    from multiprocessing import TimeoutError as PoolTimeout
+
+    class Stuck:
+        terminated = False
+        def map_async(self, f, xs, chunksize): return self
+        def get(self, timeout): raise PoolTimeout()
+        def terminate(self): Stuck.terminated = True
+
+    monkeypatch.setattr(tr, "_pool", Stuck())
+    with pytest.raises(RuntimeError, match="timed out"):
+        tr._pool_map(tr._metric_item, [1, 2])
+    assert Stuck.terminated and tr._pool is None   # the next screen gets a fresh pool

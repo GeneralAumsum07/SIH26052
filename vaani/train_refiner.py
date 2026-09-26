@@ -89,6 +89,18 @@ def _screen_pool():
     return _pool
 
 
+def _pool_map(f, xs):
+    """Pool.map that fails loudly: a worker killed outside PESQ's isolation (OOM, a native fault) otherwise hangs map forever."""
+    global _pool
+    import os
+    from multiprocessing import TimeoutError as PoolTimeout
+    try:
+        return _screen_pool().map_async(f, xs, chunksize=4).get(timeout=float(os.environ.get("VAANI_SCREEN_TIMEOUT_S", 1800)))
+    except PoolTimeout:
+        _pool.terminate(); _pool = None
+        raise RuntimeError(f"screen pool: {f.__name__} over {len(xs)} items timed out (a worker died?); pool reset") from None
+
+
 def _dsp_item(args):
     mix, clean, controller_on, dsp_cfg = args
     r = pipeline.run(mix, controller_on=controller_on, dsp_cfg=dsp_cfg)
@@ -108,15 +120,15 @@ def score_items(model, ds, idx, first_cfg, device):
     key = (ds, tuple(idx), _cfg_hash({"dsp": first_cfg.get("dsp"), "controller_on": first_cfg["controller_on"]}))
     if key not in _screen_cache:
         items = [ds[i] for i in idx]
-        _screen_cache[key] = _screen_pool().map(_dsp_item, [(it["mix"].numpy(), it["clean"].numpy(), first_cfg["controller_on"],
-                                                             first_cfg.get("dsp")) for it in items], chunksize=4)
+        _screen_cache[key] = _pool_map(_dsp_item, [(it["mix"].numpy(), it["clean"].numpy(), first_cfg["controller_on"],
+                                                    first_cfg.get("dsp")) for it in items])
     was_training = model.training; model.eval(); ys = []
     for r in _screen_cache[key]:
         x = torch.from_numpy(r["mix"])[None].to(device)
         spec6 = torch.cat([stft.stft(x[:, 0]), stft.stft(x[:, 1]), stft.stft(torch.from_numpy(r["n_hat"])[None].to(device))], -1)
         ys.append(stft.istft(model(spec6, torch.from_numpy(r["features"])[None].to(device)).float(), length=r["n"])[0].cpu().numpy())
     model.train(was_training)
-    out = _screen_pool().map(_metric_item, [(r["clean"], y) for r, y in zip(_screen_cache[key], ys)], chunksize=4)
+    out = _pool_map(_metric_item, [(r["clean"], y) for r, y in zip(_screen_cache[key], ys)])
     return np.asarray(out, float)
 
 
