@@ -13,8 +13,9 @@
 #                                        vaani.data.manifests.read, so they resolve on Linux once the audio is scanned)
 #   field/abcd.wav                       install -> data/field/     the stereo web WAV (WEB_WAV, default
 #                                        ~/Downloads/abcd.wav): G4 Part 1's web bed and all of Part 2 (--web-wav)
-# Not staged: data/eval_r8_test (G6 is scored once on the laptop after the chosen checkpoint is pulled back; keeping it
-# off the box removes any chance of it touching selection), RIR banks (GitHub release, RIR_BANK_URL, by sha256),
+# Not staged: the r8 test roots data/eval_r8_test_b (registered) and data/eval_r8_test (superseded); G6 is scored once
+# on the laptop after the chosen checkpoint is pulled back, and keeping them off the box removes any chance of them
+# touching selection. Also not staged: RIR banks (GitHub release, RIR_BANK_URL, by sha256),
 # bank_eval_r8 (only the r8 test render reads it), r7 best.pt and the gtcrn baseline (tracked in git), raw audio
 # (downloaded on the box). Idempotent: an existing staged file with the recorded sha256 is kept.
 set -euo pipefail
