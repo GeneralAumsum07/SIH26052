@@ -48,6 +48,29 @@ What the rebuild from B changed:
   - patrol max 39.6 -> 33.0 dB;
   - windy_ridge range -10.8..31.6 -> -13.7..22.1 dB.
 
+## Test items that r7's training data shares a Freesound recording with
+
+`freesound_shared_items.csv` lists every test item whose `noise_source` or `impulse_source` has the Freesound id of a
+`freesound_*` held-out row in `configs/data/r8_heldout_exclude.json`. These are train/val rows that r8 drops and r7
+trained on. G6 reports v1 with and without these items (R8_RUNBOOK section 6). The list comes from the index only; it
+is not a score. It is built with:
+
+```
+.venv/Scripts/python.exe results_r2/r8/testset/freesound_shared.py
+# data/eval_r8_test_b/test/index.csv: 351 of 2308 items share a Freesound id with a held-out train/val row;
+# by subset {'v1': 281, 'v2': 70}; by noise source 341, 10 more by impulse source
+```
+
+v2 noise sources are joined with "+" and are split into their parts here, as `scripts/heldout_freesound.py` does.
+
+- If the joined string is not split, root B gives 292 items (v1 281, v2 11). The same rule on the superseded root,
+  with the exclusion file of commit ac04e94, gives 294 (v1 281, v2 13). That 294 is the figure R8_RUNBOOK section 6
+  quoted.
+- With the split, the superseded root gives 347 (v1 281, v2 66).
+
+These comparison counts came from a one-off variant of this script (in a scratch folder, not committed). Only the
+351 / 281 / 70 row above has a committed script and CSV.
+
 ## Counts per subset
 
 | subset | items |
