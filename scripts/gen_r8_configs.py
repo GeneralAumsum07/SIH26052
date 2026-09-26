@@ -12,6 +12,7 @@ Body: yaml.safe_dump(sort_keys=True) after the '#' header, LF line ends (the for
 
 ab7_bank_r3 (ab1_fe_mini_s0 on data/rirs/bank_r3.npz) is opt-in because bank_r3 shares 1394 rooms with bank.npz, the
 eval_r2 val render that selects checkpoints (results_r2/r8/banks/README.md), so its val scores would be biased.
+Rachit opted in (2026-09-26, run it last): the file is committed, so plain --check and rewrites keep it.
 """
 import argparse, copy, sys
 from pathlib import Path

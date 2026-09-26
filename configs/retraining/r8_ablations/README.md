@@ -19,7 +19,7 @@ unbounded mask with no DF taps, kappa 3.
 | 4 | Mask range and low-band deep-filter taps | `ab4_bounded_df0`, `ab4_unbounded_df3`, `ab4_bounded_df3` | `model_cfg.mask`, `model_cfg.df_taps` | `ab1_fe_mini_s0` (unbounded, 0) |
 | 5 | Refiner stage on/off | **dropped** | - | VaaniFE has no refiner stage (vaani/models/vaani_fe.py); the refiner belongs to the r7 cascade, which is not an r8 candidate |
 | 6 | Asymmetric over-suppression weight | `ab6_kappa{1,2,4}` | `loss_cfg.kappa` (1 = term off) | `ab1_fe_mini_s0` (3) |
-| 7 | RIR bank alone: r7's bank under the r8 recipe | `ab7_bank_r3` **opt-in, not in this directory** | `data.bank` bank_r3 | `ab1_fe_mini_s0` (bank_r8) |
+| 7 | RIR bank alone: r7's bank under the r8 recipe | `ab7_bank_r3` (val-biased; runs last) | `data.bank` bank_r3 | `ab1_fe_mini_s0` (bank_r8) |
 
 `ab2_pr_nhat_*` also carries the worker DSP block (fixed NLMS with the robust kernel, blocking, ref_policy) because
 the `pr_nhat` input needs n_hat; the other VaaniFE arms use only the classical front end (limiter + ref_gain).
@@ -34,16 +34,20 @@ Ablation 3b under the c5 mixer: plan 11.6 lists 0 / 10 / 25 %; the baseline is n
 and 6.25 % low-ILD. Only the share varies between arms; the composition is fixed on purpose (one factor per arm).
 
 Priority order when rental hours run short (plan 11.6):
-1 (gates the family), 3b, 2, 3, 4, 6. Two seeds where listed; single-seed arms are read as directional only.
+1 (gates the family), 3b, 2, 3, 4, 6, 7. Two seeds where listed; single-seed arms are read as directional only.
 
-Ablation 7 (decision 2026-09-26: separate the bank change from the recipe change) is generated only with
-`python scripts/gen_r8_configs.py --bank-arm` and is not in this directory by default. Generating it is the whole
-opt-in: once `ab7_bank_r3.yaml` exists, `scripts/run_r8.sh` queues it last on GPU 0 (beside its baseline), `--check` and
-the box tests stage verify it like any pilot, and the box setup fetches bank_r3 as a trained-on bank. bank_r3 shares 1,394 rooms
-(27.9 %) with `bank.npz`, the bank of the eval_r2 val render that selects checkpoints (about 246 of 1,480 val items,
-inferred), while bank_r8 shares none (`results_r2/r8/banks/README.md`, `overlap_bank_r3.json`). The arm's val scores
-would therefore be biased in its favour against its baseline; whether to run it anyway is Rachit's call. If it runs,
-it goes last in priority (after 6): it answers an attribution question, not a candidate-selection one.
+Ablation 7 (decision 2026-09-26: separate the bank change from the recipe change) is written by
+`python scripts/gen_r8_configs.py --bank-arm`. Once `ab7_bank_r3.yaml` exists, `scripts/run_r8.sh` queues it last on
+GPU 0 (beside its baseline), `--check` and the box tests stage verify it like any pilot, and the box setup fetches
+bank_r3 as a trained-on bank. bank_r3 shares 1,394 rooms (27.9 %) with `bank.npz`, the bank of the eval_r2 val render
+that selects checkpoints (about 246 of 1,480 val items, inferred), while bank_r8 shares none
+(`results_r2/r8/banks/README.md`, `overlap_bank_r3.json`); on bank_r3 the M6 armoured scene/room pairing is also off
+(no receiver_radius/armoured arrays). Its val scores are therefore biased in its favour against its baseline.
+
+Decision (Rachit, 2026-09-26): run it anyway, last in priority (option b), so `ab7_bank_r3.yaml` is committed here. Read
+its val gap to `ab1_fe_mini_s0` one way only: bank_r8 beating it is evidence for the bank change; ab7 beating bank_r8
+is not evidence against it. It answers an attribution question, not a candidate-selection one, and it is the pilot
+PILOT_HOURS drops first when the memory cap leaves 28 or fewer loader workers per queue.
 
 Launch one arm per GPU, same as the full runs (see `../R8_RUNBOOK.md`):
 
