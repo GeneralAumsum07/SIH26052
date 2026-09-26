@@ -245,6 +245,24 @@
     0.8389373695741295
    ],
    "share_le_gate": 0.6345
+  },
+  "physical_only": {
+   "label": "reported, not gated",
+   "selection": "ref_mode == physical",
+   "items": 33,
+   "items_tail": 15,
+   "n_speech_bins": 381295,
+   "n_noise_bins": 846168,
+   "auc_ild": 0.9042474589400682,
+   "bootstrap": {
+    "b": 2000,
+    "mean": 0.9031290137236843,
+    "sd": 0.012153790295249167,
+    "ci95": [
+     0.8796648345704917,
+     0.926252805417441
+    ]
+   }
   }
  },
  "room": {
@@ -487,6 +505,24 @@
     0.7971205825323191
    ],
    "share_le_gate": 0.842
+  },
+  "physical_only": {
+   "label": "reported, not gated",
+   "selection": "ref_mode == physical",
+   "items": 33,
+   "items_tail": 15,
+   "n_speech_bins": 371113,
+   "n_noise_bins": 852813,
+   "auc_ild": 0.846191358207442,
+   "bootstrap": {
+    "b": 2000,
+    "mean": 0.8461062629206917,
+    "sd": 0.016155945582929765,
+    "ci95": [
+     0.8138809191855643,
+     0.8773191670788869
+    ]
+   }
   }
  },
  "m2_draw": {

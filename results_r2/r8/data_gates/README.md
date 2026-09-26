@@ -1,8 +1,54 @@
 # G1 data gate: is ILD alone a speech-vs-noise shortcut? (plan 11.2 / 11.8)
 
 **Status 2026-09-25:** passes with the c5 defaults on the fresh seed 202, 200 items: param 0.699 [0.651, 0.745],
-room 0.665 [0.620, 0.709]. See "G1 confirmation" below, including the caveat. The first section is the original
-48-item run; its defaults are superseded.
+room 0.665 [0.620, 0.709] (physical-only, reported, not gated: 0.858 / 0.805). See "G1 confirmation" below,
+including the caveat, and the next section for every run with its physical-only AUC. The section after that is the
+original 48-item run; its defaults are superseded.
+
+## G1 with the physical-only AUC beside it (2026-09-26)
+
+**Decision (Rachit, 2026-09-26): accept G1 as written; report the physical-only AUC beside it.**
+
+The gate is unchanged: v2 ILD-only AUC <= 0.75 on the param and room paths, and M2 share >= 0.25. Each v2 path in
+v2.json now also carries `physical_only`, labelled "reported, not gated". It is the same AUC over the
+physical-mode items only (`ref_mode == physical`; the M2 out-of-physics tail of mono, stereo and low-ILD items is
+left out), with an item-bootstrap CI95 and the item counts. `gate_pass` does not read it (`data_gates.gate_pass`).
+It uses the same selection and sums as `breakdown.by_ref_mode.physical.auc_within`, so the two agree to the bit.
+It is a histogram AUC; the gate column is the rank AUC `auc_ild`. The two agree to 1e-4 (calib-verify G1d).
+
+| run | bank | items (physical / tail) | param gate AUC [CI95] | param physical-only [CI95] | room gate AUC [CI95] | room physical-only [CI95] | gate_pass |
+|---|---|---|---|---|---|---|---|
+| confirm200_s202 (fresh) | bank_r3 | 118 / 82 | 0.699 [0.651, 0.745] | 0.858 [0.829, 0.884] | 0.665 [0.620, 0.709] | 0.805 [0.775, 0.832] | true |
+| confirm200_s5150 (fresh) | bank_r3 | 115 / 85 | 0.732 [0.689, 0.775] | 0.897 [0.874, 0.915] | 0.701 [0.657, 0.742] | 0.849 [0.825, 0.871] | true |
+| pooled fresh s202 + s5150 | bank_r3 | 233 / 167 | 0.7156 [0.681, 0.748] | 0.878 [0.861, 0.894] | 0.6831 [0.651, 0.713] | 0.828 [0.808, 0.845] | - |
+| ../g1_bank_r8 s7331 (fresh, room only) | bank_r8 | 115 / 85 | - | - | 0.659 [0.609, 0.708] | 0.817 [0.790, 0.841] | true |
+| baseline_s101_n200 (old defaults, legacy seeds) | bank_r3 | 147 / 53 | 0.786 [0.742, 0.828] | 0.897 [0.881, 0.911] | 0.751 [0.708, 0.792] | 0.850 [0.830, 0.868] | false |
+| baseline_s55_n48 (old defaults, tuning seed) | bank_r3 | 33 / 15 | 0.727 [0.606, 0.839] | 0.904 [0.880, 0.926] | 0.697 [0.590, 0.797] | 0.846 [0.814, 0.877] | true |
+
+Sources: `<run>/v2.json` `<path>.auc_ild`, `<path>.bootstrap.ci95`, `<path>.physical_only`, `gate_pass`. The
+pooled row is `pooled_fresh_s202_s5150/item_stats.json` (`pooled_auc`, `bootstrap`, `physical_only`). Its gate CI
+uses the script's seed-0 bootstrap. The [0.683, 0.748] / [0.653, 0.714] quoted further down came from
+calib-verify's own loop (rng 12345); the point AUCs are the same.
+
+The physical-only numbers were added to the recorded v2.json files without re-rendering. The command reruns the item
+statistics from the committed `items_v2_*` files. It adds `physical_only` only where the item count, `breakdown` and
+`bootstrap` reproduce the recorded values exactly, and it re-derives `gate_pass`. All five files reproduced.
+`git diff` shows only the added `physical_only` blocks, and no line removed. The pooled row came from the second
+command.
+
+    .venv/Scripts/python.exe scripts/data_gates.py --from-items results_r2/r8/data_gates/confirm200_s202 --bootstrap 2000 --add-physical-only --pooled-out <scratch>
+    (the same for confirm200_s5150, baseline_s101_n200, baseline_s55_n48 and results_r2/r8/g1_bank_r8)
+    .venv/Scripts/python.exe scripts/data_gates.py --from-items results_r2/r8/data_gates/confirm200_s202 results_r2/r8/data_gates/confirm200_s5150 --bootstrap 2000 --pooled-out results_r2/r8/data_gates/pooled_fresh_s202_s5150
+
+`gate_pass` is unchanged in all 28 recorded v2.json files (this directory, tune/ and ../g1_bank_r8). Each was
+re-derived with `data_gates.gate_pass` from its own `auc_ild`, `m2_draw` and `gate_auc_le`:
+
+    .venv/Scripts/python.exe -c "import json,glob,sys; sys.path.insert(0,'scripts'); from data_gates import gate_pass; fs=sorted(glob.glob('results_r2/r8/data_gates/**/v2.json',recursive=True))+['results_r2/r8/g1_bank_r8/v2.json']; print(sum(gate_pass(j,('param','room'),j['gate_auc_le'])==j['gate_pass'] for j in map(lambda f: json.load(open(f)), fs)), 'of', len(fs))"
+    -> 28 of 28
+
+The tune/ runs were not given `physical_only`. Their physical-only values for the pooled c5 / c0 runs are in
+docs/impl/2026-09-24/reports/calib-verify.md (G1f): 0.874 / 0.841 and 0.896 / 0.863. A new gate run writes
+`physical_only` itself and prints it next to the gate AUC.
 
 Per STFT bin of the mixer output, ILD = 10 log10(|P|^2/|R|^2); bins with local SNR > +10 dB are speech bins,
 < -10 dB noise bins; AUC = P(ILD of a speech bin > ILD of a noise bin). Gate: v2 AUC <= 0.75 on both paths,
@@ -137,7 +183,8 @@ fresh seeds passing is the mitigation.
 The gate is a pooled AUC, and the out-of-physics M2 tail carries the pass. In confirm200_s202 the physical-mode items
 alone (118 of 200) still give a within-group AUC of 0.858 (param) and 0.805 (room); the tail items sit at 0.50-0.52.
 So ILD is still a strong cue on the physical distribution; the 40 % tail only stops it being a sufficient cue. Whether
-that meets the intent of G1 is Rachit's call (calib report, Decisions).
+that meets the intent of G1 was Rachit's call. Decided 2026-09-26: accept G1 as written and report the physical-only AUC
+beside it (section "G1 with the physical-only AUC beside it" above).
 
 ### Training configs must carry these values
 

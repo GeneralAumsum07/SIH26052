@@ -246,6 +246,24 @@
     0.7079372793551632
    ],
    "share_le_gate": 1.0
+  },
+  "physical_only": {
+   "label": "reported, not gated",
+   "selection": "ref_mode == physical",
+   "items": 115,
+   "items_tail": 85,
+   "n_speech_bins": 1307806,
+   "n_noise_bins": 2967837,
+   "auc_ild": 0.817232176347192,
+   "bootstrap": {
+    "b": 2000,
+    "mean": 0.8169087737952571,
+    "sd": 0.0131580110740028,
+    "ci95": [
+     0.7900321415152971,
+     0.8411184519845846
+    ]
+   }
   }
  },
  "m2_draw": {

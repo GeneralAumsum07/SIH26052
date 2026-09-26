@@ -29,6 +29,27 @@ z=np.load('results_r2/r8/g1_bank_r8/items_v2_room.npz'); r=list(csv.DictReader(o
 m=np.array([x['ref_mode']=='physical' for x in r]); print(hist_auc(z['S'][m].sum(0), z['N'].sum(1)[m].sum(0)))"
 ```
 
+### Gate AUC and physical-only AUC side by side (2026-09-26)
+
+**Decision (Rachit, 2026-09-26): accept G1 as written; report the physical-only AUC beside it.**
+
+| path | items (physical / tail) | gate AUC (rank, `auc_ild`) [CI95] | physical-only AUC (reported, not gated) [CI95] | gate_pass |
+|---|---|---|---|---|
+| room, bank_r8, seed 7331 | 115 / 85 | 0.659 [0.609, 0.708] | 0.817 [0.790, 0.841] | true |
+
+Source: `v2.json` `room.auc_ild`, `room.bootstrap.ci95`, `room.physical_only` (auc_ild, bootstrap.ci95, items,
+items_tail) and `gate_pass`. The `physical_only` block was added without re-rendering:
+
+```
+.venv/Scripts/python.exe scripts/data_gates.py --from-items results_r2/r8/g1_bank_r8 --bootstrap 2000 --add-physical-only --pooled-out <scratch>
+```
+
+The command recomputed the item statistics from `items_v2_room.{csv,npz}`. The item count, `breakdown` and
+`bootstrap` matched the recorded ones exactly, so it added `room.physical_only`: 0.8172, the same value as the
+one-liner above and as `breakdown.by_ref_mode.physical.auc_within`. `gate_pass` was re-derived and is unchanged
+(true). `git diff` of v2.json shows only the added block. The physical-only CI is an item bootstrap over the 115
+physical items (B 2000, seed 0).
+
 Reading: the pooled pass comes from the out-of-physics reference tail, as on bank_r3 (physical-only 0.85-0.90 there).
 The param path does not read a bank, so it is not rerun here. The noise pool is `data_gates.V2_NOISE`, not the r8
 training corpus list.
