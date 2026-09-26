@@ -125,7 +125,7 @@ banks() {
   done < "$S/bank_plan.txt"
 }
 if [ ! -f configs/data/r8_banks.json ]; then
-  say "WARNING WARNING: configs/data/r8_banks.json is missing - fetching only the configs' banks (bank_r3) by the remote_setup.sh hash"; fi
+  say "WARNING WARNING: configs/data/r8_banks.json is missing - fetching only bank_r3 by the remote_setup.sh hash (bank_r8, which the r8 configs train, has no hash then: preflight FAILs)"; fi
 bg banks banks
 
 # --- 5. laptop-only artefacts from the private HF mirror (scripts/r8_mirror_stage.sh) ----------------------------------
@@ -167,6 +167,13 @@ for j in banks mirror; do
   until join_bg $j; do say "$j was not running; relaunching"; bg $j $j; done; done
 [ -n "$FIRST" ] && until join_bg datasets datasets_first; do say "datasets was not running; relaunching"; bg datasets datasets; done
 [ "$MODE" = run ] && mirror_install   # after the scan: the laptop's VAD-filtered MAD list wins
+# one process writes any missing .npy sidecars, before G1 and the loaders each decompress a ~2.6 GB copy at once
+sidecars() {
+  awk '$4 == "need" && $1 ~ /\.npz$/ {print $1}' "$S/bank_plan.txt" | while read -r f; do
+    "$PY" -c "import sys; from vaani.data.rirs import RirBank; b = RirBank(sys.argv[1]); print('sidecars ok', sys.argv[1], len(b.rt60))" "$f" || return 1
+  done
+}
+stage sidecars sidecars
 
 # --- 7b. hold out the Freesound siblings of r8 test noise; FSD50K is scanned only here, so the file can change here ----
 heldout() {
@@ -196,11 +203,37 @@ g1() {
 stage g1 g1
 
 # --- 10. loader/step bench (sizes VAANI_WORKERS), then preflight ------------------------------------------------------
-bench() {
-  "$PY" scripts/bench_loader.py --out results_r2/r8/loader_bench_box.json --workers 8 16 24 32 --batches 20 \
+kids() {  # every descendant pid of $1 (breadth first)
+  ps -e -o pid=,ppid= | awk -v r="$1" '{ c[$2] = c[$2] " " $1 }
+    END { q = r; while (q != "") { n = split(q, a, " "); q = ""; for (i = 1; i <= n; i++) if (a[i] in c) { printf "%s", c[a[i]]; q = q c[a[i]] } } }'
+}
+memwatch() {  # $1 pid, $2 log: every 5 s MemAvailable, and Rss / Pss / private (USS) of $1 and its descendants
+  local root=$1 log=$2 p t
+  echo "# root $root; lines: <t> mem <MemAvailable kB> | <t> proc <pid> <ppid> <rss kB> <pss kB> <private kB> <comm>" > "$log"
+  while kill -0 "$root" 2>/dev/null; do
+    t=$(date +%s); echo "$t mem $(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)" >> "$log"
+    for p in $root $(kids "$root"); do
+      awk -v t="$t" -v p="$p" -v pp="$(awk '{print $4}' /proc/$p/stat 2>/dev/null)" -v c="$(cat /proc/$p/comm 2>/dev/null)" \
+        '/^Rss:/ {r=$2} /^Pss:/ {s=$2} /^Private_(Clean|Dirty):/ {v+=$2}
+         END { if (r != "") print t, "proc", p, pp, r, s + 0, v + 0, c }' /proc/$p/smaps_rollup 2>/dev/null >> "$log"
+    done
+    sleep 5
+  done
+}
+watched() {  # watched <log> <command...>: run it with a memwatch beside it; its exit code is the command's
+  local log=$1 rc=0 bp mw; shift
+  "$@" & bp=$!
+  memwatch "$bp" "$log" & mw=$!
+  wait "$bp" || rc=$?
+  wait "$mw" 2>/dev/null || true
+  return $rc
+}
+bench() {  # the memory logs size run_r8.sh's VAANI_WORKER_RSS_GB (per-worker memory) against this box's MemAvailable
+  watched "$S/bench_mem_loader.log" "$PY" scripts/bench_loader.py --out results_r2/r8/loader_bench_box.json --workers 8 16 24 32 --batches 20 \
     --label "rental box $(nproc) vCPU" --configs configs/retraining/r8_fe_mini.yaml configs/retraining/r8_refvalid_v2.yaml
-  CUDA_VISIBLE_DEVICES=0 "$PY" scripts/bench_loader.py --step-time --out results_r2/r8/step_time_box.json \
+  CUDA_VISIBLE_DEVICES=0 watched "$S/bench_mem_step.log" "$PY" scripts/bench_loader.py --step-time --out results_r2/r8/step_time_box.json \
     --label "rental box GPU0" --configs configs/retraining/r8_fe_mini.yaml configs/retraining/r8_refvalid_v2.yaml
+  "$PY" scripts/r8_preflight.py --mem-summary "$S/bench_mem_loader.log" "$S/bench_mem_step.log" --mem-out results_r2/r8/loader_mem_box.json
 }
 [ "${SKIP_BENCH:-0}" = 1 ] || stage bench bench
 PF=("$PY" scripts/r8_preflight.py --sample 50 --gpus "$GPUS" --g1 "$G1_JSON")

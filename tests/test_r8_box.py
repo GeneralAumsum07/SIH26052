@@ -154,6 +154,29 @@ def test_env_check_names_missing_credentials_without_values(tmp_path):
     assert not block
 
 
+def test_mem_summary_reads_a_bench_memwatch_log(tmp_path):
+    # root 100 with two DataLoader workers (ppid 100) and one grandchild that is not a worker
+    log = tmp_path / "bench_mem_loader.log"
+    log.write_text("\n".join([
+        "# root 100; lines: ...",
+        "10 mem 200000000", "10 proc 100 1 4000000 3000000 2500000 python",
+        "10 proc 101 100 3000000 1000000 500000 python", "10 proc 102 100 3100000 1100000 600000 python",
+        "10 proc 103 101 50000 50000 50000 sh",
+        "15 mem 150000000", "15 proc 101 100 3500000 1500000 900000 python", ""]), encoding="utf-8")
+    s = P.mem_summary(log)
+    kb = lambda v: round(v * 1024 / 1e9, 3)   # noqa: E731
+    assert s["samples"] == 2 and s["root_pid"] == "100"
+    assert s["mem_available_gb"] == dict(first=kb(200000000), min=kb(150000000))
+    assert s["main"]["rss_gb_max"] == kb(4000000)
+    w = s["worker"]
+    assert w["n_max"] == 2 and w["rss_gb_max"] == kb(3500000) and w["private_gb_max"] == kb(900000)
+    assert w["pss_gb_sum_max"] == kb(2100000) and w["private_gb_sum_max"] == kb(1100000)
+    assert s["mem_available_drop_gb"] == round(kb(200000000) - kb(150000000), 3)
+    out = tmp_path / "mem.json"
+    assert P.main(["--root", str(tmp_path), "--mem-summary", str(log), "--mem-out", "mem.json"]) == 0
+    assert json.loads(out.read_text())["logs"]["bench_mem_loader"]["worker"] == w
+
+
 # --- shell scripts ---------------------------------------------------------------------------------------------------
 def _bash(args, env=None, cwd=REPO):
     if not BASH:
@@ -287,7 +310,7 @@ def test_box_setup_names_missing_credentials_up_front():
         assert f"MISSING {k}" in r.stdout, r.stdout
     d = _bash(["scripts/r8_box_setup.sh", "--dry-run"], env)
     assert d.returncode == 0, d.stdout + d.stderr
-    for s in ("DRY sync", "DRY banks", "DRY mirror", "DRY g1", "DRY preflight"):
+    for s in ("DRY sync", "DRY banks", "DRY mirror", "DRY sidecars", "DRY g1", "DRY bench", "DRY preflight"):
         assert s in d.stdout, d.stdout
 
 

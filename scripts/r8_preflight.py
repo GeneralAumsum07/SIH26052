@@ -4,6 +4,7 @@ usage (repo root):
     python scripts/r8_preflight.py                        # all r8 configs (full + ablation pilots)
     python scripts/r8_preflight.py --config configs/retraining/r8_fe_mini.yaml --sample 50 --smoke 20
     python scripts/r8_preflight.py --fetch-order          # datasets for the first queued jobs, then the rest
+    python scripts/r8_preflight.py --mem-summary runs/box_setup/bench_mem_loader.log   # bench memory -> --mem-out JSON
 
 Checks (FAIL blocks the queue, WARN is printed and recorded):
   manifests     exist, have train rows, and a seeded sample of N audio paths resolves and decodes at 16 kHz;
@@ -16,7 +17,7 @@ Checks (FAIL blocks the queue, WARN is printed and recorded):
   imports       numba and torch_pesq import (FAIL), faster_whisper (WARN: G4 part 2 / the MAD VAD only)
   cuda          torch sees at least --gpus devices
   disk          free space on the repo's filesystem >= --need-gb
-  g1            the G1 result JSON exists, gate_pass is true, it scored >= 200 items on the configs' bank
+  g1            the G1 result JSON exists, gate_pass is true, it scored >= 200 items on the full configs' bank
   smoke         (--smoke N) N training steps per config into runs/preflight_<name>
 Writes runs/preflight.json; exits 1 on any FAIL.
 """
@@ -207,7 +208,9 @@ def check_g1(root, cfgs, rep, path):
         rep.add("g1", "FAIL", path, "missing: run the G1 gate on this box first"); return
     j = json.loads(p.read_text())
     items = min((j.get(k) or {}).get("items", 0) for k in ("param", "room") if k in j) if any(k in j for k in ("param", "room")) else 0
-    banks = {Path(c["data"]["bank"]).name for c in cfgs.values() if c["data"].get("bank")}
+    # the gate covers the full runs' bank; a pilot on another bank (gen_r8_configs.py --bank-arm) is not gated by it
+    banks = {Path(c["data"]["bank"]).name for s, c in cfgs.items() if c["data"].get("bank") and (s in FULL or not
+             any(k in FULL for k in cfgs))}
     probs = []
     if j.get("gate_pass") is not True:
         probs.append(f"gate_pass {j.get('gate_pass')}")
@@ -309,6 +312,40 @@ def g1_command(root, cfgs, seed, items, out, py=None):
             "--bootstrap", "2000", "--bank", banks.pop(), "--v2", blocks.pop(), "--out", out]
 
 
+def mem_summary(log):
+    """Summary of a memwatch log from r8_box_setup.sh's bench stage. Lines: '# root <pid>', '<t> mem <MemAvailable kB>',
+    '<t> proc <pid> <ppid> <rss kB> <pss kB> <private kB> <comm>'. Workers are the root's direct children (DataLoader
+    forks them); Rss counts pages shared with the parent and the page cache, Pss splits them, private is USS."""
+    root, mem, procs = None, [], []
+    for ln in open(log, encoding="utf-8"):
+        f = ln.split()
+        if ln.startswith("# root") and len(f) >= 3:
+            root = f[2].rstrip(";")   # memwatch writes "# root <pid>; lines: ..."
+        elif len(f) >= 3 and f[1] == "mem" and f[2].isdigit():
+            mem.append((int(f[0]), int(f[2])))
+        elif len(f) >= 7 and f[1] == "proc":
+            procs.append(dict(t=int(f[0]), pid=f[2], ppid=f[3], rss=int(f[4] or 0), pss=int(f[5] or 0),
+                              priv=int(f[6] or 0), comm=f[7] if len(f) > 7 else ""))
+    gb = lambda kb: round(kb * 1024 / 1e9, 3)   # noqa: E731 - /proc reports KiB
+    main = [p for p in procs if p["pid"] == root]
+    work = [p for p in procs if p["ppid"] == root]
+    per_t = {}
+    for p in work:
+        s = per_t.setdefault(p["t"], dict(n=0, pss=0, priv=0)); s["n"] += 1; s["pss"] += p["pss"]; s["priv"] += p["priv"]
+    out = dict(log=str(log), samples=len({t for t, _ in mem}), root_pid=root,
+               mem_available_gb=dict(first=gb(mem[0][1]), min=gb(min(m for _, m in mem))) if mem else None,
+               main=dict(rss_gb_max=gb(max(p["rss"] for p in main)), pss_gb_max=gb(max(p["pss"] for p in main)),
+                         private_gb_max=gb(max(p["priv"] for p in main))) if main else None,
+               worker=dict(n_max=max(s["n"] for s in per_t.values()),
+                           rss_gb_max=gb(max(p["rss"] for p in work)), pss_gb_max=gb(max(p["pss"] for p in work)),
+                           private_gb_max=gb(max(p["priv"] for p in work)),
+                           pss_gb_sum_max=gb(max(s["pss"] for s in per_t.values())),
+                           private_gb_sum_max=gb(max(s["priv"] for s in per_t.values()))) if work else None)
+    if mem:   # inferred: the drop also holds page cache the bench faulted in, and anything else the box ran meanwhile
+        out["mem_available_drop_gb"] = round(out["mem_available_gb"]["first"] - out["mem_available_gb"]["min"], 3)
+    return out
+
+
 BOX_ENV = {"MIRROR_HF_REPO": "private HF dataset repo with the laptop-only artefacts (scripts/r8_mirror_stage.sh)",
            "HF_TOKEN": "read token for that repo",
            "RIR_BANK_URL": "GitHub release asset base for the RIR banks (configs/data/r8_banks.json)"}
@@ -360,8 +397,17 @@ def main(argv=None):
     ap.add_argument("--g1-cmd", action="store_true", help="print the box G1 gate command (shell-quoted) and exit")
     ap.add_argument("--g1-seed", type=int, default=202)
     ap.add_argument("--g1-items", type=int, default=G1_MIN_ITEMS)
+    ap.add_argument("--mem-summary", nargs="+", metavar="LOG", help="summarise bench memwatch logs and exit")
+    ap.add_argument("--mem-out", default="results_r2/r8/loader_mem_box.json")
     a = ap.parse_args(argv)
     root = Path(a.root).resolve()
+    if a.mem_summary:
+        s = {Path(p).stem: mem_summary(p) for p in a.mem_summary}
+        out = root / a.mem_out; out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(dict(nproc=os.cpu_count(), logs=s), indent=1))
+        for k, v in s.items():
+            print(f"MEM {k}: MemAvailable {v['mem_available_gb']}, main {v['main']}, per worker {v['worker']}")
+        return 0
     if a.bank_plan or a.g1_cmd:
         cfgs = load_cfgs(root, a.config or default_configs(root))
         if a.g1_cmd:
