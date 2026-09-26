@@ -119,3 +119,75 @@ def test_from_items_pools_saved_runs(tmp_path):
         assert j["seed_scheme"] == "[seed, i]" and "breakdown" in j["param"] and len(j["param"]["bootstrap"]["ci95"]) == 2
     res = g.main(["--from-items", *dirs, "--pooled-out", str(tmp_path / "pool"), "--bootstrap", "20"])
     assert res["v2_param"]["items"] == 4 and (tmp_path / "pool" / "item_stats.json").exists()
+    assert res["v2_param"]["physical_only"]["label"] == "reported, not gated"
+
+
+def _tail_carries_the_pass(g):
+    """10 physical items with speech 4 dB above noise (AUC 1) and 30 mono-tail items whose speech and noise bins
+    coincide (AUC 0.5): the pooled AUC passes 0.75 only because of the tail."""
+    nb = len(g.ILD_EDGES) - 1
+    S = np.zeros((40, nb)); N = np.zeros((40, len(g.COMPS), nb)); recs = []
+    for i in range(40):
+        phys = i < 10
+        S[i, nb // 2 + (40 if phys else 0)] = 50
+        N[i, i % len(g.COMPS), nb // 2] = 50
+        recs.append(dict(scene="a", ref_mode="physical" if phys else ("mono" if i % 2 else "low_ild"), near="none",
+                         wind="no", m2_bucket="physical" if phys else "-6..+3", clipped=False))
+    return recs, S, N
+
+
+def test_physical_only_is_computed_on_physical_items_only():
+    g = _gates()
+    recs, S, N = _tail_carries_the_pass(g)
+    st = g.item_stats(recs, S, N, 200, 0.75, physical=True)
+    po = st["physical_only"]
+    assert st["breakdown"]["pooled_hist_auc"] < 0.75                  # the pooled gate number passes ...
+    assert abs(po["auc_ild"] - 1.0) < 1e-9                            # ... the physical items alone do not
+    assert po["items"] == 10 and po["items_tail"] == 30 and po["label"] == "reported, not gated"
+    assert po["n_speech_bins"] == 500 and po["n_noise_bins"] == 500
+    assert po["bootstrap"]["ci95"][0] > 0.99 and "share_le_gate" not in po["bootstrap"]
+    # same selection as breakdown's by_ref_mode.physical, to the bit
+    assert po["auc_ild"] == st["breakdown"]["by_ref_mode"]["physical"]["auc_within"]
+    assert "physical_only" not in g.item_stats(recs, S, N, 0, 0.75)   # v1 items carry no ref mode
+
+
+def test_physical_only_does_not_affect_gate_pass():
+    g = _gates()
+    base = {"param": {"auc_ild": 0.70}, "room": {"auc_ild": 0.66}, "m2_draw": {"share_-6_to_+3": 0.398}}
+    for phys in (0.99, 0.10, None):
+        r = json.loads(json.dumps(base))
+        for p in ("param", "room"):
+            r[p]["physical_only"] = {"auc_ild": phys, "label": "reported, not gated"}
+        assert g.gate_pass(r, ("param", "room"), 0.75) is True
+    assert g.gate_pass({**base, "room": {"auc_ild": 0.76}}, ("param", "room"), 0.75) is False
+    assert g.gate_pass({**base, "m2_draw": {"share_-6_to_+3": 0.249}}, ("param", "room"), 0.75) is False
+
+
+def test_run_reports_physical_only_and_add_physical_only_restores_it(tmp_path, capsys):
+    from vaani.data import rirs
+    g = _gates()
+    md = _corpus(tmp_path)
+    rirs.build_bank(tmp_path / "b.npz", n=2, seed=0, n_noise=3, max_len=4000, workers=1)
+    out = tmp_path / "g"
+    res = g.main(["--versions", "2", "--items", "3", "--seed", "3", "--manifest-dir", str(md), "--bank",
+                  str(tmp_path / "b.npz"), "--out", str(out), "--bootstrap", "20"])
+    assert "physical-only (reported, not gated)" in capsys.readouterr().out
+    fresh = (out / "v2.json").read_text(); j = json.loads(fresh)
+    for p in ("param", "room"):
+        po = j[p]["physical_only"]
+        assert po["items"] + po["items_tail"] == 3 and po["items"] == j[p]["ref_modes"].get("physical", 0)
+        assert po["auc_ild"] == j[p]["breakdown"]["by_ref_mode"].get("physical", {}).get("auc_within")
+    assert j["gate_pass"] == res[2]["gate_pass"] == g.gate_pass(j, ("param", "room"), 0.75)
+    # an older record without the field: --add-physical-only puts back exactly what a fresh run writes
+    old = json.loads(fresh)
+    for p in ("param", "room"):
+        del old[p]["physical_only"]
+    (out / "v2.json").write_text(json.dumps(old, indent=1))
+    r = g.main(["--from-items", str(out), "--bootstrap", "20", "--add-physical-only", "--pooled-out", str(tmp_path / "x")])
+    assert r["_add_physical_only"]["param"] == "added" and (out / "v2.json").read_text() == fresh
+    # a record whose breakdown does not reproduce is left alone
+    old["room"]["breakdown"]["pooled_hist_auc"] = 0.123
+    (out / "v2.json").write_text(json.dumps(old, indent=1))
+    r = g.main(["--from-items", str(out), "--bootstrap", "20", "--add-physical-only", "--pooled-out", str(tmp_path / "x")])
+    assert r["_add_physical_only"]["room"].startswith("refused") and r["_add_physical_only"]["param"] == "added"
+    assert "physical_only" not in json.loads((out / "v2.json").read_text())["room"]

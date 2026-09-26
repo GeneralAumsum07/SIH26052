@@ -10,6 +10,11 @@ split by the noise component that dominates them on the primary (bed, near, poin
 bootstrapped over items (--bootstrap B) and broken down by scene, reference mode, near-field source, wind and M2 bucket
 without re-rendering (--from-items DIR recomputes both from a saved run).
 
+Beside the gate, each v2 path carries physical_only: the same AUC over physical-mode items alone (the M2
+out-of-physics tail left out), with its bootstrap CI and item counts, labelled "reported, not gated" (Rachit,
+2026-09-26: accept G1 as written, report this beside it). gate_pass never reads it. --from-items DIR
+--add-physical-only adds it to an older DIR/v2.json when the rest of the item statistics reproduce exactly.
+
 usage: python scripts/data_gates.py [--versions 1 2] [--items 24] [--out results_r2/r8/data_gates] [--bootstrap 2000]
 """
 import argparse
@@ -219,11 +224,74 @@ def load_items(out_dir, tag):
     return pd.read_csv(Path(out_dir) / f"items_{tag}.csv").to_dict("records"), z["S"], z["N"]
 
 
-def item_stats(recs, S, N, b: int, gate: float) -> dict:
+PHYSICAL_MODE = "physical"   # the ref_mode inside the physics; mono, stereo and low_ild are the M2 out-of-physics tail
+PHYSICAL_LABEL = "reported, not gated"
+
+
+def physical_only(recs, S, N, b: int) -> dict:
+    """ILD-only AUC over physical-mode items alone, with its item-bootstrap CI. Decision (Rachit, 2026-09-26): G1 stays
+    as written and this is reported beside it; gate_pass never reads it. Same selection and sums as breakdown's
+    by_ref_mode.physical.auc_within, so the two agree to the bit."""
+    sel = np.asarray([str(r["ref_mode"]) == PHYSICAL_MODE for r in recs], bool)
+    Nt = N.sum(1)
+    out = {"label": PHYSICAL_LABEL, "selection": "ref_mode == physical", "items": int(sel.sum()),
+           "items_tail": int((~sel).sum()), "n_speech_bins": int(S[sel].sum()), "n_noise_bins": int(Nt[sel].sum()),
+           "auc_ild": hist_auc(S[sel].sum(0), Nt[sel].sum(0)) if Nt[sel].sum() and S[sel].sum() else None}
+    if b and out["auc_ild"] is not None:
+        bs = bootstrap(S[sel], N[sel], b)
+        out["bootstrap"] = {k: bs[k] for k in ("b", "mean", "sd", "ci95")}   # no share_le_gate: nothing gates on it
+    return out
+
+
+def item_stats(recs, S, N, b: int, gate: float, physical: bool = False) -> dict:
     out = {"breakdown": breakdown(recs, S, N)}
     if b:
         out["bootstrap"] = bootstrap(S, N, b, gate)
+    if physical:
+        out["physical_only"] = physical_only(recs, S, N, b)
     return out
+
+
+def gate_pass(res, paths, gate: float) -> bool:
+    """G1 as written (plan 11.2 / M2): v2 ILD-only AUC <= gate on every path run, and >= 25 % of M2 draws in -6..+3 dB.
+    Reads auc_ild and m2_draw only; physical_only is reported beside it and never enters."""
+    aucs = [res[p]["auc_ild"] for p in paths if isinstance(res.get(p), dict)]
+    return bool(aucs and max(aucs) <= gate and res["m2_draw"]["share_-6_to_+3"] >= 0.25)
+
+
+def _phys_line(po) -> str:
+    if not isinstance(po, dict) or po.get("auc_ild") is None:
+        return f"  physical-only ({PHYSICAL_LABEL}): n/a"
+    ci = po.get("bootstrap", {}).get("ci95")
+    return (f"  physical-only ({PHYSICAL_LABEL}): auc {po['auc_ild']:.3f}" + (f" [{ci[0]:.3f}, {ci[1]:.3f}]" if ci else "")
+            + f", {po['items']} physical of {po['items'] + po['items_tail']} items")
+
+
+def add_physical_only(d, res, b: int) -> dict:
+    """Write physical_only into DIR/v2.json per path, only if --from-items reproduced that path's recorded item count,
+    breakdown and bootstrap exactly; also re-derive gate_pass from the file. Returns {path: status}."""
+    p = Path(d) / "v2.json"
+    j = json.loads(p.read_text()); status = {}
+    for tag, r in res.items():
+        path = tag[len("v2_"):] if tag.startswith("v2_") else None
+        rec = j.get(path) if path else None
+        if not isinstance(rec, dict):
+            continue
+        rt = json.loads(json.dumps(r))   # the float round trip the recorded file went through
+        diff = [k for k in ("breakdown", "bootstrap") if rt.get(k) != rec.get(k)] + (
+            ["items"] if r["items"] != rec.get("items") else [])
+        if (rec.get("bootstrap") or {}).get("b") not in (None, b):
+            diff.append(f"bootstrap b {rec['bootstrap']['b']} != --bootstrap {b}")
+        status[path] = "added" if not diff else "refused: differs in " + ", ".join(diff)
+        if not diff:
+            rec["physical_only"] = rt["physical_only"]
+    recomputed = gate_pass(j, ("param", "room"), j["gate_auc_le"])
+    if recomputed != j["gate_pass"]:
+        raise SystemExit(f"{p}: recomputed gate_pass {recomputed} != recorded {j['gate_pass']}")
+    status["gate_pass"] = f"{j['gate_pass']} (recomputed, unchanged)"
+    if any(v == "added" for v in status.values()):
+        p.write_text(json.dumps(j, indent=1))
+    return status
 
 
 def m2_histogram(n=20000, seed=0, v2_over=None):
@@ -485,6 +553,8 @@ def main(argv=None):
     ap.add_argument("--from-items", nargs="+", default=None,
                     help="DIR [DIR ...]: recompute breakdown and bootstrap from saved runs' items_* (several dirs are pooled)")
     ap.add_argument("--pooled-out", default=None, help="with several --from-items dirs: where item_stats.json goes")
+    ap.add_argument("--add-physical-only", action="store_true",
+                    help="with one --from-items DIR: add physical_only to DIR/v2.json where the rest reproduces exactly")
     ap.add_argument("--legacy-seeds", action="store_true", help="item rng = seed + i (runs before 2026-09-25 15:00)")
     ap.add_argument("--calib", type=int, default=0, help="N > 0: level-chain trace, N items per scene, into --out")
     ap.add_argument("--calib-scenes", nargs="+", default=list(TRACE_SCENES))
@@ -497,11 +567,19 @@ def main(argv=None):
             recs = [r for p_ in parts for r in p_[0]]
             S, N = np.concatenate([p_[1] for p_ in parts]), np.concatenate([p_[2] for p_ in parts])
             res[tag] = {"dirs": [str(d) for d in a.from_items], "items": len(recs), "pooled_auc": hist_auc(S.sum(0), N.sum((0, 1))),
-                        **item_stats(recs, S, N, a.bootstrap, a.gate)}
+                        **item_stats(recs, S, N, a.bootstrap, a.gate, physical=tag.startswith("v2_"))}
+        if a.add_physical_only and len(a.from_items) != 1:
+            raise SystemExit("--add-physical-only takes exactly one --from-items DIR")
         out = Path(a.pooled_out or a.from_items[0]); out.mkdir(parents=True, exist_ok=True)
         (out / "item_stats.json").write_text(json.dumps(res, indent=1))
         print(json.dumps({k: [v["pooled_auc"], v.get("bootstrap", {}).get("ci95")] for k, v in res.items()}, indent=1))
         print(json.dumps({k: v.get("bootstrap") for k, v in res.items()}, indent=1))
+        for k, v in res.items():
+            if "physical_only" in v:
+                print(k + _phys_line(v["physical_only"]), flush=True)
+        if a.add_physical_only:
+            st = add_physical_only(a.from_items[0], res, a.bootstrap)
+            print(json.dumps({"v2.json": st}, indent=1)); res["_add_physical_only"] = st
         return res
     from vaani.data.rirs import RirBank
     man_dir = Path(a.manifest_dir)
@@ -539,15 +617,18 @@ def main(argv=None):
                 tag = f"v{v}_{path}"; save_items(out_dir, tag, recs)
                 S = np.stack([r["_S"] for r in recs]); N = np.stack([r["_N"] for r in recs])
                 res[path]["items_file"] = f"items_{tag}.npz"
-                res[path].update(item_stats(recs, S, N, a.bootstrap, a.gate))
+                res[path].update(item_stats(recs, S, N, a.bootstrap, a.gate, physical=v == 2))
                 bs = res[path].get("bootstrap")
                 print(f"  hist auc {res[path]['breakdown']['pooled_hist_auc']:.4f}" + (f", ci95 {bs['ci95']}" if bs else ""),
                       flush=True)
+                if v == 2:
+                    print(_phys_line(res[path]["physical_only"]), flush=True)
+            elif v == 2:
+                res[path]["physical_only"] = f"TBD: {PHYSICAL_LABEL}; needs the per-item histograms (drop --no-save-items)"
         if v == 2:
             res["m2_draw"] = m2_histogram(v2_over=v2_over)
-            aucs = [res[p]["auc_ild"] for p in a.paths if isinstance(res[p], dict)]
             res["gate_auc_le"] = a.gate
-            res["gate_pass"] = bool(aucs and max(aucs) <= a.gate and res["m2_draw"]["share_-6_to_+3"] >= 0.25)   # plan M2: at least 25 % of draws in -6..+3 dB
+            res["gate_pass"] = gate_pass(res, a.paths, a.gate)
         res["spl_round_trip"] = spl_round_trip()
         (out_dir / f"v{v}.json").write_text(json.dumps(res, indent=1))
         results[v] = res
