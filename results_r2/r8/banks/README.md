@@ -122,6 +122,24 @@ Its val scores, and the checkpoint selection built on them, would be biased towa
 to `configs/retraining/r8_ablations/` (docs/impl/2026-09-24/reports/boxplan.md, Decisions). r7 trained on bank_r3 and
 was selected on this val set, so r7's own selection carried the same overlap (plan 3.5).
 
+### Compatibility smoke of the opt-in arm (laptop, 2026-09-26)
+
+```
+.venv/Scripts/python.exe results_r2/r8/banks/smoke_bank_r3_arm.py results_r2/r8/banks/smoke_bank_r3_arm.json 40
+```
+It builds the `gen_r8_configs.py --bank-arm` config's train and val `DynamicMixDataset` as `vaani.train` does, on the
+laptop's bank_r3 (99dcfb26...), and draws 40 train items (`smoke_bank_r3_arm.json`):
+- All 40 items are finite. 31 took the parametric path and 9 the room path.
+- `bank_pick_active` is false: bank_r3 has no `receiver_radius`/`armoured` arrays, so `RirBank` draws rooms uniformly
+  and ignores the mixer v2 scene's armoured request. Of 6 armoured requests, 1 got an armoured room. Of 3 plain
+  requests, 2 got armoured rooms. So on bank_r3 the v2 scene/room pairing is not honoured, which ab1 on bank_r8 does.
+  That confound is separate from the val overlap above.
+- Only 7 of the config's 12 manifests are on the laptop. demand_pairs, avq_drone, c3gd, fsd50k and lombard_grid are
+  box-only. Rows: train speech 33,882 / noise 13,050, val speech 3,560 / noise 1,285 (laptop subset).
+- Pickled dataset objects (what a spawned loader worker receives, before its lazy bank/pack handles open): train
+  18,559,455 B, val 1,940,080 B. `run_r8.sh`'s interim per-worker memory default uses the train figure.
+- Build time 0.6 s is smoke on a shared laptop and is not reportable.
+
 ## sha256
 
 | file | sha256 |
@@ -192,3 +210,5 @@ microphone delay"; per-mic absolute and speaker-relative positions are in `env_f
 - `validate_bank.py` / `validate.json` / `validate.csv`: loader, mixer v2 draws, stats, overlap, sha256.
 - `overlap_bank_r3.py` / `overlap_bank_r3.json`: re-derived room draws of bank, bank_r3, bank_r8 and bank_eval_r8,
   their shared rooms, and the bank_r3 ~ bank.npz pairs checked on the files.
+- `smoke_bank_r3_arm.py` / `smoke_bank_r3_arm.json`: the opt-in bank_r3 arm's datasets on laptop manifests: items,
+  room kinds asked and got, pickled sizes.

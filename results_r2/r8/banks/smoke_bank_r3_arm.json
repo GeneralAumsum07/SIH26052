@@ -1,0 +1,569 @@
+{
+ "config": "ab7_bank_r3 (gen_r8_configs.py --bank-arm)",
+ "bank": "data/rirs/bank_r3.npz",
+ "bank_pick_active": false,
+ "manifests_used": [
+  "data/manifests/librispeech_100h.parquet",
+  "data/manifests/ears.parquet",
+  "data/manifests/cv_hi.parquet",
+  "data/manifests/esc50.parquet",
+  "data/manifests/dns_datasets_fullband.noise_fullband.freesound_000.tar.parquet",
+  "data/manifests/mad_v2.parquet",
+  "data/manifests/gunshots.parquet"
+ ],
+ "manifests_absent_here": [
+  "data/manifests/demand_pairs.parquet",
+  "data/manifests/avq_drone.parquet",
+  "data/manifests/c3gd.parquet",
+  "data/manifests/fsd50k.parquet",
+  "data/manifests/lombard_grid.parquet"
+ ],
+ "items": [
+  {
+   "i": 0,
+   "scene": "apc",
+   "path": "room",
+   "rooms": [
+    {
+     "asked_armoured": true,
+     "rt60": 0.5092164278030396,
+     "got_armoured": true
+    }
+   ],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 1,
+   "scene": "firefight",
+   "path": "param",
+   "rooms": [],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 2,
+   "scene": "firefight",
+   "path": "param",
+   "rooms": [],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 3,
+   "scene": "firefight",
+   "path": "param",
+   "rooms": [],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 4,
+   "scene": "artillery",
+   "path": "param",
+   "rooms": [],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 5,
+   "scene": "apc",
+   "path": "room",
+   "rooms": [
+    {
+     "asked_armoured": true,
+     "rt60": 0.33932867646217346,
+     "got_armoured": false
+    }
+   ],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 6,
+   "scene": "artillery",
+   "path": "param",
+   "rooms": [],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 7,
+   "scene": "helicopter",
+   "path": "param",
+   "rooms": [],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 8,
+   "scene": "artillery",
+   "path": "param",
+   "rooms": [],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 9,
+   "scene": "apc",
+   "path": "param",
+   "rooms": [],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 10,
+   "scene": "drone",
+   "path": "param",
+   "rooms": [],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 11,
+   "scene": "apc",
+   "path": "room",
+   "rooms": [
+    {
+     "asked_armoured": true,
+     "rt60": 0.3120821416378021,
+     "got_armoured": false
+    }
+   ],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 12,
+   "scene": "command_post",
+   "path": "room",
+   "rooms": [
+    {
+     "asked_armoured": false,
+     "rt60": 0.3349076509475708,
+     "got_armoured": false
+    }
+   ],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 13,
+   "scene": "artillery",
+   "path": "param",
+   "rooms": [],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 14,
+   "scene": "command_post",
+   "path": "room",
+   "rooms": [
+    {
+     "asked_armoured": false,
+     "rt60": 0.5902119278907776,
+     "got_armoured": true
+    }
+   ],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 15,
+   "scene": "artillery",
+   "path": "param",
+   "rooms": [],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 16,
+   "scene": "helicopter",
+   "path": "param",
+   "rooms": [],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 17,
+   "scene": "firefight",
+   "path": "param",
+   "rooms": [],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 18,
+   "scene": "command_post",
+   "path": "room",
+   "rooms": [
+    {
+     "asked_armoured": false,
+     "rt60": 0.6135921478271484,
+     "got_armoured": true
+    }
+   ],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 19,
+   "scene": "helicopter",
+   "path": "param",
+   "rooms": [],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 20,
+   "scene": "windy_ridge",
+   "path": "param",
+   "rooms": [],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 21,
+   "scene": "patrol",
+   "path": "param",
+   "rooms": [],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 22,
+   "scene": "apc",
+   "path": "room",
+   "rooms": [
+    {
+     "asked_armoured": true,
+     "rt60": 0.1993994265794754,
+     "got_armoured": false
+    }
+   ],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 23,
+   "scene": "patrol",
+   "path": "param",
+   "rooms": [],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 24,
+   "scene": "firefight",
+   "path": "param",
+   "rooms": [],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 25,
+   "scene": "patrol",
+   "path": "param",
+   "rooms": [],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 26,
+   "scene": "apc",
+   "path": "room",
+   "rooms": [
+    {
+     "asked_armoured": true,
+     "rt60": 0.4575795531272888,
+     "got_armoured": false
+    }
+   ],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 27,
+   "scene": "patrol",
+   "path": "param",
+   "rooms": [],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 28,
+   "scene": "windy_ridge",
+   "path": "param",
+   "rooms": [],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 29,
+   "scene": "artillery",
+   "path": "param",
+   "rooms": [],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 30,
+   "scene": "patrol",
+   "path": "param",
+   "rooms": [],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 31,
+   "scene": "windy_ridge",
+   "path": "param",
+   "rooms": [],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 32,
+   "scene": "firefight",
+   "path": "param",
+   "rooms": [],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 33,
+   "scene": "patrol",
+   "path": "param",
+   "rooms": [],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 34,
+   "scene": "patrol",
+   "path": "param",
+   "rooms": [],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 35,
+   "scene": "apc",
+   "path": "room",
+   "rooms": [
+    {
+     "asked_armoured": true,
+     "rt60": 0.25152361392974854,
+     "got_armoured": false
+    }
+   ],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 36,
+   "scene": "drone",
+   "path": "param",
+   "rooms": [],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 37,
+   "scene": "patrol",
+   "path": "param",
+   "rooms": [],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 38,
+   "scene": "helicopter",
+   "path": "param",
+   "rooms": [],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  },
+  {
+   "i": 39,
+   "scene": "patrol",
+   "path": "param",
+   "rooms": [],
+   "finite": true,
+   "shape": [
+    2,
+    64000
+   ],
+   "ref_avail": true
+  }
+ ],
+ "build_s_smoke": 0.6,
+ "pickled_bytes": {
+  "train": 18559455,
+  "val": 1940080
+ },
+ "rows": {
+  "train_speech": 33882,
+  "train_noise": 13050,
+  "val_speech": 3560,
+  "val_noise": 1285
+ },
+ "note": "timing is SMOKE on a shared laptop, non-reportable; box-only manifests absent here"
+}
