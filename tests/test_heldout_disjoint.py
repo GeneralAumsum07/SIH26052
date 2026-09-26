@@ -4,7 +4,7 @@ recipe and every r8 recipe actually train on.
 
 Manifests of the corpora only the training box downloads (plan 11.5 additions) skip here with a reason;
 with VAANI_R8_BOX=1 (exported by the box setup) a missing one fails, so the box cannot pass vacuously."""
-import glob, os
+import glob, json, os
 from pathlib import Path
 
 import pandas as pd
@@ -55,13 +55,9 @@ def _r8_pool(recipe):
 
 
 def _r8_test_sources():
-    if not R8_TEST_INDEX.exists():
-        if ON_BOX:
-            pytest.fail(f"{R8_TEST_INDEX} absent: stage the frozen r8 test set before launch")
-        pytest.skip(f"{R8_TEST_INDEX} absent here")
-    idx = pd.read_csv(R8_TEST_INDEX, dtype=str)
-    return {s for c in ("speech_source", "noise_source", "impulse_source") for v in idx[c].dropna()
-            for s in str(v).split(";") if s}
+    # the box has no data/eval_r8_test: the committed list (configs/data/r8_test_sources.json) stands in for the index
+    src, _ = hf.load_test_sources(REPO)
+    return src["speech"] | src["noise"]
 
 
 def test_overlap_is_detected(tmp_path):
@@ -136,6 +132,14 @@ def test_no_r8_test_source_reaches_an_r8_training_pool():
         assert shared.empty, (f"{r}: {len(shared)} rows share a Freesound recording with an r8 test source; "
                               f"run python scripts/heldout_freesound.py", shared.source_id.head().tolist())
     _box_only_missing([m for mans, _ in recipes for m in mans if Path(m).name in BOX_ONLY])
+
+
+def test_committed_test_source_list_matches_the_frozen_index():
+    if not R8_TEST_INDEX.exists():
+        pytest.skip(f"{R8_TEST_INDEX} absent here (the box checks against the committed list)")
+    assert hf.list_sources(REPO) == hf.index_sources(REPO), "python scripts/heldout_freesound.py --write-sources"
+    j = json.loads((REPO / hf.SOURCES).read_text(encoding="utf-8"))
+    assert j["evalset_hash"] == (REPO / hf.EVALSET_HASH).read_text(encoding="utf-8").strip()
 
 
 def test_freesound_sibling_exclusion_is_current():

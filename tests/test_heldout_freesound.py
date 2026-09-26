@@ -28,6 +28,7 @@ def _tree(tmp_path):
                   "speech_source": ["ls:1"]}).to_csv(tmp_path / hf.INDEX, index=False)
     (tmp_path / "configs/data/r8_heldout_exclude.json").write_text(json.dumps(
         {"schema": "vaani.heldout_exclude/1", "sources": {"drone": {"manifest": "drone.parquet", "source_ids": ["d:1"]}}}))
+    assert hf.main(["--root", str(tmp_path), "--write-sources"]) == 0
     return tmp_path, mans
 
 
@@ -50,3 +51,27 @@ def test_check_fails_once_a_new_freesound_manifest_is_scanned(tmp_path):
     hf.main(["--root", str(root)])
     s = json.loads((root / "configs/data/r8_heldout_exclude.json").read_text())["sources"]
     assert s["freesound_fsd50k"]["source_ids"] == ["fsd50k:Door/11"] and hf.main(["--root", str(root), "--check"]) == 0
+
+
+def test_composite_v2_noise_sources_are_split(tmp_path):
+    # a v2 scene joins its sources with "+": every component's Freesound id counts, not only the last one
+    root, mans = _tree(tmp_path)
+    pd.DataFrame({"noise_source": ["esc50:rain/1-13-A-10+dnsn:door_Freesound_validated_11_0"], "impulse_source": [None],
+                  "speech_source": ["ls:1"]}).to_csv(root / hf.INDEX, index=False)
+    assert hf.main(["--root", str(root), "--check"]) == 1   # the committed list no longer matches the index
+    hf.main(["--root", str(root), "--write-sources"]); hf.main(["--root", str(root)])
+    s = json.loads((root / "configs/data/r8_heldout_exclude.json").read_text())["sources"]
+    assert s["freesound_dns"]["source_ids"] == ["dnsn:door_Freesound_validated_11_1", "dnsn:door_Freesound_validated_11_2"]
+    assert s["freesound_esc50"]["source_ids"] == ["esc50:door_wood_knock/3-11-A-30"]
+
+
+def test_the_committed_list_stands_in_for_the_index_on_the_box(tmp_path):
+    root, mans = _tree(tmp_path)
+    hf.main(["--root", str(root)])
+    (root / hf.INDEX).unlink()   # the box has no data/eval_r8_test
+    assert hf.main(["--root", str(root), "--check"]) == 0
+    _man(root / mans[2], [("fsd50k:Door/11", "train")])
+    assert hf.main(["--root", str(root), "--check"]) == 1
+    hf.main(["--root", str(root)])
+    s = json.loads((root / "configs/data/r8_heldout_exclude.json").read_text())["sources"]
+    assert s["freesound_fsd50k"]["source_ids"] == ["fsd50k:Door/11"]

@@ -7,6 +7,10 @@ configs/data/r8_heldout_exclude.json (the other sources, written by render_eval_
 
     uv run python scripts/heldout_freesound.py            # rewrite the freesound_* sources from the local manifests
     uv run python scripts/heldout_freesound.py --check    # exit 1 if the file would change (box, after scanning fsd50k)
+
+The test set is not on the box, so its source_ids are committed in SOURCES (written from the index with --write-sources
+on the laptop; tests/test_heldout_disjoint.py reads it too). The index, when present, wins, and --check fails if the
+two disagree.
 """
 import argparse, json, re, sys
 from pathlib import Path
@@ -24,6 +28,8 @@ FS_ID = [re.compile(r"^dnsn:.*_Freesound_validated_(\d+)_\d+$"),   # DNS: <class
          re.compile(r"^fsd50k:[^/]+/(\d+)$")]                       # FSD50K: fname is the Freesound id
 RECIPES = ["configs/retraining/r8_fe_mini.yaml", "configs/retraining/r8_refvalid_v2.yaml"]
 INDEX = "data/eval_r8_test/test/index.csv"
+SOURCES = "configs/data/r8_test_sources.json"
+EVALSET_HASH = "results_r2/r8/testset/EVALSET_HASH"
 
 
 def freesound_id(source_id):
@@ -34,15 +40,46 @@ def freesound_id(source_id):
     return None
 
 
-def test_sources(index_csv):
-    """Every noise/impulse source_id the frozen r8 test set mixed (read only)."""
+def test_sources(index_csv, cols=("noise_source", "impulse_source")):
+    """Every source_id in cols the frozen r8 test set mixed (read only)."""
     idx = pd.read_csv(index_csv, dtype=str)
-    return {s for c in ("noise_source", "impulse_source") if c in idx for v in idx[c].dropna() for s in str(v).split(";") if s}
+    # v2 scenes join their noise sources with "+" (render_eval_sets.py); no manifest source_id contains "+" or ";"
+    return {s for c in cols if c in idx for v in idx[c].dropna() for s in re.split(r"[;+]", str(v)) if s}
 
 
-def sibling_sources(root, index_csv, recipes=RECIPES):
+def index_sources(root, index_csv=INDEX):
+    return {"speech": test_sources(root / index_csv, ("speech_source",)), "noise": test_sources(root / index_csv)}
+
+
+def list_sources(root, sources=SOURCES):
+    j = json.loads((root / sources).read_text(encoding="utf-8"))
+    return {k: set(j[k]) for k in ("speech", "noise")}
+
+
+def load_test_sources(root, index_csv=INDEX, sources=SOURCES):
+    """({"speech": ids, "noise": ids (noise + impulse)}, where from): the index if present, else the committed list."""
+    if (root / index_csv).exists():
+        return index_sources(root, index_csv), "index"
+    return list_sources(root, sources), "list"
+
+
+def write_sources(root, index_csv=INDEX, sources=SOURCES):
+    if not (root / index_csv).exists():
+        raise SystemExit(f"{index_csv} absent: --write-sources runs where the test set is")
+    src = index_sources(root, index_csv)
+    h = root / EVALSET_HASH
+    j = {"schema": "vaani.r8_test_sources/1", "index": index_csv,
+         "evalset_hash": h.read_text(encoding="utf-8").strip() if h.exists() else None,
+         "generated_by": "python scripts/heldout_freesound.py --write-sources",
+         "rule": "speech: speech_source; noise: noise_source + impulse_source; split on ';' and '+'",
+         "speech": sorted(src["speech"]), "noise": sorted(src["noise"])}
+    (root / sources).write_text(json.dumps(j, indent=1) + "\n", encoding="utf-8", newline="\n")
+    return sum(len(v) for v in src.values())
+
+
+def sibling_sources(root, index_csv, recipes=RECIPES, sources=SOURCES):
     """{manifest file: rows} of recipe manifests sharing a Freesound recording with a test source (test rows kept)."""
-    src = test_sources(root / index_csv)
+    src = load_test_sources(root, index_csv, sources)[0]["noise"]
     ids = {freesound_id(s) for s in src} - {None}
     out = {}
     for m in sorted({m for r in recipes for m in yaml.safe_load(open(root / r, encoding="utf-8"))["data"]["manifests"]}):
@@ -71,11 +108,20 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--root", default=str(REPO))
     ap.add_argument("--exclude", default="configs/data/r8_heldout_exclude.json")
+    ap.add_argument("--sources", default=SOURCES)
     ap.add_argument("--check", action="store_true", help="exit 1 if the file is out of date; write nothing")
+    ap.add_argument("--write-sources", action="store_true", help="rewrite --sources from the test index (laptop)")
     a = ap.parse_args(argv)
     root = Path(a.root); path = root / a.exclude
+    if a.write_sources:
+        print(f"{a.sources}: {write_sources(root, INDEX, a.sources)} test source ids")
+        return 0
+    src, where = load_test_sources(root, INDEX, a.sources)
+    sp = root / a.sources
+    stale_list = where == "index" and (not sp.exists() or list_sources(root, a.sources) != src)
+    print(f"test sources from the {where}: {len(src['speech'])} speech, {len(src['noise'])} noise/impulse")
     j = json.loads(path.read_text(encoding="utf-8"))
-    sib, n_ids = sibling_sources(root, INDEX)
+    sib, n_ids = sibling_sources(root, INDEX, sources=a.sources)
     new = {k: v for k, v in j["sources"].items() if not k.startswith("freesound_")}
     # a manifest absent here keeps its old entry (the laptop has no fsd50k scan; the box writes that one)
     new.update({k: v for k, v in j["sources"].items() if k.startswith("freesound_") and v["manifest"] not in sib})
@@ -86,7 +132,9 @@ def main(argv=None):
     if a.check:
         ok = {k: v["source_ids"] for k, v in new.items()} == {k: v["source_ids"] for k, v in j["sources"].items()}
         print("up to date" if ok else f"OUT OF DATE: rerun python scripts/heldout_freesound.py")
-        return 0 if ok else 1
+        if stale_list:
+            print(f"OUT OF DATE: {a.sources} differs from {INDEX}; rerun with --write-sources")
+        return 0 if ok and not stale_list else 1
     j["sources"] = new
     path.write_text(json.dumps(j, indent=1, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
     return 0
