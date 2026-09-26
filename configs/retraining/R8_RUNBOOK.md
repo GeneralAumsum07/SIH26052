@@ -67,13 +67,13 @@ tests/test_train_smoke.py cover this). Whether r8 replaces r7 is Rachit's call a
      with the share, so the 0.1 arm is 2.5 % mono, 1.25 % stereo and 6.25 % low-ILD items (r8_ablations/README.md).
    - Corpora: the r7 list (mad_v2 in place of mad; drone and noisex92 stay eval-only) plus DEMAND pairs, AVQ drone,
      C3GD, FSD50K and Lombard GRID (section "Corpora" below).
-   - Held-out groups: configs/data/r8_heldout_exclude.json also drops 1,571 DNS chunks and 3 ESC-50 clips that share
-     a Freesound recording with an r8 test noise source (`scripts/heldout_freesound.py`; "Corpora" below).
-   - **Not yet in main (open):** the four added corpora sit under `optional:` in configs/data/r8_datasets.yaml, so the
-     setup's dataset stage does not fetch them and the preflight fails on their manifests. Until they move to
-     `datasets:`, fetch them by hand after the first group:
-     `.venv/bin/python scripts/r8_datasets.py fetch --only avq_drone,c3gd,fsd50k,lombard_grid --parallel 8 && .venv/bin/python scripts/r8_datasets.py scan --only avq_drone,c3gd,fsd50k,lombard_grid && .venv/bin/python scripts/r8_datasets.py verify --only avq_drone,c3gd,fsd50k,lombard_grid`.
-     demand_pairs.parquet is already written by the `demand` entry's second scan.
+   - Held-out groups: configs/data/r8_heldout_exclude.json also drops 1,701 DNS chunks and 3 ESC-50 clips that share
+     a Freesound recording with an r8 test noise source (`scripts/heldout_freesound.py`; "Corpora" below). The test
+     set is not on the box, so its source_ids travel in configs/data/r8_test_sources.json; the setup's `heldout` stage
+     refreshes the exclusion after the FSD50K scan and, if it changed, saves a copy under runs/box_setup/ to commit.
+   - The four added corpora (avq_drone, c3gd, fsd50k, lombard_grid) are under `datasets:` in
+     configs/data/r8_datasets.yaml and in the first fetch group. demand_pairs.parquet is written by the `demand`
+     entry's second scan.
 5. **Box spec** (send it before renting):
 
    | Item | Minimum | Rule |
@@ -113,13 +113,13 @@ tests/test_train_smoke.py cover this). Whether r8 replaces r7 is Rachit's call a
 | Minute | What | Blocks the launch? |
 |---|---|---|
 | 0 | `git clone`, `tmux new -s box`, exports, `bash scripts/r8_box_setup.sh --env-check` (seconds) | yes: fix what is MISSING |
-| 1 | specs recorded (nproc, free, df, nvidia-smi -> runs/box_setup/specs.txt); apt aria2/tmux/libsndfile1/build-essential; uv | yes |
+| 1 | specs recorded (nproc, free, df, nvidia-smi -> runs/box_setup/specs.txt); apt aria2/tmux/rsync/zip/lbzip2/libsndfile1/build-essential; uv | yes |
 | 3-8 | `uv sync --all-extras --frozen` (torch cu128 from download.pytorch.org, numba, torch-pesq, faster-whisper; pesq builds from sdist) | yes |
 | 8 | GPU check: a matmul on each device, numba and torch_pesq import | yes |
 | 8 | background: banks (about 4.6 GB by sha256: three npz of 0.4-0.8 GB plus bank_r8's sidecars, noise 1.92 GB and speech 0.64 GB), mirror (about 2.3 GB, SHA256SUMS then verify_eval_set), datasets (the first fetch group first) | - |
-| 8 + TBD | first dataset group fetched, scanned, verified: the datasets the two queue heads and the G1 gate read (`r8_preflight.py --fetch-order` FIRST: librispeech, ears, cv_hi, esc50, dns_freesound_000, dns_audioset_000, mad, gunshots, demand; 25.0 GB of archives in `plan`). TBD: the box's download rate; zenodo.org is held to 2 files x 1 connection | yes |
-| + TBD | the four added corpora by hand (Before renting, item 4; 26.2 GB of archives, FSD50K most of it), then `.venv/bin/python scripts/heldout_freesound.py --check` (rerun without `--check` if it reports OUT OF DATE: FSD50K clips can share Freesound ids with r8 test noise) | yes |
-| + 2 | tests that guard silent corruption (test_r8_box, test_losses, test_pack, test_mixer_v2, test_data_gates, test_golden_vectors), then by hand with `VAANI_R8_BOX=1`: `uv run python -m pytest -q -p no:cacheprovider tests/test_heldout_disjoint.py tests/test_r8_configs.py tests/test_scenes_r8.py tests/test_dropout_parity.py` | yes |
+| 8 + TBD | first dataset group fetched, scanned, verified: the datasets the r8 configs and the G1 gate read (`r8_preflight.py --fetch-order` FIRST: librispeech, ears, cv_hi, esc50, dns_freesound_000, dns_audioset_000, mad, gunshots, demand, lombard_grid, fsd50k, c3gd, avq_drone; 51.1 GB of archives in `plan`, FSD50K 24.7 GB of it). TBD: the box's download rate; zenodo.org is held to 2 files x 1 connection | yes |
+| + 1 | `heldout`: `scripts/heldout_freesound.py --check`, rewritten in place if FSD50K clips share a Freesound id with r8 test noise (a copy is saved as runs/box_setup/r8_heldout_exclude.box.json: bring it back and commit it) | yes |
+| + 2 | tests that guard silent corruption, with `VAANI_R8_BOX=1` (test_r8_box, test_losses, test_pack, test_mixer_v2, test_data_gates, test_golden_vectors, test_heldout_disjoint, test_heldout_freesound, test_r8_configs, test_scenes_r8, test_dropout_parity) | yes |
 | + TBD | pack the corpus (speed only; verified bit-identical by tests/test_pack.py) | yes |
 | + 3 | G1 on the box (laptop: 2 min 14 s for two gates) | yes: the full runs refuse without it |
 | + 3 | loader bench (sizes workers) and step time, then the preflight | yes |
@@ -136,10 +136,6 @@ tmux new -s box
 export ...                                         # "Before renting" item 6
 bash scripts/r8_box_setup.sh --env-check           # seconds; exit 1 names what is missing
 bash scripts/r8_box_setup.sh --launch              # bootstrap, G1, preflight, then both queues in tmux session "r8"
-# until the four added corpora move to `datasets:` (Before renting, item 4): in a second tmux window, once
-# .venv/bin/python exists (after `uv sync`), run the item-4 fetch/scan/verify line with .venv/bin/python, then
-# `.venv/bin/python scripts/heldout_freesound.py --check`. If the setup reaches `bench` first, it stops there (the
-# configs name their manifests); rerun the --launch line once the fetch is done.
 bash scripts/run_r8.sh status                      # DONE / RUNNING / FAILED / DROPPED / PENDING per run, and the G1 line
 bash scripts/run_r8.sh next                        # the run each queue starts next
 # after the pilots: copy the winning settings into r8_fe_mini.yaml / r8_refvalid_v2.yaml, then
@@ -306,9 +302,11 @@ Deferred (decision for Rachit; not in any config):
 
 Held-out groups (configs/data/r8_heldout_exclude.json): the render's drone, NOISEX, EARS and MAD groups, plus the
 Freesound siblings. DNS noise rows are grouped per 10 s chunk (`dnsn-<stem>`), so chunks of one Freesound upload sit in
-different splits; 1,571 train/val DNS chunks (4.35 of the 19.82 train+val hours) and 3 ESC-50 clips shared a Freesound id with an r8
-test noise source. `scripts/heldout_freesound.py` lists them; re-rendering the test set with the extended file gives
-the same pools (checked on the laptop manifests). On the box, rerun it after FSD50K is scanned.
+different splits; 1,701 train/val DNS chunks (4.71 of the 19.82 train+val hours) and 3 ESC-50 clips shared a Freesound id with an r8
+test noise source (1,571 before the v2 scenes' "+"-joined noise sources were split into their parts). `scripts/heldout_freesound.py`
+lists them; the held-out pools the render draws from (drone, NOISEX, EARS) do not read the Freesound entries, so the
+test render is unchanged. The test set's source_ids are committed in configs/data/r8_test_sources.json (the box has no
+test set); the setup's `heldout` stage reruns the script after FSD50K is scanned.
 
 ## Laptop evidence behind this runbook (smoke on a loaded laptop, RTX 5060; not reportable)
 
@@ -319,8 +317,8 @@ the same pools (checked on the laptop manifests). On the box, rerun it after FSD
 - Configs: tests/test_r8_configs.py (every r8 config parsed and built the way the trainer does, ablation arms differ
   from their parent only in their arm, bank_r8 sha against r8_banks.json, a synthetic draw per data path). 77 passed.
   Scenes: tests/test_scenes_r8.py, 6 passed. Licence table: tests/test_licence_table_r8.py, 10 passed.
-- Held-out: tests/test_heldout_disjoint.py 8 passed, 2 skipped (the box-only manifests and the LibriTTS-R guard; with
-  `VAANI_R8_BOX=1` the missing box manifests fail instead); tests/test_heldout_freesound.py 2 passed.
+- Held-out: tests/test_heldout_disjoint.py 9 passed, 2 skipped (the box-only manifests and the LibriTTS-R guard; with
+  `VAANI_R8_BOX=1` the missing box manifests fail instead); tests/test_heldout_freesound.py 4 passed.
 - G1 on bank_r8 (room path, seed 7331): results_r2/r8/g1_bank_r8/ (section 1 has the command and the numbers).
 - Box G1 prediction on the published bank_r3: docs/impl/2026-09-24/ckpt/box/g1_predict/README.md.
 - FE loss PESQ term: docs/impl/2026-09-24/ckpt/box/pesq_smoke/README.md (20 steps, term finite and non-zero).

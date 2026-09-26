@@ -83,14 +83,14 @@ mirror_get() {  # $1 file, $2 sha256 ("-" to skip the check), $3 dest dir
   [ "$2" = - ] || echo "$2  $3/$1" | sha256sum -c - || { rm -f "$3/$1"; return 1; }
 }
 if [ ! -f $D/GATED_OK ]; then
-  # MAD: Kaggle API (KAGGLE_USERNAME/KAGGLE_KEY in the environment)
+  # MAD: Kaggle API (KAGGLE_USERNAME/KAGGLE_KEY; scripts/r8_datasets.py tries the anonymous GET first)
   if [ ! -f $D/mad.zip ] && [ -n "${KAGGLE_KEY:-}" ]; then
     uv run --with kaggle kaggle datasets download -d junewookim/mad-dataset-military-audio-dataset \
       -p $D -o && mv -f $D/mad-dataset-military-audio-dataset.zip $D/mad.zip || true
   fi
   # Common Voice Hindi: Mozilla Data Collective returns a presigned URL for an API key
   if [ ! -f $D/cv_hi.tar.gz ] && [ -n "${MDC_API_KEY:-}" ]; then
-    CV_URL=$(curl -sX POST "https://mozilladatacollective.com/api/datasets/${MDC_DATASET:-mcv-hi-v23.0}/download" \
+    CV_URL=$(curl -sX POST "https://mozilladatacollective.com/api/datasets/${MDC_DATASET:-cmu5vlext009to107ev1s9lk8}/download" \
       -H "Authorization: Bearer $MDC_API_KEY" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("url") or d.get("downloadUrl") or "")' 2>/dev/null || true)
     [ -n "$CV_URL" ] && aria2c -c -x16 -s16 -d $D -o cv_hi.tar.gz "$CV_URL" || true
   fi

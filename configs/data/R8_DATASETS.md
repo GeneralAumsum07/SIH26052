@@ -59,13 +59,19 @@ sha256 of the first fetch and compares it with the laptop copy's hash as an advi
 | dns_audioset_000 | direct | 5.365 | size + laptop sha256 | dns_…audioset_000.tar | G1 | per-clip (DNS README) |
 | mad | direct (Kaggle) | 1.096 | size + laptop sha256 | mad (+ mad_v2 from the mirror) | all r8 configs, G1, G4 | conflict: Kaggle CC BY-SA 4.0 vs README CC BY 4.0; research only |
 | gunshots (Zenodo 7004819) | direct | 1.568 | md5 | gunshots | all r8 configs | CC BY 4.0 |
-| demand (Zenodo 1227121) | direct | 2.093 | md5 | demand, demand_pairs | G1 | conflict: CC BY 4.0 vs CC BY-SA 3.0 |
+| demand (Zenodo 1227121) | direct | 2.093 | md5 | demand, demand_pairs | all r8 configs (demand_pairs), G1 (demand) | conflict: CC BY 4.0 vs CC BY-SA 3.0 |
 | drone | direct | 0.580 (est.) | recorded on first fetch | drone | r8_mini_refvalid | none stated |
 | noisex92 (SPIB .mat) | direct | 0.144 | size | noisex92 | r8_mini_refvalid | unclear: eval only, never ship |
 | faster_whisper_small | direct (HF) | 0.486 | sha256 (model.bin) | none (HF cache) | G4 | MIT |
+| lombard_grid | direct | 0.653 | md5 | lombard_grid | all r8 configs | CC BY 4.0 |
+| fsd50k | direct | 24.679 | md5 | fsd50k | all r8 configs; needs `zip` for the split archive | per clip, CC0/CC BY kept |
+| c3gd | direct | 0.771 | md5 | c3gd | all r8 configs | CC BY 4.0 |
+| avq_drone | direct | 0.060 | md5 | avq_drone | all r8 configs | CC BY 4.0 |
 
-That is about 26.2 GB of archives in all. The first group (the first queued jobs plus G1) is
-librispeech, ears, cv_hi, esc50, dns_freesound_000, dns_audioset_000, mad, gunshots and demand.
+That is 52.3 GB of archives in all (`r8_datasets.py plan`; 156 GB on disk at the inferred x3 factor). The first group
+(everything the r8 configs and G1 read, 51.1 GB) is librispeech, ears, cv_hi, esc50, dns_freesound_000,
+dns_audioset_000, mad, gunshots, demand, lombard_grid, fsd50k, c3gd and avq_drone; drone, noisex92 and
+faster_whisper_small follow.
 
 ## Optional (`optional:`, fetched only with `--only` or `--all`)
 
@@ -73,11 +79,7 @@ librispeech, ears, cv_hi, esc50, dns_freesound_000, dns_audioset_000, mad, gunsh
 |---|---|---|---|
 | ears_more (p007-p107) | 65.4 | plan 11.5 speech | CC BY-NC 4.0 |
 | librittsr (clean 100+360) | 37.1 | plan 11.5 speech | CC BY 4.0 |
-| lombard_grid | 0.653 | vocal effort (M11) | CC BY 4.0 |
-| fsd50k | 24.7 | plan 11.5 noise; needs `zip` for the split archive | per clip, CC0/CC BY kept |
-| c3gd | 0.771 | gunshots | CC BY 4.0 |
 | musan_noise | 11.1 (noise part extracted) | noise | CC BY 4.0 + per-folder |
-| avq_drone | 0.060 | drone noise | CC BY 4.0 |
 | wham_noise | 18.2 | two-mic noise (tr only) | CC BY-NC 4.0 |
 | but_reverbdb | 9.31 | measured RIRs | CC BY 4.0 |
 | dns_freesound_001, dns_audioset_001 | 0.992, 5.358 | extra DNS noise | per clip |

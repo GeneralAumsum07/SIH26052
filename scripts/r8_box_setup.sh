@@ -66,10 +66,12 @@ if [ "$MODE" = run ]; then specs | tee -a "$S/specs.txt"; elif [ "$MODE" = dry ]
 
 # --- 1. tooling: seconds; everything after needs uv --------------------------------------------------------------------
 tools() {
-  if ! command -v aria2c >/dev/null || ! command -v tmux >/dev/null; then
-    [ "$(id -u)" = 0 ] || die "aria2c/tmux missing and not root: apt-get install -y aria2 tmux rsync libsndfile1 build-essential"
-    apt-get update -qq && apt-get install -y -qq aria2 tmux rsync libsndfile1 build-essential > /dev/null
-  fi   # build-essential: pesq builds from sdist on Linux
+  local c miss=0 pk="aria2 tmux rsync zip lbzip2 libsndfile1 build-essential"
+  for c in aria2c tmux rsync zip lbzip2 cc; do command -v $c >/dev/null || miss=1; done
+  if [ $miss = 1 ]; then
+    [ "$(id -u)" = 0 ] || die "tools missing and not root: apt-get install -y $pk"
+    apt-get update -qq && apt-get install -y -qq $pk > /dev/null
+  fi   # build-essential: pesq builds from sdist; zip: FSD50K's split-zip join; lbzip2: the DNS .tar.bz2 shards
   command -v uv >/dev/null || { curl -LsSf https://astral.sh/uv/install.sh | sh; }
 }
 [ "$MODE" = run ] && { tools; export PATH="$HOME/.local/bin:$PATH"; }
@@ -133,6 +135,7 @@ mirror_install() {   # idempotent; rerun after the scan so a scanner cannot leav
   mkdir -p data/manifests data/mirror/manifests_laptop
   cp -p "$MIRROR_DL"/manifests/*.parquet data/manifests/ || return 1
   [ -d "$MIRROR_DL/manifests_laptop" ] && cp -p "$MIRROR_DL"/manifests_laptop/*.parquet data/mirror/manifests_laptop/ || true
+  [ -f "$MIRROR_DL/field/abcd.wav" ] && mkdir -p data/field && cp -p "$MIRROR_DL/field/abcd.wav" data/field/ || true   # G4 --web-wav
 }
 mirror() {
   [ -n "${MIRROR_HF_REPO:-}" ] || { echo "MIRROR_HF_REPO unset: no val set, no mad_v2"; return 1; }
@@ -165,9 +168,19 @@ for j in banks mirror; do
 [ -n "$FIRST" ] && until join_bg datasets datasets_first; do say "datasets was not running; relaunching"; bg datasets datasets; done
 [ "$MODE" = run ] && mirror_install   # after the scan: the laptop's VAD-filtered MAD list wins
 
+# --- 7b. hold out the Freesound siblings of r8 test noise; FSD50K is scanned only here, so the file can change here ----
+heldout() {
+  "$PY" scripts/heldout_freesound.py --check && return 0
+  "$PY" scripts/heldout_freesound.py && "$PY" scripts/heldout_freesound.py --check || return 1
+  cp -p configs/data/r8_heldout_exclude.json "$S/r8_heldout_exclude.box.json"
+  say "configs/data/r8_heldout_exclude.json changed on this box: copy $S/r8_heldout_exclude.box.json back and commit it"
+}
+stage heldout heldout
+
 # --- 8. tests that guard silent data corruption, then the packed corpus (speed only; verified bit-identical) ----------
-tests() { "$PY" -m pytest -q -p no:cacheprovider tests/test_r8_box.py tests/test_losses.py tests/test_pack.py \
-  tests/test_mixer_v2.py tests/test_data_gates.py tests/test_golden_vectors.py; }
+tests() { VAANI_R8_BOX=1 "$PY" -m pytest -q -p no:cacheprovider tests/test_r8_box.py tests/test_losses.py tests/test_pack.py \
+  tests/test_mixer_v2.py tests/test_data_gates.py tests/test_golden_vectors.py tests/test_heldout_disjoint.py \
+  tests/test_heldout_freesound.py tests/test_r8_configs.py tests/test_scenes_r8.py tests/test_dropout_parity.py; }
 [ "${SKIP_TESTS:-0}" = 1 ] || stage tests tests
 pack() { "$PY" scripts/pack_corpus.py --manifests 'data/manifests/*.parquet' --out data/pack; }
 [ "${SKIP_PACK:-0}" = 1 ] || stage pack pack

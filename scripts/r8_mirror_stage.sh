@@ -11,6 +11,8 @@
 #                                        manifest the r8 configs and G1 read; the box scans its own, preflight diffs
 #                                        source_ids against these (paths are repo-relative, backslashes normalised by
 #                                        vaani.data.manifests.read, so they resolve on Linux once the audio is scanned)
+#   field/abcd.wav                       install -> data/field/     the stereo web WAV (WEB_WAV, default
+#                                        ~/Downloads/abcd.wav): G4 Part 1's web bed and all of Part 2 (--web-wav)
 # Not staged: data/eval_r8_test (G6 is scored once on the laptop after the chosen checkpoint is pulled back; keeping it
 # off the box removes any chance of it touching selection), RIR banks (GitHub release, RIR_BANK_URL, by sha256),
 # bank_eval_r8 (only the r8 test render reads it), r7 best.pt and the gtcrn baseline (tracked in git), raw audio
@@ -21,6 +23,7 @@ S="${1:-data/mirror_stage}"; REPO_ID="${MIRROR_HF_REPO:-<hf-user>/vaani-r8-mirro
 VAL="${VAL:-data/eval_r2/val}"; VAL_HASH="${VAL_HASH:-b5f7a4d43bee}"   # overridable for the staging test only
 PY="${PY:-}"; [ -n "$PY" ] || for c in .venv/Scripts/python.exe .venv/bin/python python3 python; do
   if [ -x "$c" ] || command -v "$c" >/dev/null 2>&1; then PY=$c; break; fi; done
+WEB_WAV="${WEB_WAV:-$HOME/Downloads/abcd.wav}"
 mkdir -p "$S/manifests" "$S/manifests_laptop"
 
 # every manifest an r8 config or the G1 gate reads (same lists the box scans)
@@ -48,6 +51,8 @@ for m in "${MANS[@]}"; do
   case "$m" in mad_v2.parquet) continue;; esac
   if [ -f "data/manifests/$m" ]; then cp -p "data/manifests/$m" "$S/manifests_laptop/$m"; else echo "WARN: no laptop data/manifests/$m"; fi
 done
+if [ -f "$WEB_WAV" ]; then mkdir -p "$S/field"; cp -p "$WEB_WAV" "$S/field/abcd.wav"
+else echo "WARN: no web WAV at $WEB_WAV (G4 --web-wav needs it on the box; set WEB_WAV)"; fi
 
 # sha256 manifest (sha256sum -c format, paths relative to the stage root) + sizes
 ( cd "$S" && find . -type f ! -name 'SHA256SUMS' ! -name 'MANIFEST.tsv' ! -name '.*' | sed 's|^\./||' | sort \

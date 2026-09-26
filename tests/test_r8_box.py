@@ -219,13 +219,14 @@ def test_mirror_stage_on_a_fake_tree(tmp_path):
     (t / "data/eval_r2/val/b/000.json").write_text("{}")
     for s in (".mix.wav", ".clean.wav"):
         (t / f"data/eval_r2/val/b/000{s}").write_bytes(b"")
-    env = dict(VAL_HASH=hashlib.sha1(b"{}").hexdigest()[:12], MIRROR_HF_REPO="me/private-mirror")
+    (t / "web.wav").write_bytes(b"RIFF")
+    env = dict(VAL_HASH=hashlib.sha1(b"{}").hexdigest()[:12], MIRROR_HF_REPO="me/private-mirror", WEB_WAV="web.wav")
     r = _bash(["scripts/r8_mirror_stage.sh", "data/stage"], env, cwd=t)
     assert r.returncode == 0, r.stdout + r.stderr
     st = t / "data/stage"
     sums = dict(ln.split("  ", 1)[::-1] for ln in (st / "SHA256SUMS").read_text().split("\n") if ln)
     assert set(sums) == {"eval_r2_val.tar", "manifests/mad_v2.parquet", "manifests/mad_speech_contamination.parquet",
-                         "manifests_laptop/a.parquet"}
+                         "manifests_laptop/a.parquet", "field/abcd.wav"}
     assert all(_sha(st / f) == h for f, h in sums.items())
     assert "WARN: no laptop data/manifests/gone.parquet" in r.stdout
     assert "--private" in r.stdout and "hf upload me/private-mirror data/stage . --repo-type dataset" in r.stdout
