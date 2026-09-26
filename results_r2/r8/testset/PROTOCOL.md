@@ -133,3 +133,96 @@ CUDA_VISIBLE_DEVICES=-1 uv run --with numba python -m vaani.eval --system raw --
   `v2` it is dB SPL peak at the primary.
 - The v2 clean target is the boom speech after the linear front end, before saturation. An enhancer cannot undo
   saturation, so the v2 scores include that loss by design (mixer v2 M7).
+
+## Amendment 1 (2026-09-26): test root B
+
+Rachit decided on 2026-09-26 (11:49 IST) to register test root B. The decision was made before any system had been
+scored on either root. The text above is kept exactly as it was registered on 2026-09-25. Where the two disagree,
+this amendment wins.
+
+- **The r8 test set is now `data/eval_r8_test_b/test`, with `EVALSET_HASH` = `5bfda53eacbf`.** Its `index.csv` has
+  sha256 `c8fd562ac6eed91e...`. Read `data/eval_r8_test_b` for `data/eval_r8_test` and `5bfda53eacbf` for
+  `ed024af085a2` in the rule, the render and integrity section, the scoring commands and the verify step above. The
+  `EVALSET_HASH` file in this folder now holds `5bfda53eacbf`.
+- **`data/eval_r8_test` (`ed024af085a2`) is superseded.** It stays on disk, frozen and unscored. Nothing is scored,
+  tuned, re-rendered or selected on it. `guard_frozen` in `scripts/render_eval_sets.py` refuses both roots by path,
+  even with `--force` (`PREREGISTERED`).
+
+### What changed
+
+Only the `v2` scene subset changed. Commit 4dcfa90 (calib c5, tuned for G1) moved three mixer v2 defaults that reach
+the test render:
+
+| default | ed024af085a2 | 5bfda53eacbf |
+|---|---|---|
+| `scenes.P_NEAR` (share of items with a near-field source) | 0.7 | 0.9 |
+| `mix.v2.near_pos_share` | 0.8 | 0.9 |
+| `mix.v2.near_ild_db` | (6, 12) | (8, 12) |
+
+The render still pins `v2={"tail_share": 0}`, so the tail changes (`tail_share` 0.40, `tail_mix`) do not reach the
+test set. No physics changed, and the front-end options are off by default. The B metas also carry the new level flags
+`past_knee`, `past_aop`, `past_rails` and `peak_db_spl`. `overloaded` and `clipped` keep the meanings given in Known
+limits.
+
+### Why
+
+With B, the v2 subset comes from the same scene distribution that r8 trains on: the defaults G1 confirmed on seed 202
+(results_r2/r8/data_gates/README.md). Every other subset is identical to the original, so nothing else in this
+protocol changes. The original root would have tested v2 with fewer near sources (p 0.7) than training uses (p 0.9).
+That was never pre-registered as a robustness condition.
+
+### When
+
+- B was rendered 2026-09-25 23:34-23:37 IST (job calib-testset-b, rc 0) with the render command above; only
+  `--out data/eval_r8_test_b` differs. The eval bank `data/rirs/bank_eval_r8.npz` (sha256 `10e1f3a9...`) was reused.
+- B was registered 2026-09-26, before either root was scored. Evidence that neither was scored, as of 2026-09-26:
+  - `results_r2/` and `runs/` hold no CSV or JSON that names either root or hash. The only text that does is this
+    folder and `results_r2/r8/calib/README.md`.
+  - No per-item CSV in them carries a test category such as `v2/patrol`, `loud/loud_ears` or `heldout/heldout_drone`,
+    except this folder's two index summaries.
+  - The only detached jobs that name either root are the two renders.
+  - Neither root holds anything besides its render, `index.csv` and `EVALSET_HASH`.
+
+### How the two roots differ
+
+- The decoded audio is identical for v1 (740 items), defence (576), heldout (192), loud (96) and fault (320). In v2,
+  41 of 384 items are identical (reports/calib.md, docs/impl/2026-09-24/research/testset_b_addendum.md).
+- In `index.csv`, 83 rows differ, and all 83 are v2 rows. The columns that differ are `snr_db` (83 rows),
+  `noise_source` (83), `impulse_source` (41), `impulse_peak_db` (39), `clipped` (13) and `path` (8). The index has no
+  near-source column, so 260 of the 343 changed v2 items look the same in it.
+- Known limits, B values: `clipped` is True on 48/48 helicopter items, 45/48 firefight, 45/48 apc, 20/48 artillery,
+  2/48 patrol and 1/48 windy_ridge. `overloaded` is True on all 384 v2 items.
+- `index_summary.csv` and `v2_snr_quantiles.csv` here are rebuilt from B's index (README.md has the command and the
+  changed values).
+
+### Integrity and held-out groups for B
+
+```
+.venv/Scripts/python.exe scripts/verify_eval_set.py data/eval_r8_test_b/test 5bfda53eacbf   # "verified (2308 items)"
+```
+
+- The groups that `render_eval_sets.py --write-heldout` writes are drawn from the manifests only, not from the render.
+  They are unchanged: drone 307 rows, noisex92 3, ears 149, mad 557.
+- `scripts/heldout_freesound.py` now reads B's index.
+  - `configs/data/r8_test_sources.json` now pins `5bfda53eacbf`. It lists 906 speech ids (unchanged) and 1,119
+    noise/impulse ids (was 1,109).
+  - The DNS Freesound sibling exclusion is now 1,745 rows and 4.8281 h (was 1,701 rows and 4.7069 h). ESC-50 stays at
+    3 rows.
+  - `--check` fails on a source list written from any other set.
+- The sha256 of `configs/data/r8_heldout_exclude.json` changed after registration (the Freesound entries of f21a63b
+  and ac04e94, then this amendment). The current value is in git.
+
+### Scoring commands for B (run ONCE, after r8 selection on val)
+
+```
+.venv/Scripts/python.exe scripts/verify_eval_set.py data/eval_r8_test_b/test 5bfda53eacbf
+CUDA_VISIBLE_DEVICES=-1 uv run --with numba python -m vaani.eval --system <r8 spec> --split test \
+  --eval-root data/eval_r8_test_b --workers 3 --dnsmos --out results_r2/r8/testset/r8_selected.csv
+CUDA_VISIBLE_DEVICES=-1 uv run --with numba python -m vaani.eval --system cascade:runs/r7_e256_wr64_refiner/best.pt \
+  --split test --eval-root data/eval_r8_test_b --workers 3 --dnsmos --out results_r2/r8/testset/r7_e256_wr64_cascade.csv
+CUDA_VISIBLE_DEVICES=-1 uv run --with numba python -m vaani.eval --system raw --split test \
+  --eval-root data/eval_r8_test_b --workers 1 --dnsmos --out results_r2/r8/testset/raw.csv
+```
+
+The other rules above are unchanged: `--resume` after a worker death, the TBD `<r8 spec>` with its checkpoint
+sha256, and the score-once rule.
