@@ -108,13 +108,14 @@ def run_engine(mix: np.ndarray, onnx=ONNX, config=CONFIG, threads: int = 1, dsp:
     The input is zero-padded by one hop so the engine's one-hop lag is flushed; the first output hop (the left
     context) is dropped. `dsp` overrides the config's DSP block (probe use only; None = the shipping config).
     trace=True also returns every hop's `eng.last` dict under diag["trace"] (validity-flag latency, guards).
-    ref_valid=False is the reference-zeroed construction at validity 0: passed to process() only when the engine
-    takes a validity input (VaaniFE); r7 has none, so it keeps its default call and the caller's zeroed reference.
+    ref_valid=False is the reference-zeroed construction at validity 0: passed to process() when the engine takes a
+    validity input (VaaniFE) or runs the trained reference policy (dsp.ref_policy: its DSP half treats the hop as
+    absent); r7 has neither, so it keeps its default call and the caller's zeroed reference.
     guards: StreamEngine's `guards=` (None = off, the r7 default path)."""
     cfg = live.load_model_config(config)
     kw = {"guards": guards} if guards else {}
     eng = live.StreamEngine(onnx, cfg["controller_on"], cfg["dsp"] if dsp is None else dsp, threads=threads, **kw)
-    pkw = {"ref_valid": False} if not ref_valid and getattr(eng, "takes_valid", False) else {}
+    pkw = {"ref_valid": False} if not ref_valid and (getattr(eng, "takes_valid", False) or getattr(eng, "pol", None) is not None) else {}
     mix = np.asarray(mix, np.float32)
     T = mix.shape[1]
     n = -(-T // HOP) + 1

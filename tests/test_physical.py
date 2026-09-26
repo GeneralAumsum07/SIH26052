@@ -113,12 +113,12 @@ def test_run_engine_ref_valid_false_leaves_r7_unchanged():
     assert np.array_equal(y0, y1) and d0 == d1
 
 
-def test_run_engine_forwards_ref_valid_only_to_validity_models(monkeypatch):
+def test_run_engine_forwards_ref_valid_only_to_validity_or_policy_models(monkeypatch):
     calls = []
 
     class Eng:
         def __init__(self, *a, **kw):
-            self.takes_valid, self.last = takes, {}
+            self.takes_valid, self.pol, self.last = takes, pol, {}
 
         def process(self, p, r, **kw):
             calls.append(kw); return np.zeros_like(p)
@@ -126,7 +126,9 @@ def test_run_engine_forwards_ref_valid_only_to_validity_models(monkeypatch):
     monkeypatch.setattr(physical.live, "load_model_config", lambda c: {"controller_on": True, "dsp": {}})
     monkeypatch.setattr(physical.live, "StreamEngine", Eng)
     mix = np.zeros((2, 3 * physical.HOP), np.float32)
-    for takes, rv, want in [(False, False, {}), (True, True, {}), (True, False, {"ref_valid": False})]:
+    # a ref_policy engine without a validity input (an r8 pilot) still runs the policy's absent-hop DSP on ref_zero rows
+    for takes, pol, rv, want in [(False, None, False, {}), (True, None, True, {}), (True, None, False, {"ref_valid": False}),
+                                 (False, {"absent": "freeze"}, False, {"ref_valid": False}), (False, {}, True, {})]:
         calls.clear()
         physical.run_engine(mix, "x.onnx", "x.json", ref_valid=rv)
         assert calls and all(c == want for c in calls)
