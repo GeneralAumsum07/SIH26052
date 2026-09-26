@@ -276,3 +276,54 @@ def test_default_root_is_b_and_matches_the_testset_hash_file():
     assert "ed024af085a2" in T.SUPERSEDED
     h = Path(__file__).resolve().parents[1] / T.TESTSET / "EVALSET_HASH"
     assert h.read_text().strip() == T.EVALSET_HASH
+
+
+def _split_rows(tmp_path, h, keys=slice(0, 5)):
+    """Synthetic CSVs whose v2 rows take render-split (bucket, id) keys and render h's snr_in: a short CSV from root h."""
+    p = _paths(tmp_path)
+    split = sorted(T.V2_SPLIT.items())[keys]
+    for f in p.values():
+        d = pd.read_csv(f, dtype={"id": str}); v2 = d.category.str.startswith("v2/")
+        d.loc[v2, "bucket"] = "syn_" + d.loc[v2, "bucket"]            # keep the synthetic ids off the real v2 keys
+        v = d.index[v2][:len(split)]
+        d.loc[v, "bucket"] = [k[0] for k, _ in split]; d.loc[v, "id"] = [k[1] for k, _ in split]
+        d.loc[v, "snr_in"] = [float(x[h if isinstance(h, str) else h[j % 2]]) for j, (_, x) in enumerate(split)]
+        d.to_csv(f, index=False)
+    return p
+
+
+def test_v2_split_rows_match_both_indexes():
+    """V2_SPLIT against both roots' index.csv (read only): exactly the v2 rows whose .3f snr_in differs."""
+    assert len(T.V2_SPLIT) == 83 and all(set(v) == {T.EVALSET_HASH, *T.SUPERSEDED} for v in T.V2_SPLIT.values())
+    repo = Path(__file__).resolve().parents[1]
+    idx = {h: repo / r / "index.csv" for h, r in {T.EVALSET_HASH: T.EVAL_ROOT, **T.SUPERSEDED}.items()}
+    if not all(p.exists() for p in idx.values()):
+        pytest.skip("both r8 test roots are not on this machine")
+    x = {h: pd.read_csv(p, dtype={"id": str, "bucket": str}).set_index(["bucket", "id"]) for h, p in idx.items()}
+    a, b = x["ed024af085a2"], x[T.EVALSET_HASH]
+    fa, fb = a.snr_db.map(lambda s: f"{s:.3f}"), b.snr_db.reindex(a.index).map(lambda s: f"{s:.3f}")
+    diff = fa.index[fa != fb]
+    assert set(a.loc[diff].category.str.split("/").str[0]) == {"v2"}
+    assert {k: {"ed024af085a2": fa[k], T.EVALSET_HASH: fb[k]} for k in diff} == T.V2_SPLIT
+
+
+def test_partial_csv_from_the_superseded_root_is_still_refused(tmp_path):
+    """--allow-partial does not open the superseded root: the render-split rows name it without the full digest."""
+    root = tmp_path / "set"; root.mkdir()                               # no EVALSET_HASH: only the rows can tell
+    p = _split_rows(tmp_path, "ed024af085a2")
+    args = ["--r8", str(p["r8"]), "--r7", str(p["r7"]), "--raw", str(p["raw"]), "--eval-root", str(root),
+            "--expect-items", str(N + 7), "--boot", "10", "--out", str(tmp_path / "o/table.md"), "--allow-partial"]
+    with pytest.raises(ValueError, match="superseded root ed024af085a2"):
+        T.main(args)
+    md, _ = T.main(args + ["--allow-superseded"])
+    assert md.count("SUPERSEDED") == 3 and "not verified" not in md    # each CSV, root hash unchecked
+    q = _split_rows(tmp_path, T.EVALSET_HASH)                            # the same short CSVs from root B: a draft
+    md, _ = T.main(["--r8", str(q["r8"]), "--r7", str(q["r7"]), "--raw", str(q["raw"]), "--eval-root", str(root),
+                    "--expect-items", "0", "--boot", "10", "--out", str(tmp_path / "o/t2.md"), "--allow-partial"])
+    assert "SUPERSEDED" not in md and md.count("5 render-split rows match `5bfda53eacbf`") == 3
+    df = T.load(_split_rows(tmp_path, (T.EVALSET_HASH, "ed024af085a2")), expect_items=N)
+    with pytest.raises(ValueError, match="both renders"):               # rows from both roots in one CSV
+        T.check_render(df, allow_superseded=True, allow_partial=True)
+    df = T.load(_split_rows(tmp_path, T.EVALSET_HASH), expect_items=N)
+    with pytest.raises(ValueError, match="no known render"):            # a short CSV still needs --allow-partial
+        T.check_render(df)

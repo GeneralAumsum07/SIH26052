@@ -44,6 +44,32 @@ SUPERSEDED = {"ed024af085a2": "data/eval_r8_test/test"}     # the original rende
 # sha256[:12] of the sorted "bucket,id,snr_in:.3f" lines of the v2 rows (clip meta snr_db == index.csv snr_db): the renders
 # share every (bucket, id) and differ in snr_in on v2 rows only, so this names the root a CSV was scored on
 V2_DIGEST = {"5bfda53eacbf": "8a4f3615fdb7", "ed024af085a2": "bac5e7e0cc92"}
+# the 83 v2 rows whose snr_in (.3f) differs between the renders, "bucket id:A:B" (from both index.csv files); names the
+# render of a short CSV, whose whole-set digest matches neither
+V2_SPLIT_TXT = """
+v2_apc 0000:-6.845:-4.643 0001:-6.626:-18.708 0004:-14.429:-17.677 0005:-13.515:-12.103 0006:-8.182:-9.761
+v2_apc 0008:-7.211:-12.754 0012:-10.303:-10.743 0014:-17.104:-18.842 0018:3.409:-4.929 0022:-4.487:-6.983
+v2_apc 0027:-14.052:-17.454 0029:-3.168:-12.888 0035:-3.562:-15.454 0041:-8.974:-11.333 0043:-16.016:-15.929
+v2_artillery 0004:-27.210:26.536 0011:22.175:-25.091 0012:-28.545:3.557 0016:22.787:18.744 0017:-26.435:18.272
+v2_artillery 0020:11.291:7.484 0029:3.994:14.460 0030:-16.610:24.167 0032:35.924:25.255 0035:22.991:21.588
+v2_artillery 0043:26.062:21.911 0044:17.053:-19.790 0047:18.901:15.448
+v2_command_post 0007:6.092:0.218 0008:5.267:2.343 0013:3.936:6.048 0030:3.175:-0.607 0035:16.253:13.654
+v2_command_post 0046:13.661:9.246 0047:12.027:2.239
+v2_drone 0000:17.755:12.437 0003:12.784:12.549 0009:5.518:6.017 0010:3.053:1.922 0019:2.044:8.098
+v2_drone 0038:31.883:4.271 0043:24.979:23.320 0045:5.132:5.147
+v2_firefight 0000:-1.166:2.126 0003:10.882:-6.227 0007:-15.036:-0.529 0009:-0.068:-14.354 0010:-0.318:-4.262
+v2_firefight 0011:-8.160:6.688 0014:13.926:19.171 0018:8.555:5.204 0027:4.771:-8.381 0030:-21.539:-10.362
+v2_firefight 0034:-7.706:2.290 0038:4.700:-5.592 0042:3.158:-1.663 0045:-13.238:-5.482
+v2_helicopter 0000:-8.360:-13.426 0007:-13.494:-14.761 0020:-9.380:-13.010 0026:-7.324:-8.078
+v2_helicopter 0030:-14.044:-19.161 0039:-2.398:-14.378 0044:2.920:-2.976
+v2_patrol 0006:10.000:6.156 0007:17.293:13.966 0010:25.092:28.862 0015:9.924:-8.331 0017:20.042:19.405
+v2_patrol 0023:12.826:-5.628 0026:21.317:4.394 0031:33.546:22.709 0034:39.632:-4.067 0038:20.351:17.572
+v2_patrol 0044:14.789:1.325
+v2_windy_ridge 0001:2.343:15.470 0014:18.956:12.383 0017:11.759:4.739 0019:-5.563:-9.251 0020:9.004:-13.720
+v2_windy_ridge 0031:0.517:-8.322 0040:31.641:12.617 0044:2.179:6.046
+"""
+V2_SPLIT = {(ln.split()[0], it.split(":")[0]): {"ed024af085a2": it.split(":")[1], "5bfda53eacbf": it.split(":")[2]}
+            for ln in V2_SPLIT_TXT.strip().splitlines() for it in ln.split()[1:]}
 N_ITEMS = 2308
 METRICS = [("snr_out", "SNR_out dB", 2), ("stoi", "STOI", 3), ("pesq_wb", "PESQ", 2), ("dnsmos_ovrl", "OVRL", 2)]
 DELTAS = [("snr_out", "dSNR_out dB", 2), ("stoi", "dSTOI", 3), ("pesq_wb", "dPESQ", 2), ("dnsmos_ovrl", "dOVRL", 2),
@@ -124,6 +150,19 @@ def v2_digest(g):
     return hashlib.sha256("\n".join(lines).encode()).hexdigest()[:12]
 
 
+def split_render(g):
+    """Row-wise render of one system's rows from its V2_SPLIT keys: (renders seen, keys checked, keys matching neither)."""
+    v = g[g.subset == "v2"]
+    seen, n, other = set(), 0, 0
+    for b, i, s in zip(v.bucket.astype(str), v.id.astype(str), v.snr_in):
+        want = V2_SPLIT.get((b, i))
+        if want is None:
+            continue
+        n += 1; hit = [h for h, x in want.items() if x == f"{s:.3f}"]
+        seen.update(hit); other += not hit
+    return seen, n, other
+
+
 def check_render(df, allow_superseded=False, allow_partial=False):
     """Note for the header; refuses a CSV scored on the superseded root (or on neither known render)."""
     notes = []
@@ -131,6 +170,16 @@ def check_render(df, allow_superseded=False, allow_partial=False):
         d = v2_digest(df[df.role == r]); root = next((h for h, v in V2_DIGEST.items() if v == d), None)
         if root == EVALSET_HASH:
             continue
+        if root is None:                   # short or foreign CSV: the split rows still name the render
+            seen, n, other = split_render(df[df.role == r])
+            if len(seen) > 1:
+                raise ValueError(f"{r}: v2 rows carry both renders' snr_in ({sorted(seen)}); one CSV, one root")
+            if seen and seen <= set(SUPERSEDED):
+                root = next(iter(seen))
+            elif seen and allow_partial and not other:
+                notes.append(f"`{r}`: v2 digest {d} is not the full set; {n} render-split rows match `{EVALSET_HASH}` "
+                             "(partial draft, whole render not verified).")
+                continue
         if root in SUPERSEDED:
             if not allow_superseded:
                 raise ValueError(f"{r}: CSV scored on the superseded root {root} ({SUPERSEDED[root]}); the r8 test root "
@@ -138,7 +187,8 @@ def check_render(df, allow_superseded=False, allow_partial=False):
             notes.append(f"**`{r}` was scored on the SUPERSEDED root {root} ({SUPERSEDED[root]}; --allow-superseded): "
                          "not the pre-registered test.**")
         elif allow_partial:
-            notes.append(f"`{r}`: v2 rows match no known render (digest {d}; partial draft, render not verified).")
+            notes.append(f"`{r}`: v2 rows match no known render (digest {d}; {split_render(df[df.role == r])[1]} "
+                         "render-split rows; partial draft, render not verified).")
         else:
             raise ValueError(f"{r}: v2 snr_in digest {d} matches no known render {V2_DIGEST}")
     return " ".join(notes) or f"Every CSV's v2 snr_in matches the `{EVALSET_HASH}` render."
