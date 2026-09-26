@@ -114,8 +114,12 @@ def test_end_to_end_synthetic_passthrough(tmp_path, monkeypatch):
     assert m["loss_mean"] < 0.05 and abs(m["dsnr_mean"]) < 0.01
     assert m["criteria"]["dsnr>=+3dB"] == "FAIL" and m["criteria"]["loss_mean<=0.06"] == "PASS"
     assert res["part2"]["runs"]["as_is"]["longest_atten30_s"] == 0.0
-    assert json.loads((tmp_path / "field/smoke.json").read_text())["name"] == "smoke"
-    assert (tmp_path / "field/smoke.md").exists()
+    js = json.loads((tmp_path / "field/smoke.json").read_text())
+    assert js["name"] == "smoke" and js["guards"]["part1"] is False and js["guards"]["part2"] is False
+    assert js["guards"]["part2_label"] == "guards off (r7 default path)" and js["part2"]["guards"] is False
+    md = (tmp_path / "field/smoke.md").read_text(encoding="utf-8")
+    assert "Part 1 table: guards off (r7 default path)." in md and "Part 2 tables: guards off (r7 default path)." in md
+    assert "guards on for the r8 candidates, off for the r7 baseline" in md and fa.PESQ_FOOT in md
     again = fa.main(["--system", "raw", "--name", "smoke", "--n-utt", "1", "--snrs", "5", "--beds", "web",
                      "--summarise-only", "--out", str(tmp_path / "field")])
     assert again["part1"]["web/M"]["loss_mean"] == m["loss_mean"]
@@ -127,6 +131,53 @@ def test_report_order_headlines_z_and_puts_m_last():
     assert keys == ["web/gtcrn_pretrained", "web/Z", "web/W", "web/H4", "web/H8", "web/G", "web/M"]
     assert fa.ROW["Z"].endswith("headline") and fa.ROW["M"].startswith("stress")
     assert fa.SHOW2[0] == "ref_zero" and fa.SHOW2[-1] == "mono_dup"
+
+
+def _p2(guards=None):
+    run = {"longest_atten30_s": 0.1, "atten20_frac": 0.1, "proxy_survival": 0.9, "vad_speech_s": None,
+           "vad_speech_in_s": None, "word_survival": None, "validity_key": None, "validity_latency_s": "absent"}
+    p2 = {"wav": "x.wav", "seconds": 1.0, "whisper_available": False, "vad_available": False,
+          "runs": {k: dict(run) for k in fa.SHOW2}}
+    if guards is not None:
+        p2["guards"] = guards
+    return p2
+
+
+def test_every_table_states_the_guard_state_and_pesq_nan(tmp_path):
+    rows = _rows(0.01, 6.0)
+    for r in rows:                                                  # 2 PESQ-child failures on Z (item 0, both SNRs)
+        if r["cons"] == "Z" and r["item"] == 0:
+            r["pesq_out"] = float("nan")
+    st, v = fa.summarise_part1(rows)
+    assert st["web/Z"]["pesq_nan"] == 2 and st["web/M"]["pesq_nan"] == 0 and st["web/H8"]["ps_pesq_nan"] == 0
+    assert st["web/Z"]["pesq_out"] == 3.0 and v == "PASS"          # nanmean as before: the NaNs only get counted
+    mds = {}
+    for g in (True, False, None):                                   # None: a Part 2 run recorded before the key
+        res = {"name": "x", "system": "stream:a.onnx", "command": "c", "part1": st, "part1_verdict": v, "n_utt": 4,
+               "speech_split": "val", "seed": 0, "snrs": [0.0, 5.0], "part2": _p2(g), "part2_verdict": "TBD"}
+        res["part2_criteria"], _ = fa.summarise_part2(res["part2"])
+        res["guards"] = fa.guard_state(res, requested=True)          # a recorded Part 2 state wins over the flag
+        fa.write_md(res, tmp_path / f"{g}.md"); mds[g] = (tmp_path / f"{g}.md").read_text(encoding="utf-8")
+        assert res["guards"]["part1"] is False and res["guards"]["part2"] is bool(g)
+    on, off, legacy = mds[True], mds[False], mds[None]
+    assert "Part 1 table: guards off (r7 default path)." in on and "Part 2 tables: guards on (r8-candidate setting)." in on
+    assert "Part 2 tables: guards off (r7 default path)." in off and legacy == off
+    head = [l for l in on.splitlines() if l.startswith("| row | bed/cons |")][0]
+    assert "PESQ out† | pesq_nan |" in head
+    z = [l for l in on.splitlines() if "| web/Z |" in l][0]
+    assert "| 3.00 | 2 | PASS |" in z and on.count(fa.PESQ_FOOT) == 1 and "0.09 %" in fa.PESQ_FOOT
+    rows_ = [l for l in on.split("## Part 2")[0].splitlines() if l.startswith("|")]
+    assert len({l.count("|") for l in rows_}) == 1                  # Part 1 table stays rectangular
+    # apart from the guard labels the two markdowns are identical
+    strip = lambda m: [l.replace("guards on (r8-candidate setting)", "G").replace("guards off (r7 default path)", "G")
+                       .replace("runtime guards: True", "rg").replace("runtime guards: False", "rg") for l in m.splitlines()]
+    assert strip(on) == strip(off)
+
+
+def test_legacy_json_without_guards_reads_as_guards_off():
+    gs = fa.guard_state({"part2": {"runs": {}}})                   # results_r2/field/r7.json predates the key
+    assert gs["part1"] is False and gs["part2"] is False and gs["part2_label"] == "guards off (r7 default path)"
+    assert fa.guard_state({}, requested=True)["part2"] is True      # Part 1 only: the flag names Part 2's setting
 
 
 def test_z_runs_at_validity_zero_and_the_rest_valid(monkeypatch):

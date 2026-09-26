@@ -1,4 +1,18 @@
-# G4 field acceptance (plan 11.2): r7 baseline
+# G4 field acceptance (plan 11.2): r7 baseline, guards off (r7 default path)
+
+## Runtime guards (Rachit, 2026-09-26)
+
+- Rule: `--guards` is **on for the r8 candidates** and **off for the r7 baseline**; every G4 result is labelled with
+  its state. The guards change only Part 2 (they expose the `ref_informative` flag whose latency Part 2 times); Part 1
+  never runs them, so every Part 1 table is guards off on every system.
+- The r7 baseline below (`r7.json` / `r7.md`) is **guards off (r7 default path)**: it ran without `--guards`, and its
+  Part 2 run predates the recorded `guards` key, which `scripts/field_accept.py` reads as off.
+- `scripts/field_accept.py` writes a top-level `guards` block in the JSON (`part1`, `part2`, their labels, the rule)
+  and a guard-state line above every markdown table. `r7.md` / `r7.json` were not rebuilt and carry no such line; a
+  `--summarise-only` rebuild would add it with every number unchanged (checked on synthetic input against the previous
+  script: every pre-existing JSON key and value identical; the markdown differs only in the guard lines, the
+  `pesq_nan` column and the PESQ footnote).
+- Every PESQ figure carries `pesq_nan` (clips whose isolated PESQ child failed) and the footnote below (decision 6).
 
 Command (repo root, CPU, 2 workers; 2026-09-24 18:20-18:30 IST, rc=0):
 
@@ -35,9 +49,18 @@ Key numbers (from `r7.json` / `r7.md`):
 | stress (duplicated primary) | mad/M | 1.000 | 1.000 | 2.08 | 0.736 -> 0.534 | -0.59 | FAIL |
 
 gtcrn_pretrained on the same primaries: dSNR +7.82 dB (web), +2.31 dB (mad); loss 0.056 / 0.085.
-H8 at +5 dB (targets SNR_out > 15, STOI > 0.85, PESQ > 2.5): web 11.0 / 0.880 / 1.96; mad 14.5 / 0.934 / 2.47.
+H8 at +5 dB (targets SNR_out > 15, STOI > 0.85, PESQ† > 2.5): web 11.0 / 0.880 / 1.96; mad 14.5 / 0.934 / 2.47.
 
-Part 2 (reference-free, web WAV 37.2 s): longest stretch attenuated > 30 dB on the as_is run = 2.38 s (criterion <= 1.0 s: FAIL);
+† PESQ: pesq 0.0.4 reads out of bounds in `utterance_split` on some noise-dominated inputs
+(results_r2/r8/native_crash/README.md). A faulting read kills the isolated PESQ child and the clip scores NaN
+(`pesq_nan`, left out of the mean); a non-faulting read returns a garbage value that cannot be detected per clip: 2 of
+2,280 raw noisy eval_r2_relabel/test inputs (0.09 %) under ASan (results_r2/r8/native_crash/asan/sweep_relabel_test.tsv);
+the rate on model outputs was not measured. The r7 run predates the isolation (in-process PESQ, 2026-09-24):
+`pesq_nan` = 0 of its 560 Part 1 rows (a fault there would have killed the run), counted from the repo root with
+
+    .venv/Scripts/python.exe -c "import json,math; print(sum(1 for l in open('results_r2/field/work/r7_part1.jsonl') if l.strip() for r in json.loads(l)[1] if r['pesq_out'] is None or not math.isfinite(r['pesq_out'])))"
+
+Part 2 (reference-free, web WAV 37.2 s; guards off, r7 default path): longest stretch attenuated > 30 dB on the as_is run = 2.38 s (criterion <= 1.0 s: FAIL);
 ref_zero 0.10 s, mono_dup 32.64 s (whole-clip suppression), swapped 3.34 s.
 Whisper word survival, VAD speech seconds and mono word survival: TBD (faster-whisper is not importable in .venv).
 Validity-flag latency: TBD (r7 exposes no reference-informativeness flag).
@@ -52,7 +75,7 @@ Validity-flag latency: TBD (r7 exposes no reference-informativeness flag).
 - These are single-run numbers from a loaded shared machine; the metrics are timing-independent, so they are reportable
   as the r7 G4 baseline. TBD: rerun Part 2 with faster-whisper installed to fill the ASR/VAD rows.
 
-To score an r8 candidate: `--system stream:<cascade.onnx>@<model_config.json> --name <run>` (or any `vaani.eval.enhance_fn` spec).
+To score an r8 candidate: `--system stream:<cascade.onnx>@<model_config.json> --name <run> --guards` (or any `vaani.eval.enhance_fn` spec; `--guards` acts on stream systems only).
 
 ## Part 2 hooks (G4 Part 2, plan 11.2)
 
