@@ -31,7 +31,7 @@ if(NOT EXISTS "${VLD_ORT_DIR}/include/onnxruntime_cxx_api.h")
   message(FATAL_ERROR "ONNX Runtime ${VLD_ORT_VERSION} not found at ${VLD_ORT_DIR}.\n"
                       "Run native/vaani_ld/deps/fetch_ort.sh ${_ort_arch} or pass -DVLD_ORT_DIR=<release dir>.")
 endif()
-find_library(VLD_ORT_LIB onnxruntime PATHS "${VLD_ORT_DIR}/lib" NO_DEFAULT_PATH)
+find_library(VLD_ORT_LIB onnxruntime PATHS "${VLD_ORT_DIR}/lib" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
 if(NOT VLD_ORT_LIB)
   message(FATAL_ERROR "libonnxruntime not found under ${VLD_ORT_DIR}/lib")
 endif()

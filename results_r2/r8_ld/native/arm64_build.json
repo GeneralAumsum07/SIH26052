@@ -1,0 +1,42 @@
+{
+  "target": "aarch64-linux-gnu",
+  "compiler": "aarch64-linux-gnu-g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+  "onnxruntime": "1.30.0",
+  "alsa": true,
+  "executables": {
+    "vaani_ld_run": {
+      "file": "ARM aarch64",
+      "sha256": "3ae97128c3587a799eb85515ea6f7eb414a3cadff08a153573ad5cbebad16570"
+    },
+    "vld_step_bench": {
+      "file": "ARM aarch64",
+      "sha256": "bf384d60d445550c05a4b590b89d64986c4d9aae73f3b07f4592bf1804a59cff"
+    },
+    "vld_period_test": {
+      "file": "ARM aarch64",
+      "sha256": "81430ada766f47f4afd8f0bbd08a023af69b2a553390ef38ecac1815de090b4d"
+    },
+    "vld_golden_test": {
+      "file": "ARM aarch64",
+      "sha256": "960a6c2937567e7dd754f50c3de25f1d45c5948e63737ce4a81dc296fe603965"
+    },
+    "vld_unit_test": {
+      "file": "ARM aarch64",
+      "sha256": "8f0fdb916491defe7d4d0725eb115f3a97b2d97e95825511c515d18d5cb510bc"
+    }
+  },
+  "runner": "qemu-aarch64",
+  "golden": {
+    "summary": true,
+    "checks": 125,
+    "failures": 0
+  },
+  "golden_exit": 0,
+  "unit": {
+    "passes": 70,
+    "failures": 0
+  },
+  "unit_exit": 0,
+  "note": "qemu-user checks the ARM build and its numerics only; board timing is Gate 0a/Gate D (owner).",
+  "pass": true
+}
