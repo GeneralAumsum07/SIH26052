@@ -290,11 +290,16 @@ def test_fixed_reference_only_for_r7(tmp_path, reg):
 
 
 def test_three_comparison_types_and_arm_r(tmp_path, reg):
-    assert set(C.COMPARISONS) == {"c0_vs_r7", "ld_vs_c0", "arm_a_vs_arm_r", "final_vs_r7"}
+    assert set(C.COMPARISONS) == {"c0_vs_r7", "ld_vs_c0", "arm_a_vs_arm_r", "arm_b_nhat_vs_arm_b", "final_vs_r7"}
     rep = C.compare(manifest(tmp_path, comparison="arm_a_vs_arm_r", ctrl="arm_r"), reg)
     assert rep["control"] == "arm_r"
     with pytest.raises(C.ComparisonError, match="candidate arm"):
         C.compare(manifest(tmp_path, comparison="arm_a_vs_arm_r", cand="arm_b", ctrl="arm_r"), reg)
+    # the ab2 input ablation on the low-delay path (D5): Arm B with n_hat against Arm B's own 'pr' seeds only
+    rep = C.compare(manifest(tmp_path, comparison="arm_b_nhat_vs_arm_b", cand="arm_b_nhat", ctrl="arm_b"), reg)
+    assert (rep["candidate"], rep["control"]) == ("arm_b_nhat", "arm_b")
+    with pytest.raises(C.ComparisonError, match="control arm"):
+        C.compare(manifest(tmp_path, comparison="arm_b_nhat_vs_arm_b", cand="arm_b_nhat", ctrl="c0"), reg)
 
 
 def test_full_run_uses_the_confirmation_seed_variance(tmp_path, reg):

@@ -33,9 +33,18 @@ tests/test_train_smoke.py cover this). Whether r8 replaces r7 is Rachit's call a
   Built (`vaani/dsp/decoupled_nlms.py`, tests `tests/test_decoupled_nlms.py`): hop-invariant, causal, bit-exact
   with `pipeline.run` with the controller off, and with the legacy controller on its cadence. The low-delay loader,
   runner, stream engine and eval accept `inputs: pr_nhat`; a low-delay `ref_policy` sets `ramp_samples`.
-  **Open (Rachit): the budget.** Mini-P18 with n_hat is 63,798 training-form entries (limit 60,000, not relaxed;
-  89.648 MMAC/s), so Arm A cannot take `pr_nhat` as is; Mini-P32 at Arm B is 44,782 entries, 89.220 MMAC/s, within
-  budget (`results_r2/r8/budget.md`). The LD queue configs stay on `inputs: pr` until Rachit picks a way forward.
+  Budget: Mini-P18 with n_hat is 63,798 training-form entries (limit 60,000, not relaxed; 89.648 MMAC/s), so Arm A
+  cannot take `pr_nhat`; Mini-P32 at Arm B is 44,782 entries, 89.220 MMAC/s, within budget
+  (`results_r2/r8/budget.md`).
+- **D5 budget decision (Rachit, 2026-09-27): option 1.** The main arms (C0, Arm A, Arm B) stay on `inputs: pr`, so
+  the registered comparison against C0 is like for like. n_hat is measured as the ab2 input ablation on the low-delay
+  path: `ld_b_nhat_s{0,1}` (Arm B with `pr_nhat`, P4, only when Gate 0a pilots Arm B, stopped if Stage 1 picks Arm A)
+  against `ld_b_s{0,1}`, comparison `arm_b_nhat_vs_arm_b`. If it wins by the registered margins and Arm B ships, the
+  shipped low-delay path carries the NLMS. Loader cost: the NLMS runs in the loader workers, about 0.21 s of CPU per
+  4 s item (0.03 s for `pr`) on the dev machine; the box bench measures it (`ld_b_nhat_s0` is in `LD_BENCH_CFGS`).
+  Before a `pr_nhat` arm could ship on the Pi, two things are still missing: the native runtime
+  (`native/vaani_ld`) has no NLMS stage (the Python stream engine and ORT do), and Gate 0a times only the `pr`
+  graphs. Neither blocks the ablation; both are work only if it wins.
 - **Compute authorization granted** for the r8 pilots and full runs.
 
 ## Before renting (Rachit's checklist)
@@ -289,7 +298,7 @@ first-hour measurements before committing hours or money:
    step time.
 3. The critical path is the first hour, then wave 1 (where the early full runs start), then the Stage-2 decisions,
    then wave 2 (only if the promoted recipe has no early full run). If the measured total exceeds the rental, cut in
-   the plan's order and record each cut: P4, Arm R seed 1, the Arm B and then the overparam early full runs, then
+   the plan's order and record each cut: P4 (the `ld_b_nhat` pair included), Arm R seed 1, the Arm B and then the overparam early full runs, then
    Stage-2 items 5 and 4. Never cut P3, Stage-1 Arms A/B, the overparam screen or the C0 yardstick.
 
 **Comparisons (low-delay plan Task 9; `scripts/compare_r8_ld.py`).**

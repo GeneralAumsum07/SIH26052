@@ -156,7 +156,12 @@ STAGE2 = {
     "ld_s2_native": ({"loss_cfg.loss_domain": "native", "loss_cfg.w_consistency": 0.3},
                      "5 native low-delay-domain loss (consistency 0.3 on the low-delay spectra)"),
 }
-# P4 (Section 3.10): r8 recipe ablations ported to Arm A, seed 0 screens; ab2 follows D5 and is not ported
+# the ab2 input ablation on the low-delay path (owner decision D5; Rachit 2026-09-27: option 1): Arm B with n_hat from
+# the decoupled-cadence NLMS against Arm B's own 'pr' seeds. Arm B only: Mini-P18 with n_hat exceeds the 60,000-entry
+# budget (results_r2/r8/budget.md), Mini-P32 fits. Same NLMS/blocking/controller as ab2_pr_nhat, the ramp in samples.
+LD_NHAT = {"model_cfg.inputs": "pr_nhat", "dsp.blocking": True, "dsp.controller": NHAT_DSP["controller"],
+           "dsp.ref_policy.nlms": True}
+# P4 (Section 3.10): r8 recipe ablations ported to Arm A, seed 0 screens; ab2 runs on Arm B (LD_NHAT above)
 P4 = {"ld_p4_tail00": ({"data.mix.v2.tail_share": 0.0}, "3b low-ILD tail share 0 %"),
       "ld_p4_tail10": ({"data.mix.v2.tail_share": 0.10}, "3b low-ILD tail share 10 %"),
       "ld_p4_refdrop00": ({"data.ref_corrupt.p_absent": 0.0}, "3 reference dropout (absent) 0.0"),
@@ -247,6 +252,10 @@ def ld_arms(fe, cid, g0, promoted=()):
     for s in (0, 1):
         add(f"{A}/ld_b_s{s}.yaml", derive(base, f"r8_ld_b_s{s}", s, PILOT_EPOCHS, arm_b), f"Arm B (Mini-P32), seed {s}",
             kind="pilot", arm="arm_b", stage="P1", priority=2, wave=1, needs_gate0_arm_b=True)
+        add(f"{A}/ld_b_nhat_s{s}.yaml", derive(base, f"r8_ld_b_nhat_s{s}", s, PILOT_EPOCHS, dict(arm_b, **LD_NHAT)),
+            f"Arm B with inputs pr_nhat (the ab2 input ablation on the low-delay path, D5), seed {s}",
+            kind="pilot", arm="arm_b_nhat", stage="P4", priority=4, wave=1, needs_gate0_arm_b=True,
+            stop_if=["stage1=arm_a"])
         add(f"{A}/ld_r_s{s}.yaml", derive(base, f"r8_ld_r_s{s}", s, PILOT_EPOCHS, drop=ARM_R_DROP),
             f"Arm R (native tiling, Arm A's contract and deep filter; never selected), seed {s}",
             kind="pilot", arm="arm_r", stage="P1", priority=4, wave=1)
@@ -301,12 +310,12 @@ def arm_record(rel, cfg, rec, g0):
                             perf_numerics=(cfg.get("perf") or {}).get("numerics")),
              tier=mc.get("tier", "mini"), tiling=mc.get("freq_windows") or "native", **con,
              deploy_path=("C0: 32 ms legacy framing, not deployable at the low-delay budget" if con["legacy"]
-                          else deploy_path(g0, "arm_r" if arm == "arm_r" else arm, con["audio_contract"])
-                          if arm in ("arm_a", "arm_b", "arm_r") else "Jetson projection (not a Pi 5 deployment)"))
+                          else deploy_path(g0, "arm_b" if arm == "arm_b_nhat" else arm, con["audio_contract"])
+                          if arm in ("arm_a", "arm_b", "arm_b_nhat", "arm_r") else "Jetson projection (not a Pi 5 deployment)"))
     r.update({k: v for k, v in rec.items()})
     r.setdefault("queued", True)
     # spec 6.2 binds the Pi tier's deployable arms; Arm R is a reference and the other tiers are Jetson projections
-    r["deployable"] = arm in ("arm_a", "arm_b", "c0") and r["tier"] == "mini"
+    r["deployable"] = arm in ("arm_a", "arm_b", "arm_b_nhat", "c0") and r["tier"] == "mini"
     return r
 
 

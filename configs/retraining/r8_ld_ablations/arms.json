@@ -440,6 +440,45 @@
       "wave": 1
     },
     {
+      "arm": "arm_b_nhat",
+      "audio_contract": "vaanife_ld_asym512_h128_s160_v1",
+      "batch": 32,
+      "config": "configs/retraining/r8_ld_ablations/ld_b_nhat_s0.yaml",
+      "contract_hash": "41ae1effc663f55a",
+      "deploy_path": "pending: Gate 0a board record pending_board",
+      "deployable": true,
+      "epochs": 48,
+      "hop": 128,
+      "kind": "pilot",
+      "legacy": false,
+      "name": "r8_ld_b_nhat_s0",
+      "needs_gate0_arm_b": true,
+      "optimizer_steps": 30000,
+      "precision": {
+        "amp": true,
+        "fp32_islands": true,
+        "perf_numerics": {
+          "compile": false,
+          "cuda_graph": false,
+          "gru_kernel": "cudnn",
+          "render": "cpu"
+        }
+      },
+      "prefix_exposure_s": 0.0,
+      "priority": 4,
+      "queued": true,
+      "scored_exposure_s": 3840000.0,
+      "seed": 0,
+      "stage": "P4",
+      "stop_if": [
+        "stage1=arm_a"
+      ],
+      "support_ms": 10.0,
+      "tier": "mini",
+      "tiling": "p32",
+      "wave": 1
+    },
+    {
       "arm": "arm_r",
       "audio_contract": "vaanife_ld_asym512_h96_s128_v1",
       "batch": 32,
@@ -505,6 +544,45 @@
       "scored_exposure_s": 3840000.0,
       "seed": 1,
       "stage": "P1",
+      "support_ms": 10.0,
+      "tier": "mini",
+      "tiling": "p32",
+      "wave": 1
+    },
+    {
+      "arm": "arm_b_nhat",
+      "audio_contract": "vaanife_ld_asym512_h128_s160_v1",
+      "batch": 32,
+      "config": "configs/retraining/r8_ld_ablations/ld_b_nhat_s1.yaml",
+      "contract_hash": "41ae1effc663f55a",
+      "deploy_path": "pending: Gate 0a board record pending_board",
+      "deployable": true,
+      "epochs": 48,
+      "hop": 128,
+      "kind": "pilot",
+      "legacy": false,
+      "name": "r8_ld_b_nhat_s1",
+      "needs_gate0_arm_b": true,
+      "optimizer_steps": 30000,
+      "precision": {
+        "amp": true,
+        "fp32_islands": true,
+        "perf_numerics": {
+          "compile": false,
+          "cuda_graph": false,
+          "gru_kernel": "cudnn",
+          "render": "cpu"
+        }
+      },
+      "prefix_exposure_s": 0.0,
+      "priority": 4,
+      "queued": true,
+      "scored_exposure_s": 3840000.0,
+      "seed": 1,
+      "stage": "P4",
+      "stop_if": [
+        "stage1=arm_a"
+      ],
       "support_ms": 10.0,
       "tier": "mini",
       "tiling": "p32",

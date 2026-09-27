@@ -89,15 +89,25 @@ class DecoupledNLMS:
         n_ch = -(-n // CHUNK)
         hits = np.zeros(n_ch, bool) if hits is None else np.asarray(hits, bool)
         out = np.empty(n, np.float32)
-        for c in range(n_ch):
-            a, b = c * CHUNK, min(n, (c + 1) * CHUNK)
-            out[a:b] = self._chunk(prim[a:b], ref_true[a:b], ref_model[a:b], avail[a:b], bool(hits[c]))
+        # consecutive chunks inside one 256-sample block with the same absent flag run as one kernel call: the gate
+        # and the speech verdict change only at block ends, the kernels run sample by sample and the robust
+        # kernel's sub-blocks stay on the 32-sample grid, so the samples are those of one call per chunk
+        c, pos = 0, self.pos
+        while c < n_ch:
+            absent = self.pol is not None and not avail[c * CHUNK:(c + 1) * CHUNK].all()
+            e, pos = c + 1, pos + CHUNK
+            while e < n_ch and pos < BLOCK and (self.pol is not None and not avail[e * CHUNK:(e + 1) * CHUNK].all()) == absent:
+                e, pos = e + 1, pos + CHUNK
+            a, b = c * CHUNK, min(n, e * CHUNK)
+            out[a:b] = self._chunk(prim[a:b], ref_true[a:b], ref_model[a:b], avail[a:b], bool(hits[c:e].any()), absent)
+            pos = pos % BLOCK
+            c = e
         if self.pol is not None and gain is not None:
             out = (out * np.asarray(gain, np.float32)).astype(np.float32)
         return out
 
-    def _chunk(self, p, r, rm, av, hit):
-        absent = self.pol is not None and not av.all()
+    def _chunk(self, p, r, rm, av, hit, absent):
+        """Whole 32-sample chunks of one block (the last may be partial) sharing the absent flag."""
         if absent and not self.was_absent and self.pol.get("absent", "freeze") == "reset":
             self.nlms.reset()
         self.was_absent = absent

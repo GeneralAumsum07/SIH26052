@@ -235,9 +235,10 @@ bench() {  # the memory logs size run_r8.sh's VAANI_WORKER_RSS_GB (per-worker me
     --label "rental box GPU0" --configs configs/retraining/r8_fe_mini.yaml configs/retraining/r8_refvalid_v2.yaml
   "$PY" scripts/r8_preflight.py --mem-summary "$S/bench_mem_loader.log" "$S/bench_mem_step.log" --mem-out results_r2/r8/loader_mem_box.json
 }
-# the low-delay networks (Arm A at the selected support, Arm R) under the same memory log: the evidence the low-delay
+# the low-delay networks (Arm A at the selected support, Arm R, Arm B with n_hat) under the same memory log: the evidence the low-delay
 # preflight requires and the measured throughput the rental estimate is revised from (R8_RUNBOOK.md)
-LD_BENCH_CFGS=(configs/retraining/r8_ld_fe_mini.yaml configs/retraining/r8_ld_ablations/ld_r_s0.yaml)
+LD_BENCH_CFGS=(configs/retraining/r8_ld_fe_mini.yaml configs/retraining/r8_ld_ablations/ld_r_s0.yaml
+               configs/retraining/r8_ld_ablations/ld_b_nhat_s0.yaml)   # n_hat: the NLMS runs in the loader workers
 ld_bench() {
   watched "$S/bench_mem_ld_loader.log" "$PY" scripts/bench_loader.py --out results_r2/r8_ld/loader_bench_box.json --workers 8 16 24 32 \
     --batches 20 --label "rental box $(nproc) vCPU" --configs "${LD_BENCH_CFGS[@]}"

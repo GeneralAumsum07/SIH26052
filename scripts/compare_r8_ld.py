@@ -76,6 +76,7 @@ COMPARISONS = {   # name -> (allowed candidate arms, allowed control arms, contr
     "c0_vs_r7": ({"c0"}, {"r7"}, True),
     "ld_vs_c0": ({"arm_a", "arm_b", "arm_r", "ld_conf"}, {"c0"}, False),
     "arm_a_vs_arm_r": ({"arm_a"}, {"arm_r"}, False),
+    "arm_b_nhat_vs_arm_b": ({"arm_b_nhat"}, {"arm_b"}, False),   # the ab2 input ablation on the low-delay path (D5)
     "final_vs_r7": ({"arm_a", "arm_b", "ld_conf", "final"}, {"r7"}, True),
 }
 KINDS = ("screen", "stage1", "confirmation", "full")

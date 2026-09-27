@@ -50,7 +50,7 @@ LD_P1=(ab1_fe_mini_s0 ab1_fe_mini_s1 ld_a_s0 ld_a_s1 ld_b_s0 ld_b_s1)           
 LD_P2=(ld_s2_overparam ld_s2_gru_default ld_s2_mrstft05 ld_s2_warmup480 ld_s2_native)   # Stage 2 on Arm A, seed 0
 LD_P3=(ab1_fe_mini_s2 ab1_fe_mini_s3 ab1_fe_mini_s4 ld_a_s2 ld_a_s3 ld_a_s4
        ld_conf_s0 ld_conf_s1 ld_conf_s2 ld_conf_s3 ld_conf_s4)                     # ld_conf_*: wave 2 (Stage-2 decision)
-LD_P4=(ld_r_s0 ld_r_s1 ld_p4_tail00 ld_p4_tail10 ld_p4_refdrop00 ld_p4_refdrop30 ld_p4_bounded
+LD_P4=(ld_r_s0 ld_r_s1 ld_b_nhat_s0 ld_b_nhat_s1 ld_p4_tail00 ld_p4_tail10 ld_p4_refdrop00 ld_p4_refdrop30 ld_p4_bounded
        ld_p4_kappa1 ld_p4_kappa2 ld_p4_kappa4)                                      # Arm R at the lowest pilot priority
 LD_FULL=(r8_fe_mini r8_ld_fe_mini r8_ld_fe_mini_overparam r8_ld_fe_mini_armb r8_ld_fe_mini_conf)   # D4 + D8 (speculative)
 LD_GPUS="${LD_GPUS:-$(nvidia-smi -L 2>/dev/null | grep -c '^GPU' || true)}"; [ "${LD_GPUS:-0}" -ge 1 ] 2>/dev/null || LD_GPUS=1

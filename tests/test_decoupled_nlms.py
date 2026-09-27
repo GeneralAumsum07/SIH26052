@@ -105,6 +105,27 @@ def test_gate_changes_only_on_the_256_sample_grid_and_lags_one_legacy_frame():
     assert nh.frames == mix.shape[1] // 256
 
 
+@pytest.mark.parametrize("absent", ["freeze", "reset"])
+def test_one_call_per_chunk_equals_merged_calls(absent):
+    """push merges chunks of one block that share the absent flag into one kernel call: the samples, the weights and
+    the controller must be those of one call per 32-sample chunk."""
+    rng = np.random.default_rng(5)
+    n = 16000 * 2
+    p = (rng.standard_normal(n) * 0.1).astype(np.float32)
+    r = (0.6 * np.roll(p, 5) + rng.standard_normal(n) * 0.05).astype(np.float32)
+    av = np.ones(n, bool)
+    for a, b in ((1000, 1001), (4000, 4700), (9001, 12003), (20000, 20100)):
+        av[a:b] = False
+    hits = rng.random(n // CHUNK) < 0.05
+    d = copy.deepcopy(DSP); d["ref_policy"]["absent"] = absent
+    one, merged = DecoupledNLMS(d), DecoupledNLMS(d)
+    y1 = np.concatenate([one.push(p[s:s + CHUNK], r[s:s + CHUNK], r[s:s + CHUNK], av[s:s + CHUNK],
+                                  hits[s // CHUNK:s // CHUNK + 1]) for s in range(0, n, CHUNK)])
+    y2 = merged.push(p, r, r, av, hits)
+    assert np.array_equal(y1, y2) and np.array_equal(one.nlms.w, merged.nlms.w)
+    assert (one.gate, one.last, one.frames) == (merged.gate, merged.last, merged.frames)
+
+
 def test_absent_is_decided_per_32_sample_chunk():
     """One unavailable chunk freezes adaptation for that chunk only; the legacy 256-sample block would freeze 8."""
     mix, _ = signal(n=4096)

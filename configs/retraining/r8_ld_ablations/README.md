@@ -32,6 +32,7 @@ same in every file. The preflight fails if it differs. `perf.ops` is bit-exact a
 |---|---|---|---|
 | `ld_a_s{0,1}` | Arm A, Stage 1 | seed | P2 (pilot class), wave 1 |
 | `ld_b_s{0,1}` | Arm B, Stage 1: L = 10 ms, `p32`, 144 DF bins, lags [0, 2, 4] | contract, tiling, DF band | P2, wave 1, **only when Gate 0a pilots Arm B** |
+| `ld_b_nhat_s{0,1}` | the ab2 input ablation on the low-delay path (D5): Arm B with `inputs: pr_nhat`, n_hat from the decoupled-cadence NLMS, against `ld_b_s{0,1}` (`compare_r8_ld.py`, comparison `arm_b_nhat_vs_arm_b`). Arm B only: Mini-P18 with n_hat is over the entry budget | as Arm B, plus `inputs: pr_nhat`, `dsp.blocking`, `dsp.controller`, `dsp.ref_policy.nlms` (the `ab2_pr_nhat` DSP, ramp in samples) | P4, wave 1, only when Gate 0a pilots Arm B; stopped by `stage1=arm_a` |
 | `ld_r_s{0,1}` | Arm R: native tiling, no validity term (P18's deep filter kept) | drops `freq_windows`, `valid_bias` | P4, wave 1 |
 | `ld_s2_overparam`, `ld_s2_gru_default`, `ld_s2_mrstft05`, `ld_s2_warmup480`, `ld_s2_native` | Stage 2 items 1-5, seed 0 | one field each (item 6 is conditional and not generated) | P2, wave 1 |
 | `ld_a_s{2,3,4}` | Arm A confirmation (the no-addition control) | seed | P3, wave 1 |

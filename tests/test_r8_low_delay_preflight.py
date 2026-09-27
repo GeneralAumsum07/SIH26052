@@ -424,16 +424,18 @@ def test_box_setup_benches_and_preflights_the_low_delay_queue():
     assert "DRY ld_bench" in d.stdout and "DRY preflight-ld" in d.stdout and "--low-delay" in d.stdout, d.stdout
 
 
-@pytest.mark.parametrize("cfg", ["configs/retraining/r8_ld_fe_mini.yaml", "configs/retraining/r8_ld_ablations/ld_r_s0.yaml"])
+@pytest.mark.parametrize("cfg", ["configs/retraining/r8_ld_fe_mini.yaml", "configs/retraining/r8_ld_ablations/ld_r_s0.yaml",
+                                 "configs/retraining/r8_ld_ablations/ld_b_nhat_s0.yaml"])
 def test_step_time_bench_trains_the_low_delay_framing(cfg, monkeypatch):
     import bench_loader as B
+    c = yaml.safe_load(open(REPO / cfg, encoding="utf-8"))
     n = 8000; clean = torch.randn(n) * 0.05
     item = {"mix": torch.stack([clean + torch.randn(n) * 0.02, clean * 0.7]), "clean": clean, "meta": {},
             "avail": torch.ones(n, dtype=torch.uint8)}
+    if c["model_cfg"]["inputs"] == "pr_nhat":   # the loader workers' decoupled-cadence NLMS output
+        item["n_hat"] = clean * 0.1
     monkeypatch.setattr(B, "build_dataset", lambda c: [item] * 2)
-    monkeypatch.setattr(B, "collate", lambda its: {"mix": torch.stack([i["mix"] for i in its]),
-                                                    "clean": torch.stack([i["clean"] for i in its]),
-                                                    "meta": [{} for _ in its],
-                                                    "avail": torch.stack([i["avail"] for i in its])})
-    r = B.step_time(yaml.safe_load(open(REPO / cfg, encoding="utf-8")), 2, 1, 0, device="cpu")
+    monkeypatch.setattr(B, "collate", lambda its: {k: torch.stack([i[k] for i in its]) for k in its[0] if k != "meta"}
+                        | {"meta": [{} for _ in its]})
+    r = B.step_time(c, 2, 1, 0, device="cpu")
     assert r["step_s_median"] > 0 and r["gpu"] == "cpu" and r["params"] > 0
