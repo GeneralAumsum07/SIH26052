@@ -61,6 +61,8 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from vaani import live           # noqa: E402  (numpy + onnxruntime only)
 from vaani.dsp import nlms       # noqa: E402
+from vaani import resampler      # noqa: E402  (numpy only)
+from vaani.audio_contract import RESAMPLER_R0  # noqa: E402
 
 HOP = live.HOP
 BUDGET_MS = 1000 * HOP / live.SR
@@ -72,9 +74,12 @@ def db(x):
     return 20 * np.log10(np.sqrt(np.mean(np.square(x), dtype=np.float64)) + 1e-12)
 
 
-def resampler_delay(up: int) -> int:
-    """Group delay of the 3:1 + 1:3 FIR pair at the capture rate (0 at 16 kHz)."""
-    return 2 * (len(live.lowpass_fir()) - 1) // 2 if up == 3 else 0
+def resampler_delay(up: int, resampler_id: str = RESAMPLER_R0) -> int:
+    """Pair delay of the 3:1 + 1:3 FIR pair at the capture rate (0 at 16 kHz), from the pair's coefficient record
+    (vaani.resampler: its measured delay, never the tap count; R0's is 2 x 96 samples)."""
+    if up != 3:
+        return 0
+    return int(round(resampler.load(resampler_id).pair_delay_ms * live.SR * up / 1000))
 
 
 class Stats:

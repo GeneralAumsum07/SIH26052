@@ -1,0 +1,110 @@
+{
+  "generated_by": "python scripts/make_resampler_fir.py",
+  "files": {
+    "r1_minphase_kaiser193_v1": "deploy/resampler/r1_minphase_kaiser193_v1.json",
+    "r2_cdelay_ls193_v1": "deploy/resampler/r2_cdelay_ls193_v1.json"
+  },
+  "ltass": "white noise, flat to 500 Hz, -9 dB/octave above, 4 s at 16 kHz, seed 0",
+  "filters": {
+    "r0_linphase_kaiser193_v1": {
+      "taps": 193,
+      "passband_dev_vs_r0_db": 0.0,
+      "passband_ripple_db": 0.8872639475298577,
+      "minus3db_hz": 7171.0,
+      "transition_7_9k_max_db": -0.8869191708944824,
+      "reject_8_9k_db": -86.42044204024204,
+      "reject_above_9k_db": -95.17407795811758,
+      "stopband_above_8k_db": -86.42044204024204,
+      "group_delay_ms": {
+        "100": 2.0,
+        "1000": 1.9999999999999978,
+        "4000": 1.9999999999999987,
+        "6000": 2.0000000000000013,
+        "7000": 2.000000000000003
+      },
+      "group_delay_0p1_6k_ms": [
+        1.9999999999999958,
+        2.0000000000000044
+      ],
+      "pair_group_delay_300_4000_max_ms": 4.000000000000009,
+      "pair_peak_ms": 4.0,
+      "per_conversion_peak_ms": 2.0,
+      "identity_snr_db": 35.33650929462207,
+      "identity_best_delay_16k_samples": 64.0,
+      "stream_vs_offline": {
+        "decimate_max_abs": 7.36742067353191e-09,
+        "interpolate_max_abs": 1.4777185308734175e-08
+      }
+    },
+    "r1_minphase_kaiser193_v1": {
+      "taps": 193,
+      "passband_dev_vs_r0_db": 6.446494218215193e-06,
+      "passband_ripple_db": 0.8872661685015233,
+      "minus3db_hz": 7171.0,
+      "transition_7_9k_max_db": -0.8869256173887006,
+      "reject_8_9k_db": -86.42043897099839,
+      "reject_above_9k_db": -95.17383643465145,
+      "stopband_above_8k_db": -86.42043897099839,
+      "group_delay_ms": {
+        "100": 0.1476264525728987,
+        "1000": 0.15022786403789865,
+        "4000": 0.20353501215906625,
+        "6000": 0.37879425921649706,
+        "7000": 0.921449736689922
+      },
+      "group_delay_0p1_6k_ms": [
+        0.1476264525728987,
+        0.37879425921649706
+      ],
+      "pair_group_delay_300_4000_max_ms": 0.4070700243181325,
+      "pair_peak_ms": 0.3333333333333333,
+      "per_conversion_peak_ms": 0.1875,
+      "identity_snr_db": 20.99512450460702,
+      "identity_best_delay_16k_samples": 4.88,
+      "stream_vs_offline": {
+        "decimate_max_abs": 7.3894615704173106e-09,
+        "interpolate_max_abs": 1.4882086007972362e-08
+      }
+    },
+    "r2_cdelay_ls193_v1": {
+      "taps": 193,
+      "passband_dev_vs_r0_db": 0.08716167826997934,
+      "passband_ripple_db": 0.9094941201585225,
+      "minus3db_hz": 7499.0,
+      "transition_7_9k_max_db": -0.5193201688608693,
+      "reject_8_9k_db": -61.24912231651531,
+      "reject_above_9k_db": -82.51663849072104,
+      "stopband_above_8k_db": -61.24912231651531,
+      "group_delay_ms": {
+        "100": 0.7550976791981778,
+        "1000": 0.7479555733050204,
+        "4000": 0.7520602038753964,
+        "6000": 0.7574409108272055,
+        "7000": 0.7401407117797482
+      },
+      "group_delay_0p1_6k_ms": [
+        0.7415692962767615,
+        0.7619028778051603
+      ],
+      "pair_group_delay_300_4000_max_ms": 1.5152611673774388,
+      "pair_peak_ms": 1.5,
+      "per_conversion_peak_ms": 0.75,
+      "identity_snr_db": 33.36951300477899,
+      "identity_best_delay_16k_samples": 24.01,
+      "stream_vs_offline": {
+        "decimate_max_abs": 7.4485685674918756e-09,
+        "interpolate_max_abs": 1.4876672227437382e-08
+      }
+    }
+  },
+  "r2_checks": {
+    "passband_dev_db": true,
+    "transition_max_db": true,
+    "reject_8_9k_db": true,
+    "reject_above_9k_db": true,
+    "gd_nominal_ms": true,
+    "gd_flat_ms": true,
+    "identity_snr_db": true
+  },
+  "r2_pass": true
+}
