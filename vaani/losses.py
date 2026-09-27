@@ -215,8 +215,14 @@ class FELoss(nn.Module):
         self.w_snr = w_snr   # the trainer reads w_snr / last_snr_clamp_fraction like HybridLoss
         self.last_snr_clamp_fraction = torch.tensor(0.)
         self.last_terms, self.last_pesq_items = {}, 0
+        self.keep_live_terms, self.live_terms = False, {}   # the trainer's per-term gradient-norm logging
 
-    def forward(self, pred, true, frame_weight=None, is_clean=None, noisy=None):
+    def forward(self, pred, true, frame_weight=None, is_clean=None, noisy=None, y_pred=None, y_true=None,
+                reanalyze=None):
+        """pred/true (B,257,T,2) spectra. y_pred/y_true (optional): the waveforms those spectra are the 512/256
+        analysis of; given, the waveform terms use them instead of inverting the spectra (the re-synthesis route,
+        vaani.enhance_low_delay.ResynthesisFELoss), with the same terms within rounding. reanalyze (optional): the
+        analysis the consistency term re-applies to y_pred (default the legacy stft.stft)."""
         pr, pi, pm = _compress(pred, self.p); tr, ti, tm = _compress(true, self.p)
         w = (torch.ones_like(pm[:, 0]) if frame_weight is None else frame_weight)[:, None, :]
         def wmean(x):
@@ -227,8 +233,10 @@ class FELoss(nn.Module):
         t["over"] = wmean(asym_sq(diff, self.kappa)) - t["mag"]   # zero at kappa 1
         t["complex"] = wmean((pr - tr) ** 2 + (pi - ti) ** 2)
         n = pred.shape[2] * stft.HOP - stft.HOP   # the frames' exact span: STFT(iSTFT(.)) keeps T frames
-        y_p = stft.istft(pred, length=n); y_t = stft.istft(true, length=n)
-        cr, ci, _ = _compress(stft.stft(y_p), self.p)
+        # explicit overlap-add: bit-identical to stft.istft, without its host-side envelope check
+        y_p = stft.istft_explicit(pred, length=n) if y_pred is None else y_pred
+        y_t = stft.istft_explicit(true, length=n) if y_true is None else y_true
+        cr, ci, _ = _compress((reanalyze or stft.stft)(y_p), self.p)
         t["consistency"] = wmean((cr - pr) ** 2 + (ci - pi) ** 2)
         t["wave"] = (y_p - y_t).abs().mean()
         snr = absolute_snr(y_p, y_t)
@@ -251,6 +259,7 @@ class FELoss(nn.Module):
         else:
             t["phase"] = pred.new_zeros(())
         self.last_terms = {k: v.detach() for k, v in t.items()}   # tensors: no host sync unless logged
+        self.live_terms = dict(t) if self.keep_live_terms else {}
         total = self.w["mag"] * (t["mag"] + t["over"])
         for k in ("complex", "consistency", "wave", "pesq", "snr", "mrstft", "phase"):
             if self.w[k]:

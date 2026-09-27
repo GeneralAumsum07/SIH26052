@@ -49,6 +49,10 @@ def enhance_fn(spec: str, device=None):
         spec_fn, cfg = _ckpt_spectrum_fn(spec[8:], device)
         if cfg["model"] != cascade.MODEL_NAME: raise ValueError(f"{spec[8:]} is a {cfg['model']!r} checkpoint, not a cascade")
     elif spec.startswith("ckpt:"):
+        if _is_fe_checkpoint(spec[5:]):   # VaaniFE: the shared contract-dispatching runner, validity always passed
+            from vaani.enhance_low_delay import make_fe_system
+            fe = make_fe_system(spec[5:], device or ("cuda" if torch.cuda.is_available() else "cpu"))
+            return lambda mix: fe(mix, None)
         spec_fn, _ = _ckpt_spectrum_fn(spec[5:], device)
     else:
         return baselines.get(spec).enhance
@@ -56,6 +60,10 @@ def enhance_fn(spec: str, device=None):
     def f(mix):
         return stft.istft(spec_fn(mix), length=mix.shape[1])[0].cpu().numpy()
     return f
+
+
+def _is_fe_checkpoint(path) -> bool:
+    return torch.load(path, map_location="cpu", weights_only=True)["config"].get("model") == "vaani_fe"
 
 
 def _onnx_spectrum_fn(onnx_path, ckpt_path):
@@ -74,6 +82,9 @@ def _onnx_spectrum_fn(onnx_path, ckpt_path):
     from vaani import export  # keeps onnxruntime off the import path of the ordinary checkpoint eval
 
     cfg = torch.load(ckpt_path, map_location="cpu", weights_only=True)["config"]
+    from vaani.audio_contract import contract_of
+    if cfg.get("model") == "vaani_fe" and not contract_of(cfg.get("model_cfg")).is_legacy:
+        raise ValueError("a low-delay VaaniFE graph is scored through vaani.low_delay_live (ld_onnx:<graph>@<ckpt>)")
     sess = export.load_session(onnx_path)
     cache_names, zero = export.zero_caches(sess)
 

@@ -112,11 +112,63 @@ def _metric_item(args):
     return (metrics.snr_db(clean, y), metrics.stoi(clean, y), metrics.pesq_wb(clean, y))
 
 
+def _fe_item(args):
+    """VaaniFE screen front end: the contract's front end (C0: front_end, or pipeline.run for pr_nhat), with per-sample
+    availability so the runner reduces frame validity per contract. Never the NLMS pipeline under a low-delay contract."""
+    mix, clean, cfg = args
+    from vaani.audio_contract import contract_of
+    from vaani.data.dataset import front_end
+    c = contract_of(cfg.get("model_cfg"))
+    out = {"clean": clean, "n": mix.shape[1], "avail": np.ones(mix.shape[1], np.uint8)}
+    if c.is_legacy and (cfg.get("model_cfg") or {}).get("inputs") == "pr_nhat":
+        r = pipeline.run(mix, controller_on=cfg["controller_on"], dsp_cfg=cfg.get("dsp"))
+        out.update(mix=r["mix"], n_hat=r["n_hat"])
+    else:
+        out["mix"], out["avail"] = front_end(mix, cfg.get("dsp"), None, None if c.is_legacy else c, per_sample=True)
+    return out
+
+
+@torch.no_grad()
+def _score_fe(model, ds, idx, cfg, device):
+    """score_items for VaaniFE: the contract ID is in the cache key, validity is always passed, and forwards are
+    batched over equal-length clips in evaluation mode (vaani.enhance_low_delay.forward_fe_batch)."""
+    from vaani.audio_contract import contract_of
+    from vaani.enhance_low_delay import forward_fe_batch
+    cid = contract_of(cfg.get("model_cfg")).audio_contract_id
+    key = (ds, tuple(idx), _cfg_hash({"dsp": cfg.get("dsp"), "controller_on": cfg.get("controller_on"),
+                                      "model_cfg_inputs": (cfg.get("model_cfg") or {}).get("inputs"),
+                                      "audio_contract": cid}))
+    if key not in _screen_cache:
+        items = [ds[i] for i in idx]
+        _screen_cache[key] = _pool_map(_fe_item, [(it["mix"].numpy(), it["clean"].numpy(), cfg) for it in items])
+    cached = _screen_cache[key]
+    ys = [None] * len(cached)
+    by_len = {}
+    for k, r in enumerate(cached):
+        by_len.setdefault(r["n"], []).append(k)
+    for ks in by_len.values():
+        for a in range(0, len(ks), SCREEN_BATCH):
+            grp = ks[a:a + SCREEN_BATCH]
+            nh = np.stack([cached[k]["n_hat"] for k in grp]) if "n_hat" in cached[grp[0]] else None
+            y = forward_fe_batch(model, cfg, np.stack([cached[k]["mix"] for k in grp]),
+                                 np.stack([cached[k]["avail"] for k in grp]), nh, device)
+            for k, yk in zip(grp, y):
+                ys[k] = yk
+    out = _pool_map(_metric_item, [(r["clean"], y) for r, y in zip(cached, ys)])
+    return np.asarray(out, float)
+
+
+SCREEN_BATCH = 16   # clips per batched screen forward
+
+
 @torch.no_grad()
 def score_items(model, ds, idx, first_cfg, device):
     """Per-item (snr_out, stoi, pesq_wb) through the anchor's DSP pipeline, exactly as vaani.eval runs a checkpoint.
     The DSP front end does not depend on the model, so it is computed once per (dataset, idx) and reused every
-    epoch; the model forward runs here on `device`; PESQ/STOI fan out to the pool. Same numbers as the serial loop."""
+    epoch; the model forward runs here on `device`; PESQ/STOI fan out to the pool. Same numbers as the serial loop.
+    VaaniFE models dispatch on their audio contract (_score_fe)."""
+    if first_cfg.get("model") == "vaani_fe":
+        return _score_fe(model, ds, idx, first_cfg, device)
     key = (ds, tuple(idx), _cfg_hash({"dsp": first_cfg.get("dsp"), "controller_on": first_cfg["controller_on"]}))
     if key not in _screen_cache:
         items = [ds[i] for i in idx]

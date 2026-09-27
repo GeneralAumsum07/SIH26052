@@ -218,7 +218,8 @@ def validity_latency(trace, key):
     for j, d in enumerate(trace):
         v = d.get(key)
         if v is not None and float(v) < 0.5:
-            return j * HOP / SR
+            # sample timestamps from the engine (the active contract's hop); legacy traces carry none: j x 256
+            return d["sample"] / SR if "sample" in d else j * HOP / SR
     return None
 
 

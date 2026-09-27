@@ -123,6 +123,9 @@ def make_system(spec):
     from vaani.models import cascade
     from vaani.train import build_model
     ck = torch.load(spec[5:], map_location="cpu", weights_only=True); cfg = ck["config"]
+    if cfg["model"] == "vaani_fe":   # contract dispatch through the shared runner; validity always passed
+        from vaani.enhance_low_delay import make_fe_system
+        return make_fe_system(spec[5:], "cpu")
     m = cascade.FrozenCascade.from_config(cfg) if cfg["model"] == cascade.MODEL_NAME else build_model(cfg["model"], model_cfg=cfg.get("model_cfg"))
     m.load_state_dict(ck["model"]); m.eval()
     takes_avail = "ref_avail" in inspect.signature(m.forward).parameters

@@ -11,6 +11,13 @@ moves tensors to the device and takes STFTs there.
 
 r8 options, all off by default (r7 behaviour bit-exact): loss "fe", an EMA shadow of the weights
 (`ema: {decay}`), and checkpoint selection `val.select: stoi | composite` (plan 11.2/11.6).
+
+Low-delay VaaniFE (plan "VaaniFE low-latency r8"): model_cfg.audio_contract names the framing. A low-delay contract
+dispatches prepare_batch to the asymmetric analysis with per-contract frame validity, trains through re-synthesis
+(vaani.enhance_low_delay.ResynthesisFELoss; loss_cfg.loss_domain "native" = the Stage-2 ablation) and validates
+through the shared low-delay runner. data.warmup_samples (Stage-2 item 4) scores only [warmup, crop) of each item.
+Every arm: a non-finite loss or gradient skips the optimizer, scheduler and EMA (one host read per step); `amp` and
+perf.numerics are resume keys; a named exclusion file must exist.
 """
 import argparse, copy, hashlib, importlib.util, json, os, subprocess, time
 from pathlib import Path
@@ -31,6 +38,8 @@ from vaani.models.vaani_net import VaaniNet
 from vaani.training_controls import cosine_lr_multiplier, make_schedule_config, validate_resume_schedule, should_stop_for_patience, verify_checkpoint_hash
 from vaani.training_controls import composite_key, composite_summary, ema_decay
 from vaani import runtime
+from vaani.audio_contract import contract_of
+from vaani.dsp import low_delay_stft as ld
 
 SR = 16000
 ROOT = Path(__file__).resolve().parents[1]  # repo root, so configs work from any cwd
@@ -80,10 +89,20 @@ def frame_weights_from_meta(metas, n_frames, burst_weight=3.0, half_window_s=0.1
     return w
 
 
-def prepare_batch(batch, model_name, device, burst_weight=1.0):
-    """Batch (CPU, from collate) -> (model inputs, target spec, frame weights, is_clean) on device."""
+def prepare_batch(batch, model_name, device, burst_weight=1.0, contract=None):
+    """Batch (CPU, from collate) -> (model inputs, target spec, frame weights, is_clean) on device.
+    A low-delay `contract` (VaaniFE): inputs are the asymmetric analysis with per-contract frame validity, and the
+    target is the clean waveform (B, N), which the re-synthesis loss analyzes itself."""
     nb = dict(non_blocking=True)   # pinned host buffers: overlap the copy with compute
     mix, clean, metas = batch["mix"].to(device, **nb), batch["clean"].to(device, **nb), batch["meta"]
+    if contract is not None and not contract.is_legacy:
+        if model_name != "vaani_fe" or "n_hat" in batch:
+            raise ValueError("the low-delay route supports VaaniFE inputs 'pr' only")
+        from vaani.enhance_low_delay import ld_model_inputs
+        avail = batch["avail"].to(device, **nb) if "avail" in batch else None
+        spec, valid = ld_model_inputs(mix, avail, contract)
+        is_clean = torch.tensor([bool(m.get("clean_bucket", False)) for m in metas])
+        return (spec, None, valid), clean, None, is_clean.to(device)
     target = stft.stft(clean)  # STFTs on device: cheaper than CPU + transfer of the wider spec
     fw = frame_weights_from_meta(metas, target.shape[2], burst_weight)
     is_clean = torch.tensor([bool(m.get("clean_bucket", False)) for m in metas])
@@ -94,7 +113,11 @@ def prepare_batch(batch, model_name, device, burst_weight=1.0):
         chans = [stft.stft(mix[:, 0]), stft.stft(mix[:, 1])]
         if "n_hat" in batch:
             chans.append(stft.stft(batch["n_hat"].to(device, **nb)))
-        inputs = (torch.cat(chans, dim=-1), None, batch["ref_avail"].to(device, **nb) if "ref_avail" in batch else None)
+        if "avail" in batch:   # per-sample availability reduced per contract: C0's equals frame_avail bit for bit
+            fa = ld.frame_validity(batch["avail"].to(device, **nb), None, target.shape[2])
+        else:
+            fa = batch["ref_avail"].to(device, **nb) if "ref_avail" in batch else None
+        inputs = (torch.cat(chans, dim=-1), None, fa)
     else:
         # n_hat/feats were computed in the dataset workers, which own controller_on
         n_hat = batch["n_hat"].to(device, **nb)
@@ -159,10 +182,15 @@ def validate(model, dl, cfg, device):
         dl._last_val_metrics = dict(zip(("snr_out", "stoi", "pesq_wb"), map(float, values)), pesq_nan=n_nan)
         return float(values[1])
     model.eval(); scores = []
+    contract = contract_of(cfg.get("model_cfg")) if cfg["model"] == "vaani_fe" else None
     for batch in dl:
-        inputs, target, _, _ = prepare_batch(batch, cfg["model"], device)
+        inputs, target, _, _ = prepare_batch(batch, cfg["model"], device, contract=contract)
         pred = model(*inputs).float()
-        y = stft.istft(pred, length=batch["clean"].shape[-1]).cpu().numpy()
+        n = batch["clean"].shape[-1]
+        if contract is not None and not contract.is_legacy:
+            y = ld.synthesize(pred, [n] * pred.shape[0], contract)[0].cpu().numpy()
+        else:
+            y = stft.istft(pred, length=n).cpu().numpy()
         for b in range(y.shape[0]):
             scores.append(stoi(batch["clean"][b].numpy(), y[b], SR, extended=False))
     model.train(); return float(np.mean(scores))
@@ -217,6 +245,8 @@ class CompositeScreen:
         ds = RenderedDataset(root)
         self.conds = ("present", "mono", "web_stereo", *(f"ild_{d}" for d in c["ilds"]))
         dsp, pol = needs_dsp(cfg), (cfg.get("dsp") or {}).get("ref_policy") is not None
+        self.contract = contract_of(cfg.get("model_cfg")) if cfg["model"] == "vaani_fe" else None
+        low_delay = self.contract is not None and not self.contract.is_legacy
         self.items, present = [], []
         for i in idx:
             it = ds[i]; mix, clean = it["mix"].numpy(), it["clean"].numpy(); ci = bool(it["meta"].get("clean_bucket"))
@@ -227,6 +257,8 @@ class CompositeScreen:
                 elif dsp:
                     r = pipeline.run(m2, controller_on=cfg["controller_on"], dsp_cfg=cfg.get("dsp"), ref_avail=avail if pol else None)
                     fe = dict(mix=r["mix"], n_hat=r["n_hat"], feats=r["features"])
+                elif low_delay:   # per-sample availability; frame validity is reduced per contract in the runner
+                    m3, av = front_end(m2, cfg.get("dsp"), avail, self.contract, per_sample=True); fe = dict(mix=m3, avail=av)
                 else:
                     m3, fa = front_end(m2, cfg.get("dsp"), avail); fe = dict(mix=m3, ref_avail=fa)
                 self.items.append(dict(cond=cond, clean=clean, clean_item=ci, prim=m2[0],
@@ -268,6 +300,9 @@ class CompositeScreen:
 
     @torch.no_grad()
     def enhance(self, model, it, device):
+        if "avail" in it:   # low-delay contract: the shared runner, never the legacy transform
+            from vaani.enhance_low_delay import forward_fe_batch
+            return forward_fe_batch(model, self.cfg, it["mix"][None], it["avail"][None], None, device)[0]
         x = torch.from_numpy(it["mix"])[None].to(device); n = x.shape[-1]
         if self.cfg["model"] == "gtcrn":
             out = model(stft.stft(x[:, 0]))
@@ -321,6 +356,18 @@ def main(config_path):
     for k in ("exclude_groups_file", "scene_weights"):   # r8 keys; absent = the dataset's r7 behaviour
         if k in d:
             dsk[k] = str(_abs(d[k])) if k == "exclude_groups_file" and d[k] else d[k]
+    if "exclude_groups_file" in d:   # the key present = an r8 recipe: a missing file must stop it, not warn
+        ex = _abs(d["exclude_groups_file"]) if d["exclude_groups_file"] else None
+        if ex is None or not ex.exists():
+            raise FileNotFoundError(f"data.exclude_groups_file {d['exclude_groups_file']!r} is missing: training could "
+                                    "see held-out test groups")
+    contract = contract_of(cfg.get("model_cfg")) if cfg["model"] == "vaani_fe" else None
+    low_delay = contract is not None and not contract.is_legacy
+    if low_delay:
+        dsk["audio_contract"] = contract.audio_contract_id
+    warmup = int(d.get("warmup_samples", 0) or 0)
+    if warmup and not low_delay:
+        raise ValueError("data.warmup_samples is a low-delay Stage-2 option")
     ds = DynamicMixDataset(d["manifests"], "train", d.get("bank"), mixcfg, d.get("crop_s", 4.0),
                            d.get("epoch_len", 20000), cfg["seed"], **dsk)
     vds = DynamicMixDataset(d["manifests"], "val", d.get("bank"), mixcfg, d.get("crop_s", 4.0),
@@ -348,11 +395,21 @@ def main(config_path):
     sp = cfg["loss"] == "speech_preservation"
     losscfg = cfg.get("loss_cfg", {})  # w_complex / w_mag / p / w_snr; absent = upstream loss verbatim
     fe_loss = cfg["loss"] == "fe"
-    if fe_loss:
+    if fe_loss and low_delay:   # re-synthesis through the unchanged FELoss (or the native-domain ablation)
+        from vaani.enhance_low_delay import build_fe_loss
+        lc = {k: v for k, v in losscfg.items() if k != "loss_domain"}
+        loss_fn = build_fe_loss(lc, cfg.get("model_cfg"), losscfg.get("loss_domain", "resynthesis"))
+    elif low_delay:
+        raise ValueError("low-delay VaaniFE trains with loss: fe")
+    elif fe_loss:
         loss_fn = losses.build_loss("fe", losscfg)
     else:
         loss_fn = losses.SpeechPreservationLoss(**losscfg) if sp else losses.HybridLoss(**losscfg)
     burst_w = loss_fn.burst_weight if sp else 1.0
+    crop_n = int(d.get("crop_s", 4.0) * SR)
+    scored = (warmup, crop_n) if warmup else None
+    if warmup and (crop_n - warmup) % stft.HOP:
+        raise ValueError("the warm-up scored segment must be a whole number of 256-sample hops")
     use_amp = bool(cfg.get("amp", True)) and device.type == "cuda"
     ecfg = cfg.get("ema") or {}
     ema = EMA(model, ecfg["decay"], ecfg.get("warmup", True)) if ecfg.get("decay") else None
@@ -369,9 +426,11 @@ def main(config_path):
         old = ck.get("config", {})
         # Resuming restores optimizer time; changing the budget or recipe here
         # would silently change the experiment. A new run/init_from is a restart.
-        for key in ("model", "model_cfg", "data", "loss", "loss_cfg", "optim", "batch_size", "seed", "dsp", "controller_on", "val", "ema"):
+        for key in ("model", "model_cfg", "data", "loss", "loss_cfg", "optim", "batch_size", "seed", "dsp", "controller_on", "val", "ema", "amp"):
             if old.get(key) != cfg.get(key):
                 raise RuntimeError(f"Resume configuration changed: {key}; start a new run")
+        if (old.get("perf") or {}).get("numerics") != (cfg.get("perf") or {}).get("numerics"):
+            raise RuntimeError("Resume configuration changed: perf.numerics; start a new run")
         saved_schedule = ck.get("schedule") or make_schedule_config(old["epochs"], len(dl), old["optim"].get("warmup", 500), old.get("max_steps"))
         validate_resume_schedule(saved_schedule, schedule)
         model.load_state_dict(ck["model"]); step, best = ck["step"], ck.get("best", best)
@@ -394,49 +453,71 @@ def main(config_path):
                     init_from=str(_abs(cfg.get("init_from"))) if cfg.get("init_from") else None,
                     params=n_params, seed=cfg["seed"], torch=torch.__version__, cuda=torch.version.cuda,
                     amp=use_amp, start=t_start, best_metric="composite_val" if select == "composite" else "stoi_frozen_val_screen" if vc.get("eval_root") else "stoi_dynamic_val", best_val_stoi=best,
-                    steps=step, wall_s=0.0, skipped_steps=0)
+                    steps=step, wall_s=0.0, skipped_steps=0, rejected_steps=0, clipped_steps=0,
+                    audio_contract=contract.audio_contract_id if contract is not None else None,
+                    perf=cfg.get("perf"))
     run_info.update(schedule=schedule, history=history)
     json.dump(run_info, open(run_dir / "run.json", "w"), indent=2)
 
-    bad, skipped = 0, 0
+    bad, skipped, clipped_total = 0, 0, 0
     for epoch in range(start_epoch, cfg["epochs"]):
         stop_cfg = cfg.get("early_stopping") or {}
         if should_stop_for_patience(history, stop_cfg.get("patience"), stop_cfg.get("min_delta", 0.)):
             break
         sampler.set_epoch(epoch)
-        clamp_sum, clamp_batches = 0., 0
+        clamp_sum, clamp_batches = torch.zeros((), device=device), 0
+        clipped_dev, steps0 = torch.zeros((), device=device), step
         for batch in dl:
-            inputs, target, fw, is_clean = prepare_batch(batch, cfg["model"], device, burst_w)
+            inputs, target, fw, is_clean = prepare_batch(batch, cfg["model"], device, burst_w, contract=contract)
+            log_now = (step + 1) % cfg.get("log_every", 20) == 0
+            if fe_loss:
+                getattr(loss_fn, "fe", loss_fn).keep_live_terms = log_now
             with torch.autocast("cuda", dtype=torch.bfloat16, enabled=use_amp):
                 pred = model(*inputs)
-            if fe_loss:   # the phase term's speech-dominance mask needs the noisy primary spectrum
+            if low_delay:
+                loss = loss_fn(pred.float(), target, None, is_clean, scored=scored)
+            elif fe_loss:   # the phase term's speech-dominance mask needs the noisy primary spectrum
                 noisy = inputs[0][..., :2] if loss_fn.w["phase"] and cfg["model"] != "gtcrn" else None
                 loss = loss_fn(pred.float(), target, fw, is_clean, noisy=noisy)
             else:
                 loss = loss_fn(pred.float(), target, fw, is_clean)  # loss/iSTFT stay fp32
             if loss_fn.w_snr:
-                clamp_sum += float(loss_fn.last_snr_clamp_fraction); clamp_batches += 1
-            if not torch.isfinite(loss):
+                clamp_sum += loss_fn.last_snr_clamp_fraction.detach(); clamp_batches += 1   # device-side: no sync
+            term_gn = None
+            if fe_loss and log_now and torch.isfinite(loss):
+                from vaani.enhance_low_delay import term_grad_norms
+                term_gn = term_grad_norms(loss_fn, model.parameters())
+            opt.zero_grad(set_to_none=True); loss.backward()
+            # one finiteness decision per step: the loss and the total pre-clip gradient norm, one host read
+            gn = torch.nn.utils.get_total_norm([p.grad for p in model.parameters() if p.grad is not None])
+            if not bool(torch.isfinite(loss) & torch.isfinite(gn)):
                 bad += 1; skipped += 1
+                opt.zero_grad(set_to_none=True)   # a NaN gradient never reaches the weights, the schedule or the EMA
                 if bad >= MAX_BAD_STEPS:
-                    raise RuntimeError(f"{bad} consecutive non-finite losses at step {step}")
+                    raise RuntimeError(f"{bad} consecutive non-finite losses or gradients at step {step}")
                 continue
             bad = 0
-            opt.zero_grad(set_to_none=True); loss.backward()
             clip_groups(groups, cfg["optim"].get("clip", 5.0))
+            clipped_dev = clipped_dev + (gn > cfg["optim"].get("clip", 5.0)).float()
             opt.step(); sched.step(); step += 1
             if ema is not None:
                 ema.update(model, step)
             if step % cfg.get("log_every", 20) == 0:
                 tb.add_scalar("train/loss", loss.item(), step); tb.add_scalar("train/lr", sched.get_last_lr()[0], step)
+                tb.add_scalar("train/grad_norm_preclip", float(gn), step)
                 if fe_loss:
                     for k, t in loss_fn.last_terms.items():
                         tb.add_scalar(f"train/loss_{k}", float(t), step)
+                    for k, g in (term_gn or {}).items():
+                        tb.add_scalar(f"train/gradnorm_{k}", g, step)
             if cfg.get("max_steps") and step >= cfg["max_steps"]:
                 break
         v = validate(model, vdl, cfg, device); tb.add_scalar("val/stoi", v, step)
+        n_clipped = int(clipped_dev.item())
+        clipped_total += n_clipped
         history.append(dict(epoch=epoch, step=step, val_stoi=v, lr=sched.get_last_lr()[0],
-                            snr_clamp_fraction=clamp_sum / max(clamp_batches, 1), val_metrics=getattr(vdl, "_last_val_metrics", {"stoi": v})))
+                            snr_clamp_fraction=float(clamp_sum) / max(clamp_batches, 1), val_metrics=getattr(vdl, "_last_val_metrics", {"stoi": v}),
+                            clipped_fraction=n_clipped / max(step - steps0, 1), rejected_steps=skipped))
         tb.add_scalar("train/snr_clamp_fraction", history[-1]["snr_clamp_fraction"], step)
         cands = {"raw": model}
         if ema is not None:   # the shadow is scored at every val point
@@ -475,7 +556,7 @@ def main(config_path):
             state.update(best_key=list(best_key) if best_key is not None else None,
                          **({"ema": ema.model.state_dict()} if ema is not None else {}))
         _save(state, last)
-        run_info.update(history=history, best_val_stoi=best, steps=step)
+        run_info.update(history=history, best_val_stoi=best, steps=step, rejected_steps=skipped, clipped_steps=clipped_total)
         if best_key is not None:
             run_info["best_key"] = list(best_key)
         json.dump(run_info, open(run_dir / "run.json", "w"), indent=2)
