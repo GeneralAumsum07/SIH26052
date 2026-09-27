@@ -193,7 +193,17 @@ def test_simulate_release_timeline(build):
         assert res["late_hops"] == res["late_periods"] == res["stale_periods"] == res["misplaced"] == 0, prof
         assert res["played_ok"] == 20000 * 6 and res["max_ring"] <= 6 + 1
         assert res["delay_frames"] == 3 * 96 + 2 * 48          # 3H + (D_proc + one period)
-        assert rep["budget"]["eligible"] and abs(rep["budget"]["total_ms"] - (10 + 1 / 3 + 2 + 0.6)) < 1e-3
+        # the pair counts its D3 maximum group delay over 300-4,000 Hz (0.407 ms for R1), not the 1/3 ms peak, so
+        # with the 0.5 ms converter upper estimate L = 10 ms sits 7 us over the 13.0 ms line until Gate 0b measures
+        gd = json.loads((RJSON / "r1_minphase_kaiser193_v1.json").read_text())["delays"]["pair_group_delay_300_4000_max_ms"]
+        assert abs(rep["budget"]["resampler_ms"] - gd) < 1e-9 and gd > 1 / 3
+        assert abs(rep["budget"]["total_ms"] - (10 + gd + 2 + 0.6)) < 1e-6 and not rep["budget"]["eligible"]
+    # a Gate 0b converter measurement replaces the upper estimate, and the report carries the value used
+    _, out = _run(exe, "simulate", "--contract", ARM_A, "--dproc", 1, "--hops", 2000, "--converters-ms", 0.12,
+                  "--resampler", RJSON / "r1_minphase_kaiser193_v1.json")
+    b = json.loads(out)["budget"]
+    assert b["converters_ms"] == 0.12 and b["eligible"] and abs(b["total_ms"] - (10 + gd + 2 + 0.22)) < 1e-6
+    _run(exe, "simulate", "--contract", ARM_A, "--converters-ms", -1, ok=(1,))
     _, out = _run(exe, "simulate", "--contract", ARM_A, "--dproc", 1, "--hops", 20000, "--profile", "late")
     res = json.loads(out)["result"]
     assert res["late_hops"] == 20 and res["recoveries"] == 20 and res["late_periods"] == 20 * 6

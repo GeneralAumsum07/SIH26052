@@ -276,6 +276,7 @@ Fir load_fir(const std::string& path) {
     }
     fir.sha256 = json_string(js, "sha256");
     fir.pair_peak_ms = json_number(js, "pair_peak_ms");
+    fir.pair_gd_max_ms = json_number(js, "pair_group_delay_300_4000_max_ms");
     if (fir.h.empty()) throw std::runtime_error(path + ": no coefficients");
     if (coef_sha256(fir.h) != fir.sha256)
         throw std::runtime_error(path + ": coefficient sha256 differs from the recorded one");

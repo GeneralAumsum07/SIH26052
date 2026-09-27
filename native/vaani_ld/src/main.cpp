@@ -5,9 +5,11 @@
 //                         [--split-at HOP] [--no-limiter] [--no-ref-policy]
 //   vaani_ld_run simulate --contract ID [--period 48] [--dproc 1] [--queue 2] [--hops 20000]
 //                         [--proc-ms X | --profile early|nominal|late|jitter] [--resampler R.json]
+//                         [--converters-ms X]  (a Gate 0b measurement; default the 0.5 ms Section 4 upper estimate)
 //   vaani_ld_run live     --model M.onnx --contract ID --resampler R.json --dproc D [--period 48] [--queue 2]
 //                         [--capture hw:0,0] [--playback hw:0,0] [--duration S] [--cpu N] [--prio 80]
 //                         [--ctl "NAME=VALUE"] [--prim-ch 0] [--ref-ch 1] [--report R.json] [--allow-ineligible]
+//                         [--converters-ms X]
 //
 // WAV mode takes a 2-channel file (primary, reference) at 16 kHz, or at 48 kHz with --resampler, and writes the
 // output aligned like LowDelayStreamEngine.run (the first L - H released samples dropped, the input's length).
@@ -179,8 +181,17 @@ Timeline timeline_of(const Args& a, const Contract& c) {
     return t;
 }
 
+// Converter filters (microphone decimation + DAC interpolation). Section 4's upper estimate is 0.5 ms; only a Gate 0b
+// measurement of the installed path may replace it, and the report records the value used.
+double converters_ms(const Args& a) {
+    const double v = a.num("converters-ms", 0.5);
+    if (!(v >= 0.0) || v > 5.0) throw std::runtime_error("--converters-ms must be a measured delay in [0, 5] ms");
+    return v;
+}
+
 std::string budget_json(const Budget& b, const std::vector<std::string>& why) {
     std::ostringstream o;
+    o.precision(12);
     o << "{\"support_ms\": " << b.support_ms << ", \"resampler_ms\": " << b.resampler_ms << ", \"io_ms\": " << b.io_ms
       << ", \"converters_ms\": " << b.converters_ms << ", \"fifo_ms\": " << b.fifo_ms << ", \"total_ms\": "
       << b.total_ms() << ", \"eligible\": " << (b.eligible() ? "true" : "false") << ", \"refused\": [";
@@ -191,9 +202,10 @@ std::string budget_json(const Budget& b, const std::vector<std::string>& why) {
 int run_simulate(const Args& a) {
     const Contract c = parse_contract_id(a.need("contract"));
     const Timeline t = timeline_of(a, c);
-    const double pair = a.has("resampler") ? load_fir(a.get("resampler")).pair_peak_ms : a.num("pair-ms", 0.4);
+    const double pair = a.has("resampler") ? load_fir(a.get("resampler")).budget_ms() : a.num("pair-ms", 0.4);
     Budget b;
     const auto why = check_timeline(t, c.hop, c.support, pair, &b);
+    b.converters_ms = converters_ms(a);
     const int64_t hops = static_cast<int64_t>(a.num("hops", 20000));
     const double P = t.period, dP = t.dproc_periods * P;
     const std::string prof = a.get("profile", "nominal");
@@ -249,7 +261,8 @@ int run_live(const Args& a) {
     const Timeline t = timeline_of(a, c);
     const Fir fir = load_fir(a.need("resampler"));
     Budget b;
-    const auto why = check_timeline(t, c.hop, c.support, fir.pair_peak_ms, &b);
+    const auto why = check_timeline(t, c.hop, c.support, fir.budget_ms(), &b);
+    b.converters_ms = converters_ms(a);
     if (!a.has("dproc")) throw std::runtime_error("--dproc (whole periods, from Gate 0a) is required in live mode");
     if (!why.empty()) {
         std::printf("{\"mode\": \"live\", \"refused\": true, \"budget\": %s}\n", budget_json(b, why).c_str());

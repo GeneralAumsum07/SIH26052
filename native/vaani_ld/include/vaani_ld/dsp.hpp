@@ -104,7 +104,13 @@ private:
 };
 
 // 48 kHz FIR resampler pair (vaani.resampler): coefficients from deploy/resampler/<id>.json, SHA-256 verified.
-struct Fir { std::string id; std::vector<double> h; std::string sha256; double pair_peak_ms = 0; };
+struct Fir {
+    std::string id; std::vector<double> h; std::string sha256;
+    double pair_peak_ms = 0;        // impulse-response peak delay of the pair (the D3 normative estimator)
+    double pair_gd_max_ms = 0;      // maximum pair group delay over 300-4,000 Hz (the Section 4 budget row)
+    // the budget's upper estimate counts the larger of the two
+    double budget_ms() const { return pair_peak_ms > pair_gd_max_ms ? pair_peak_ms : pair_gd_max_ms; }
+};
 Fir load_fir(const std::string& json_path);
 std::string coef_sha256(const std::vector<double>& h);
 
