@@ -115,10 +115,10 @@ def test_validity_term_equals_a_convolved_constant_plane():
     torch.manual_seed(0)
     m = p18().eval()
     u = torch.randn(m.c1, 1)
-    m.valid_vec.weight.data.copy_(u)
+    m.valid_vec.weight.data.copy_(u[..., None])
     planes = torch.randn(3, 4, 257)
     v = torch.tensor([[1.0], [0.0], [0.37]])
-    got = torch.cat([conv(planes[..., b0:b1]) for conv, (_, b0, b1, _, _) in zip(m.inp, m.res)], -1) + m.valid_vec(v)[..., None]
+    got = torch.cat([conv(planes[..., b0:b1]) for conv, (_, b0, b1, _, _) in zip(m.inp, m.res)], -1) + m.valid_vec(v[..., None])
     ref = []
     for conv, (w, b0, b1, _, _) in zip(m.inp, m.res):
         wv = torch.rand(m.c1, 1, w)

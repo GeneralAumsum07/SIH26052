@@ -272,7 +272,8 @@ class VaaniFE(nn.Module):
             assert b0 == N_BINS - 1
             n_pos = p0
             self.inp = nn.ModuleList(nn.Conv1d(self.n_in, c1, w, stride=w, bias=norm != "bn") for w, *_ in self.res)
-            self.valid_vec = nn.Linear(1, c1, bias=False) if valid_bias else None
+            # v x a learned C1-vector as a 1x1 conv on the (N,1,1) validity: C1 MACs, C1 entries, no Unsqueeze
+            self.valid_vec = nn.Conv1d(1, c1, 1, bias=False) if valid_bias else None
             self.pre_norm = nn.BatchNorm1d(c1) if norm == "bn" else nn.Identity()
             if df_taps:
                 edges = {r[2] for r in self.res}
@@ -309,6 +310,23 @@ class VaaniFE(nn.Module):
         self.register_buffer("g_r", 1 - self.g_p, persistent=False)
         if inputs == "pr_pld":
             self.register_buffer("w_pld", _fixed([[1, 1, -1, -1], [1, 1, 1, 1]]), persistent=False)
+        self.df_fixed = bool(df_taps) and (df_lags is not None or freq_windows is not None)
+        if self.df_fixed:   # the lag-matched DF as fixed 0/+-1 1x1 convs: no Gather/stack/Slice in the step graph
+            t2 = 2 * df_taps
+            self.register_buffer("w_df_swap", _fixed([[1 if i == (o ^ 1) else 0 for i in range(t2)] for o in range(t2)]),
+                                 persistent=False)
+            self.register_buffer("w_df_re", _fixed([[(1 if i % 2 == 0 else -1) for i in range(t2)], [0] * t2]),
+                                 persistent=False)
+            self.register_buffer("w_df_im", _fixed([[0] * t2, [1] * t2]), persistent=False)
+            ml = self.df_max_lag
+            sel = [(ml - d) * 2 + c for d in self.df_lags[1:] for c in (0, 1)]   # cache channel of each lagged plane
+            self.register_buffer("w_df_sel", _fixed([[1 if i == k else 0 for i in range(2 * ml)] for k in sel]),
+                                 persistent=False)
+        if freq_windows is not None:
+            self.register_buffer("w_sel_p", _fixed([[1 if i == o else 0 for i in range(self.n_raw)] for o in range(2)]),
+                                 persistent=False)
+            self._in_split = [b1 - b0 for _, b0, b1, _, _ in self.res] + [1]          # + the Nyquist bin
+            self._pos_split = [p1 - p0 for _, _, _, p0, p1 in self.res]
         if gru_init == "tc_matched":
             apply_gru_init(self.blocks, self.contract.hop)
         if self.overparam:
@@ -338,7 +356,7 @@ class VaaniFE(nn.Module):
                 x = _at_least_fp32(x)
             s = (F.conv1d(x * x, self.w_pair) + EPS) ** ((ALPHA - 1) / 2)       # |X|^(alpha-1) per channel
             xc = x * s
-        pc = xc[:, :2]
+        pc = F.conv1d(xc, self.w_sel_p) if self.freq_windows is not None else xc[:, :2]
         if not self.uses_ref:
             return xc, pc
         vb = v.reshape(-1, 1, 1)
@@ -348,15 +366,16 @@ class VaaniFE(nn.Module):
             planes.append(nd[:, :1] / (nd[:, 1:] + EPS) * vb)
         if self.freq_windows is None:
             planes.append(torch.zeros(1, 1, N_BINS, dtype=x.dtype, device=x.device) + vb)
-        return torch.cat(planes, 1), pc
+        return (planes[0] if len(planes) == 1 else torch.cat(planes, 1)), pc
 
     def _encode(self, planes, v=None):
         if self.freq_windows is None:
             x = self.pre(planes)
         else:
-            x = torch.cat([conv(planes[..., b0:b1]) for conv, (_, b0, b1, _, _) in zip(self.inp, self.res)], -1)
+            parts = torch.split(planes, self._in_split, -1)                     # one Split, not a Slice per window
+            x = torch.cat([conv(parts[k]) for k, conv in enumerate(self.inp)], -1)
             if self.valid_vec is not None:
-                x = x + self.valid_vec(v)[..., None]        # == a convolved constant validity plane, C1 MACs
+                x = x + self.valid_vec(v.reshape(-1, 1, 1))   # == a convolved constant validity plane, C1 MACs
             x = F.relu(self.pre_norm(x))
         skips = [x]
         for c in self.enc:
@@ -374,22 +393,29 @@ class VaaniFE(nn.Module):
         if self.freq_windows is None:
             m = self.up(x)                                                     # (N, 2, 257)
         else:
-            m = torch.cat([up(x[..., p0:p1]) for up, (_, _, _, p0, p1) in zip(self.outs, self.res)]
+            xs = torch.split(x, self._pos_split, -1)
+            m = torch.cat([up(xs[k]) for k, up in enumerate(self.outs)]
                           + [x.new_zeros(x.shape[0], 2, 1) + self.nyq.reshape(1, 2, 1)], -1)
         if self.mask_kind == "bounded":
             mag = torch.sqrt(F.conv1d(m * m, self.w_pair2) + EPS)
             m = m * (torch.tanh(mag) / mag)
         y = F.conv1d(m, self.w_rr) * pc + F.conv1d(m, self.w_ii) * F.conv1d(pc, self.w_j)  # complex M*Pc
-        if self.df_taps:
+        if self.df_taps and self.df_fixed:
+            # pc_hist (N, 2T, db): planes [h0r, h0i, h1r, h1i, ...] per tap lag; w the same layout
             db = self.df_bins
             if self.freq_windows is None:
                 w = self.df(x[..., :db // 4])
             else:
-                w = torch.cat([df(x[..., p0:p1]) for df, (_, _, _, p0, p1) in zip(self.df, self.df_res)], -1)
-            w = w.reshape(-1, self.df_taps, 2, db)
+                w = torch.cat([df(xs[k]) for k, df in enumerate(self.df)], -1)
+            prod = pc_hist * w                                                 # [hr wr, hi wi, ...]
+            cross = pc_hist * F.conv1d(w, self.w_df_swap)                      # [hr wi, hi wr, ...]
+            low = F.conv1d(prod, self.w_df_re) + F.conv1d(cross, self.w_df_im)
+            y = torch.cat([low, torch.split(y, [db, N_BINS - db], -1)[1]], -1)
+        elif self.df_taps:
+            w = self.df(x[..., :DF_BINS // 4]).reshape(-1, self.df_taps, 2, DF_BINS)
             wr, wi, hr, hi = w[:, :, 0], w[:, :, 1], pc_hist[:, :, 0], pc_hist[:, :, 1]
             low = torch.stack([(hr * wr - hi * wi).sum(1), (hr * wi + hi * wr).sum(1)], 1)
-            y = torch.cat([low, y[..., db:]], -1)
+            y = torch.cat([low, y[..., DF_BINS:]], -1)
         return y
 
     def _decompress(self, y):
@@ -427,8 +453,11 @@ class VaaniFE(nn.Module):
         if self.df_taps:
             db = self.df_bins
             low = pc[..., :db].reshape(b, t, 2, db)
-            hist = torch.stack([F.pad(low, (0, 0, 0, 0, d, 0))[:, :t] for d in self.df_lags], 2)
-            hist = hist.reshape(n, self.df_taps, 2, db)
+            if self.df_fixed:
+                hist = torch.cat([F.pad(low, (0, 0, 0, 0, d, 0))[:, :t] for d in self.df_lags], 2).reshape(n, 2 * self.df_taps, db)
+            else:
+                hist = torch.stack([F.pad(low, (0, 0, 0, 0, d, 0))[:, :t] for d in self.df_lags], 2)
+                hist = hist.reshape(n, self.df_taps, 2, db)
         out = self._decompress(self._decode(tok, skips, pc, hist))
         return out.reshape(b, t, 2, nb).permute(0, 3, 1, 2)
 
@@ -445,13 +474,18 @@ class VaaniFE(nn.Module):
             new.append(h.reshape(b, fc))
             tok = blk.freq(tok + blk.rnn_fc(h), b, self.f)
         hist = None
-        if self.df_taps:
-            fb, ml = 2 * self.df_bins, self.df_max_lag
-            cur = pc[..., :self.df_bins].reshape(b, fb)
-            cache = state[:, self.hidden_size:]                                 # oldest first: lags ml .. 1
-            frames = [cur if d == 0 else cache[:, (ml - d) * fb:(ml - d + 1) * fb] for d in self.df_lags]
-            hist = torch.stack(frames, 1).reshape(b, self.df_taps, 2, self.df_bins)
-            new.append(torch.cat([cache[:, fb:], cur], 1))                      # Slice+Concat, no ScatterND
+        if self.df_taps and self.df_fixed:
+            db, ml = self.df_bins, self.df_max_lag
+            cur = torch.split(pc, [db, N_BINS - db], -1)[0]                    # (b, 2, db)
+            cache = state[:, self.hidden_size:].reshape(b, 2 * ml, db)         # oldest first: lags ml .. 1
+            hist = torch.cat([cur, F.conv1d(cache, self.w_df_sel)], 1)          # (b, 2T, db), lags in df_lags order
+            new.append(torch.cat([cache[:, 2:], cur], 1).reshape(b, 2 * ml * db))
+        elif self.df_taps:
+            cur = pc[..., :DF_BINS].reshape(b, 2 * DF_BINS)
+            cache = state[:, self.hidden_size:]                                 # oldest first
+            frames = [cur] + [cache[:, j * 2 * DF_BINS:(j + 1) * 2 * DF_BINS] for j in range(self.df_taps - 2, -1, -1)]
+            hist = torch.stack(frames, 1).reshape(b, self.df_taps, 2, DF_BINS)
+            new.append(torch.cat([cache[:, 2 * DF_BINS:], cur], 1))             # Slice+Concat, no ScatterND
         out = self._decompress(self._decode(tok.reshape(b, self.f, self.c2), skips, pc, hist))
         return out, torch.cat(new, 1)
 
