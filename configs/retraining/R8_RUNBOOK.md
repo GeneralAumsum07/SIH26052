@@ -276,6 +276,39 @@ first-hour measurements before committing hours or money:
    the plan's order and record each cut: P4, Arm R seed 1, the Arm B and then the overparam early full runs, then
    Stage-2 items 5 and 4. Never cut P3, Stage-1 Arms A/B, the overparam screen or the C0 yardstick.
 
+**Comparisons (low-delay plan Task 9; `scripts/compare_r8_ld.py`).**
+
+1. Register D2 once, from C0 seeds 0 and 1, before any low-delay arm is scored. `register` refuses to overwrite an
+   existing registry.
+
+   ```bash
+   python scripts/compare_r8_ld.py register --c0-s0 C0_S0.csv --c0-s1 C0_S1.csv --out results_r2/r8_ld/compare/registry.json
+   ```
+
+2. Score every arm and seed on the frozen validation split. Each per-clip table needs `speech_loss`. Add the
+   `modindex` columns where the WAVs are kept.
+3. Each comparison is a manifest (format in the script's docstring). Run
+   `compare MANIFEST --registry ... --out results_r2/r8_ld/compare/<name>` for:
+   - the Stage-2 screens;
+   - Stage 1;
+   - the five-seed confirmation against C0;
+   - Arm A against Arm R;
+   - C0 against r7 and the final candidate against r7. For these two, r7 is re-scored on the same validation clips,
+     and its exposure differences are disclosed in the manifest.
+
+The script refuses:
+- unmatched clips or populations;
+- different metric definitions or `perf.numerics`;
+- undisclosed exposure differences;
+- unpaired seeds;
+- a confirmation with fewer than five seeds.
+
+`freeze SELECTION --out results_r2/r8_ld/selection/<tier>.json` freezes a recipe only when all of these hold:
+- its Gate 0a, Gate A, spec 6.2 and export evidence passes;
+- the confirmation is non-inferior or better, or an owner decision states the gap.
+
+Every rejected variant is recorded with its reasons.
+
 ## 3. Val selection
 
 Each run writes `runs/<name>/best.pt`, chosen during training on val:
