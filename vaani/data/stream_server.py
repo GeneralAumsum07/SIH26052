@@ -130,7 +130,7 @@ class _Ring:
 
 
 def serve(cfg: dict, start_epoch: int = 0, n_slots: int = 64, max_readers: int = 32, workers: int = 4,
-          poll_s: float = 0.002, ready=None, stop_after: int | None = None):
+          poll_s: float = 0.002, ready=None, stop_after: int | None = None, render_device=None):
     """Render every batch of the stream in order into the ring (blocks). stop_after: batches (tests)."""
     import torch
     from torch.utils.data import DataLoader
@@ -141,7 +141,15 @@ def serve(cfg: dict, start_epoch: int = 0, n_slots: int = 64, max_readers: int =
     ds = DynamicMixDataset(d["manifests"], "train", d.get("bank"), MixConfig(**d.get("mix", {})), d.get("crop_s", 4.0),
                            d.get("epoch_len", 20000), cfg["seed"], **train.dataset_kwargs(cfg))
     bs = EpochBatchSampler(len(ds), cfg["batch_size"], start_epoch, cfg["epochs"])
-    dl = DataLoader(ds, batch_sampler=bs, collate_fn=collate, **runtime.loader_kwargs(workers, torch.device("cpu")))
+    render = ((cfg.get("perf") or {}).get("numerics") or {}).get("render", "cpu")
+    if render == "gpu":   # CPU workers emit recipes (every draw and read); the server renders them on its GPU
+        from vaani.data import mixer_gpu
+        rl = DataLoader(mixer_gpu.RecipeDataset(ds), batch_sampler=bs, collate_fn=mixer_gpu.collate_recipes,
+                        **runtime.loader_kwargs(workers, torch.device("cpu")))
+        dev = torch.device(render_device or ("cuda" if torch.cuda.is_available() else "cpu"))
+        dl = (mixer_gpu.render_and_finish(ds, recs, dev) for recs in rl)
+    else:
+        dl = DataLoader(ds, batch_sampler=bs, collate_fn=collate, **runtime.loader_kwargs(workers, torch.device("cpu")))
     sig = stream_signature(cfg)
     ring = shm = None
     seq = start_epoch * bs.batches_per_epoch

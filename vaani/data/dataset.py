@@ -328,6 +328,40 @@ class DynamicMixDataset(Dataset):
             imp, m = impulses.generate(rng, kind=kind); onsets = m["onsets_s"]
         return mix(rng, s, noises, imp, onsets, self.bank, self.cfg, scene=scene)
 
+    def recipe(self, idx):
+        """(epoch, i, mixer_gpu recipe) of item idx: every draw and audio read of __getitem__'s mixer v2 path, in the
+        same order, without rendering (perf.numerics.render: gpu). finish() then turns the rendered mix into the item."""
+        from vaani.data import mixer_gpu
+        if self.scene_pool is None:
+            raise ValueError("the GPU renderer covers mixer v2 only")
+        epoch, i = divmod(int(idx), self.epoch_len)
+        rng = np.random.default_rng([self.seed, epoch, i])
+        j = int(rng.integers(len(self.speech)))
+        s = _load(self.speech.path.iloc[j], self.n, rng, self.pack)
+        s = np.pad(s, (0, self.n - len(s)))
+        sid = str(self.speech.source_id.iloc[j]) if "source_id" in self.speech else ""
+        scene = sample_scene(rng, weights=self.scene_weights, crop_s=self.n / SR)
+        if LOMBARD_SPEECH.match(sid) is not None:
+            scene["speech_lombard"] = True
+        rows, imp_row = self.scene_pool.draw(rng, scene)
+        keep = [k for k, r in enumerate(rows) if r is not None]
+        scene["sources"] = [scene["sources"][k] for k in keep]
+        noises = [_load(rows[k].path, self.n, rng, self.pack) for k in keep]
+        imp, onsets = None, []
+        ev = scene.get("event") or {}
+        if imp_row is not None:
+            imp = _load(imp_row.path, 2 * SR, rng, self.pack)
+            imp = imp if imp.ndim == 1 else imp[:, 0]
+            imp = imp / (np.abs(imp).max() + 1e-9); onsets = impulses.detect_onsets(imp, SR)
+        elif ev.get("fired"):
+            kind = str(rng.choice(self.cfg.impulse_kinds)) if self.cfg.impulse_kinds else None
+            imp, m = impulses.generate(rng, kind=kind); onsets = m["onsets_s"]
+        return epoch, i, mixer_gpu.mix_v2_recipe(rng, s, noises, imp, onsets, self.bank, self.cfg, scene=scene)
+
+    def finish(self, epoch, i, mixed, clean, meta):
+        """A rendered item through the rest of __getitem__ (reference faults, front end): the CPU half after the GPU."""
+        return self._finish(epoch, i, mixed, clean, meta)
+
     def _finish(self, epoch, i, mixed, clean, meta):
         avail = None
         if self.ref_corrupt is not None:

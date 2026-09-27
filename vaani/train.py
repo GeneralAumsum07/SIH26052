@@ -536,7 +536,12 @@ def main(config_path):
     if perf_ops is not None and reader is None:   # one sampler iterator over all epochs: workers never drain
         bsamp = EpochBatchSampler(len(ds), cfg["batch_size"], start_epoch, cfg["epochs"])
         assert bsamp.batches_per_epoch == steps_per_epoch
-        batches = iter(DataLoader(ds, batch_sampler=bsamp, collate_fn=collate, **lk))
+        if perf_num["render"] == "gpu":   # workers emit recipes; this process renders them on its device
+            from vaani.data import mixer_gpu
+            rl = DataLoader(mixer_gpu.RecipeDataset(ds), batch_sampler=bsamp, collate_fn=mixer_gpu.collate_recipes, **lk)
+            batches = (mixer_gpu.render_and_finish(ds, recs, device) for recs in rl)
+        else:
+            batches = iter(DataLoader(ds, batch_sampler=bsamp, collate_fn=collate, **lk))
     graphed = None
     if perf_num is not None and perf_num["cuda_graph"]:
         from vaani.train_graph import GraphedStep
