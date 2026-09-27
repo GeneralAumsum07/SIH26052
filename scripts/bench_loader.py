@@ -93,33 +93,45 @@ def limiter_only(kernels, subs=(32,), crop_s=4.0, crops=50, sr=16000, seed=0):
     return rows
 
 
-def step_time(cfg, batch, steps, warm):
-    """Median / mean seconds per optimiser step on one fixed batch; the first `warm` steps (cuDNN autotune) dropped."""
+def step_time(cfg, batch, steps, warm, device="cuda"):
+    """Median / mean seconds per optimiser step on one fixed batch; the first `warm` steps (cuDNN autotune) dropped.
+    device "cpu" only exercises the path (tests); the timings that size the rental are on the box's GPU."""
     from vaani import losses
-    dev = torch.device("cuda")
+    dev = torch.device(device); cuda = dev.type == "cuda"
+    sync = torch.cuda.synchronize if cuda else (lambda: None)
     cfg = dict(cfg); cfg["data"] = dict(cfg["data"], epoch_len=batch)
     ds = build_dataset(cfg); b = collate([ds[i] for i in range(batch)])
     model = train.build_model(cfg["model"], None, cfg.get("model_cfg")).to(dev).train()
     lc = cfg.get("loss_cfg", {})
-    loss_fn = (losses.build_loss("fe", lc) if cfg["loss"] == "fe" else losses.HybridLoss(**lc)).to(dev)
+    # the low-delay framing trains through its re-synthesis loss on its own contract's frames, as vaani/train.py does
+    contract = train.contract_of(cfg.get("model_cfg")) if cfg["model"] == "vaani_fe" else None
+    low_delay = contract is not None and not contract.is_legacy
+    if low_delay:
+        from vaani.enhance_low_delay import build_fe_loss
+        loss_fn = build_fe_loss({k: v for k, v in lc.items() if k != "loss_domain"}, cfg.get("model_cfg"),
+                                lc.get("loss_domain", "resynthesis")).to(dev)
+    else:
+        loss_fn = (losses.build_loss("fe", lc) if cfg["loss"] == "fe" else losses.HybridLoss(**lc)).to(dev)
     opt = torch.optim.AdamW(model.parameters(), lr=1e-5)
-    inputs, target, fw, is_clean = train.prepare_batch(b, cfg["model"], dev)
-    torch.cuda.reset_peak_memory_stats(); ts = []
+    inputs, target, fw, is_clean = train.prepare_batch(b, cfg["model"], dev, contract=contract)
+    if cuda:
+        torch.cuda.reset_peak_memory_stats()
+    ts = []
     for k in range(warm + steps):
-        torch.cuda.synchronize(); t0 = time.perf_counter()
-        with torch.autocast("cuda", dtype=torch.bfloat16):
+        sync(); t0 = time.perf_counter()
+        with torch.autocast(dev.type, dtype=torch.bfloat16, enabled=cuda):
             pred = model(*inputs)
-        loss = loss_fn(pred.float(), target, fw, is_clean)
+        loss = loss_fn(pred.float(), target, None, is_clean) if low_delay else loss_fn(pred.float(), target, fw, is_clean)
         opt.zero_grad(set_to_none=True); loss.backward(); opt.step()
-        torch.cuda.synchronize()
+        sync()
         if k >= warm:
             ts.append(time.perf_counter() - t0)
     ts.sort(); med = ts[len(ts) // 2]
     return dict(config=None, model=cfg["model"], model_cfg=cfg.get("model_cfg"), loss=cfg["loss"],
                 params=sum(p.numel() for p in model.parameters()), batch=batch, crop_s=cfg["data"].get("crop_s", 4.0),
                 steps_timed=steps, warmup_steps=warm, step_s_median=round(med, 4), step_s_mean=round(sum(ts) / len(ts), 4),
-                items_per_s_gpu=round(batch / med, 1), peak_mem_gb=round(torch.cuda.max_memory_allocated() / 2**30, 2),
-                gpu=torch.cuda.get_device_name(0))
+                items_per_s_gpu=round(batch / med, 1), peak_mem_gb=round(torch.cuda.max_memory_allocated() / 2**30, 2) if cuda else None,
+                gpu=torch.cuda.get_device_name(0) if cuda else "cpu")
 
 
 def main(argv=None):

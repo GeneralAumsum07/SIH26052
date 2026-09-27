@@ -185,6 +185,10 @@ Caveats:
 
 ## 2. Schedule (plan 11.6; per GPU, `scripts/run_r8.sh`)
 
+**Superseded by D4 (low-delay plan).** The legacy queue now holds only C0: `ab1_fe_mini_s0/s1`, then the full
+`r8_fe_mini`, on GPU 0. The table below is the pre-D4 schedule, kept for the record. Do not reuse its hours: the
+low-delay queue and its time estimate are in section 2b.
+
 | Hours | GPU0 | GPU1 |
 |---|---|---|
 | 0-12 | ab1_fe_mini_s0/s1, ab2_pr_nhat_s0/s1, ab2_p_s0/s1, ab2_pr_pld_s0/s1, ab4_* | ab1_refvalid_s0/s1, ab3b_*, ab3_*, ab6_* |
@@ -205,6 +209,72 @@ the box is not loader-bound and the sizing above is pessimistic.
 
 Pull `best.pt`, `last.pt` and `run.json` off the box after each run finishes, not at the end. Stop, do not destroy, the
 instance between sessions: the corpus and the pack are expensive to rebuild.
+
+## 2b. Low-delay queue (low-delay plan Task 8; `scripts/run_r8.sh ld-*`)
+
+The product of r8 is the low-delay Mini. Its pilots, confirmations, P4 ablations and full runs are generated into
+`r8_ld_ablations/` (arm table: `r8_ld_ablations/README.md`), and the Gate 0a record gates them all.
+
+```bash
+python scripts/gen_r8_configs.py --low-delay --check     # the files match the Gate 0a selection and C0
+bash scripts/run_r8.sh ld-plan all                       # lane, priority, wave, status, network, contract, run dir
+.venv/bin/python scripts/r8_preflight.py --low-delay --sample 50   # readiness evidence: runs/r8_queue/preflight_ld.json
+bash scripts/run_r8.sh ld-start pilots                   # wave 1 pilots in tmux session "r8ld"
+bash scripts/run_r8.sh ld-decide stage1 arm_a            # after Stage 1; stops the runs the decision rules out
+bash scripts/run_r8.sh ld-decide stage2 ld_s2_overparam  # or "none"; then, for wave 2:
+python scripts/gen_r8_configs.py --low-delay --promote ld_s2_overparam
+bash scripts/run_r8.sh ld-go-full                        # the owner's explicit release of the full runs
+bash scripts/run_r8.sh ld-start full                     # needs the release and a preflight pass younger than 24 h
+bash scripts/run_r8.sh ld-status
+```
+
+- **Gate 0a first.** `ld-start` refuses, before creating any session, until `results_r2/r8_ld/gate0/eligibility.json`
+  is `complete` with a non-provisional selection. The committed record is `pending_board`: the board measurements
+  (cyclictest, the 1 ms period test, the ARM step timings) are the owner's. Its provisional selection is L = 8 ms,
+  because the period test is unverified. Arm B is not piloted. With the Section 4 converter upper estimate of 0.5 ms,
+  L = 10 ms totals 13.007 ms and is not eligible, so L = 9 ms is the longest eligible support even with verified 1 ms
+  periods. Only a Gate 0b converter measurement can make L = 10 ms (and Arm B) eligible. After the record is
+  complete, regenerate with `--low-delay` and commit the result.
+- **Resolution.** Each registered name (`LD_P1..LD_P4`, `LD_FULL` in run_r8.sh) resolves to exactly one file. C0
+  seeds 0/1 come from `r8_ablations/`, C0 seeds 2-4 and the low-delay arms from `r8_ld_ablations/`, and the full runs
+  from this directory. A missing or ambiguous file fails the queue, and nothing substitutes for it. C0 runs share
+  their run directories with the legacy queue, so neither queue trains them twice.
+- **Lanes.** `LD_GPUS` (default: `nvidia-smi -L`) × `LD_SLOTS` (default 1; set it from the first-hour concurrency
+  scan). Each lane claims the highest-priority runnable job with an atomic claim. Full runs are pinned to different
+  GPUs where possible, and `LD_MPS_PCT` caps the pilots' `CUDA_MPS_ACTIVE_THREAD_PERCENTAGE`.
+- **CPU classes.** Worker shares are 2 / 1 / 1 / 0.5 of a lane's core share for P1 (full runs), P2 (Stage-1 and
+  Stage-2 pilots), P3 (confirmation) and P4 (Arm R, P4). The memory cap uses `VAANI_WORKER_RSS_GB`, and the nice
+  levels are 0 / 5 / 10 / 15.
+- **perf.ops.** The launcher sets them per run (`VAANI_PERF_OPS`: `LD_SCORER=async`, `LD_STREAM=shared`, the
+  priority). With `shared`, it starts one batch server per rendered stream plus one scorer. `perf.numerics` stays in
+  the files and must be identical across the arms, which the preflight checks.
+- **Preflight `--low-delay`.** This runs the checks above on the low-delay queue's configurations. It also checks:
+  - the generator `--check` and the Gate 0a record;
+  - every file's contract, contract hash and support against `arms.json`, and that Arm A names the selected support;
+  - spec 6.2 for the deployable arms (60,000 training-form entries, 90.706 MMAC/s at the contract's hop rate);
+  - identical `perf.numerics`, and the parity and G1 records under `results_r2/r8_ld/perf/` whenever `render: gpu` or
+    `gru_kernel: fused`;
+  - torch_pesq 0.1.2 and torchaudio 2.11;
+  - the low-delay bench outputs.
+
+  `r8_box_setup.sh` runs it after the legacy preflight. A failure there does not block the C0 queue.
+
+**Time and rental estimate: not yet measured.** No low-delay run has been timed on a GPU. The laptop CPU smoke of
+`bench_loader.step_time` only exercises the code path, and its timings are not reportable. The plan's queue simulation
+(Section 3.10) is an estimate on an example 4-GPU box, not a schedule for this one. Replace it with the box's
+first-hour measurements before committing hours or money:
+
+1. `scripts/r8_box_setup.sh`'s `ld_bench` stage writes three files:
+   - `results_r2/r8_ld/step_time_box.json`: the step time and peak memory of Arm A and Arm R at B32;
+   - `results_r2/r8_ld/loader_bench_box.json`: loader items/s against workers;
+   - `results_r2/r8_ld/loader_mem_box.json`: per-worker memory.
+2. Per run, GPU-hours ≈ `optimizer_steps` (`arms.json`: 30,000 per pilot, 200,000 per full run) × the measured step
+   time under the chosen concurrency ÷ 3600. A run is loader-bound instead when B32 ÷ loader items/s exceeds that
+   step time.
+3. The critical path is the first hour, then wave 1 (where the early full runs start), then the Stage-2 decisions,
+   then wave 2 (only if the promoted recipe has no early full run). If the measured total exceeds the rental, cut in
+   the plan's order and record each cut: P4, Arm R seed 1, the Arm B and then the overparam early full runs, then
+   Stage-2 items 5 and 4. Never cut P3, Stage-1 Arms A/B, the overparam screen or the C0 yardstick.
 
 ## 3. Val selection
 

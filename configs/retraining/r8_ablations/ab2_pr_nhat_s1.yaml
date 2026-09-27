@@ -40,6 +40,7 @@ dsp:
     block_margin_db: 10.0
     diff_jump_max_db: 3.0
   limiter: true
+  limiter_kernel: numba
   ref_policy:
     absent: freeze
     nlms: true
@@ -61,6 +62,7 @@ loss_cfg:
 model: vaani_fe
 model_cfg:
   df_taps: 0
+  fp32_islands: true
   inputs: pr_nhat
   mask: unbounded
   norm: bn
@@ -71,6 +73,16 @@ optim:
   clip: 5.0
   lr: 0.0005
   warmup: 2000
+perf:
+  numerics:
+    compile: false
+    cuda_graph: false
+    gru_kernel: cudnn
+    render: cpu
+  ops:
+    priority: 2
+    scorer: inline
+    stream: local
 resume: true
 seed: 1
 val:

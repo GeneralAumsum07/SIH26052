@@ -20,6 +20,21 @@ Checks (FAIL blocks the queue, WARN is printed and recorded):
   g1            the G1 result JSON exists, gate_pass is true, it scored >= 200 items on the full configs' bank
   smoke         (--smoke N) N training steps per config into runs/preflight_<name>
 Writes runs/preflight.json; exits 1 on any FAIL.
+
+--low-delay (plan Task 8): the configs become the low-delay queue's (configs/retraining/r8_ld_ablations/arms.json:
+the queued arms plus the D4 legacy C0 runs), the checks above run on them, and these are added:
+  ld_gen        gen_r8_configs.py --low-delay --check passes (no hand-edited or stale low-delay file)
+  queued        every queued arm's configuration exists (a missing one fails; nothing substitutes)
+  gate0         the Gate 0a record exists and is complete, and arms.json was generated from its selection
+  contract      each config names its recorded contract, the contract validates and hashes as recorded, its support
+                is the recorded one, and every Arm A configuration names Gate 0a's selected support
+  spec62        every deployable arm is within 60,000 training-form entries and 90.706 MMAC/s at its hop rate
+  numerics      perf.numerics is identical across the queued arms (they are all compared with C0)
+  perf_parity   render: gpu needs its parity and G1 records; gru_kernel: fused needs its parity record
+  versions      torch_pesq 0.1.2 and torchaudio 2.11 (the PESQ-filter patch targets them)
+  evidence      the low-delay memory and throughput bench outputs exist (scripts/r8_box_setup.sh bench stage)
+It writes the readiness evidence the low-delay full queue requires (default runs/r8_queue/preflight_ld.json), with
+"status": "pass" only when nothing failed.
 """
 import argparse, glob, hashlib, json, os, random, shutil, subprocess, sys
 from pathlib import Path
@@ -41,6 +56,14 @@ KNOWN_BANKS = {"data/rirs/bank_r3.npz": "e4e67463072e1dca14b94bef97a99bb85da34eb
 # recomputed by scripts/verify_eval_set.py on the laptop copy, 2026-09-25 (1,480 items)
 EVAL_HASHES = {"data/eval_r2/val": "b5f7a4d43bee"}
 FIRST_JOBS = ["ab1_fe_mini_s0", "ab1_refvalid_s0"]   # heads of the two GPU queues in scripts/run_r8.sh
+LD_ARMS = "configs/retraining/r8_ld_ablations/arms.json"
+LD_GATE0 = "results_r2/r8_ld/gate0/eligibility.json"
+LD_READY = "runs/r8_queue/preflight_ld.json"
+LD_PERF = "results_r2/r8_ld/perf"   # render_parity.json, render_g1.json, gru_parity.json (Task 4b)
+LD_EVIDENCE = ("results_r2/r8_ld/loader_bench_box.json", "results_r2/r8_ld/step_time_box.json",
+               "results_r2/r8_ld/loader_mem_box.json")
+SPEC62 = dict(params_training_form=60000, mmac_per_s=90.706)   # spec 6.2 budgets
+PINS = {"torch_pesq": "0.1.2", "torchaudio": "2.11"}          # versions the PESQ-filter patch targets
 
 
 class Report:
@@ -230,6 +253,135 @@ def check_g1(root, cfgs, rep, path):
     rep.add("g1", "FAIL" if probs else "ok", path, "; ".join(probs) or f"pass, seed {j.get('seed')}, {items} items")
 
 
+def ld_records(root):
+    j = json.loads((root / LD_ARMS).read_text(encoding="utf-8"))
+    return j, {r["name"]: r for r in j["arms"]}
+
+
+def ld_configs(root):
+    """The low-delay queue's configurations: every queued arm (C0 seeds 0/1 and r8_fe_mini included)."""
+    _, arms = ld_records(root)
+    return sorted({r["config"] for r in arms.values() if r.get("queued")})
+
+
+def _version(dist):
+    import importlib.metadata as md
+    for d in (dist, dist.replace("_", "-")):
+        try:
+            return md.version(d)
+        except md.PackageNotFoundError:
+            continue
+    return None
+
+
+def check_low_delay(root, rep, gate0=LD_GATE0, skip=()):
+    """The low-delay additions (module doc). Every check reads committed files or this box; none trains."""
+    def want(name):
+        return name not in skip
+    if want("ld_gen"):
+        r = subprocess.run([sys.executable, "scripts/gen_r8_configs.py", "--low-delay", "--check"], cwd=root,
+                           capture_output=True, text=True)
+        rep.add("ld_gen", "ok" if r.returncode == 0 else "FAIL", "gen_r8_configs.py --low-delay --check",
+                (r.stdout + r.stderr).strip().splitlines()[-1] if (r.stdout + r.stderr).strip() else f"rc {r.returncode}")
+    if not (root / LD_ARMS).exists():
+        rep.add("queued", "FAIL", LD_ARMS, "missing: run scripts/gen_r8_configs.py --low-delay"); return
+    meta, arms = ld_records(root)
+    queued = {n: r for n, r in arms.items() if r.get("queued")}
+    present = {}
+    for n, r in sorted(queued.items()):
+        if (root / r["config"]).exists():
+            present[n] = (r, yaml.safe_load(open(root / r["config"], encoding="utf-8")))
+        elif want("queued"):
+            rep.add("queued", "FAIL", n, f"{r['config']} missing (the queue fails; nothing substitutes)")
+    if want("queued") and len(present) == len(queued):
+        rep.add("queued", "ok", f"{len(queued)} queued arms", "every configuration present")
+    sel = None
+    if want("gate0"):
+        g = root / gate0
+        if not g.exists():
+            rep.add("gate0", "FAIL", gate0, "missing: no low-delay compute before Gate 0a (scripts/ld_gate0.py)")
+        else:
+            j = json.loads(g.read_text(encoding="utf-8")); s = j.get("selection") or {}
+            sel = s.get("support_contract")
+            probs = []
+            if j.get("status") != "complete" or s.get("provisional"):
+                probs.append(f"status {j.get('status')}{' (provisional selection)' if s.get('provisional') else ''}")
+            if s.get("mini_p18_fails_8ms"):
+                probs.append("Mini-P18 fails at 8 ms: returned to the owner")
+            if (meta.get("gate0") or {}).get("support_contract") != sel:
+                probs.append(f"arms.json generated for {(meta.get('gate0') or {}).get('support_contract')}, "
+                             f"Gate 0a selects {sel}: regenerate")
+            rep.add("gate0", "FAIL" if probs else "ok", gate0, "; ".join(probs) or f"complete: {sel}")
+    if want("contract"):
+        from vaani import audio_contract as ac
+        for n, (r, c) in sorted(present.items()):
+            cid = (c.get("model_cfg") or {}).get("audio_contract")
+            probs = []
+            try:
+                con = ac.get_audio_contract(cid); con.validate()
+            except Exception as e:   # noqa: BLE001 - an unknown or altered contract
+                rep.add("contract", "FAIL", n, f"{cid}: {e}"); continue
+            if con.audio_contract_id != r.get("audio_contract"):
+                probs.append(f"names {con.audio_contract_id}, recorded {r.get('audio_contract')}")
+            if r.get("contract_hash") and con.contract_hash != r["contract_hash"]:
+                probs.append(f"contract hash {con.contract_hash} != recorded {r['contract_hash']}")
+            if abs(con.algorithmic_delay_ms - float(r.get("support_ms", -1))) > 1e-9:
+                probs.append(f"support {con.algorithmic_delay_ms} ms != recorded {r.get('support_ms')} ms")
+            if r.get("arm") == "arm_a" and sel is not None and con.audio_contract_id != sel:
+                probs.append(f"Arm A names {con.audio_contract_id}, Gate 0a selects {sel}")
+            if r.get("arm") == "arm_a" and con.audio_contract_id not in ac.ARM_A_IDS:
+                probs.append(f"Arm A contract {con.audio_contract_id} is not an Arm A support")
+            rep.add("contract", "FAIL" if probs else "ok", n, "; ".join(probs) or f"{con.audio_contract_id}")
+    if want("spec62"):
+        from vaani.models import vaani_fe
+        for n, (r, c) in sorted(present.items()):
+            if not r.get("deployable"):
+                continue
+            s = vaani_fe.summary(vaani_fe.from_arch(c["model_cfg"]))
+            over = [f"{k} {s[k]:g} > {v:g}" for k, v in SPEC62.items() if s[k] > v]
+            rep.add("spec62", "FAIL" if over else "ok", n, "; ".join(over) or
+                    f"{s['params_training_form']} entries, {s['mmac_per_s']:g} MMAC/s at {s['hops_per_s']:g} hops/s")
+    nums = {n: json.dumps(train_perf(c)["numerics"], sort_keys=True) for n, (r, c) in present.items()}
+    if want("numerics"):
+        groups = {}
+        for n, v in nums.items():
+            groups.setdefault(v, []).append(n)
+        if len(groups) > 1:
+            rep.add("numerics", "FAIL", "perf.numerics differs across compared arms",
+                    "; ".join(f"{k}: {sorted(v)[:3]}{'...' if len(v) > 3 else ''}" for k, v in groups.items()))
+        elif groups:
+            rep.add("numerics", "ok", f"{len(nums)} arms", next(iter(groups)))
+    if want("perf_parity"):
+        used = [u for u in (json.loads(v) for v in set(nums.values())) if u]
+        needs = []
+        if any(u["render"] == "gpu" for u in used):
+            needs += [("render_parity.json", "pass"), ("render_g1.json", "gate_pass")]
+        if any(u["gru_kernel"] == "fused" for u in used):
+            needs += [("gru_parity.json", "pass")]
+        for f, key in needs:
+            p = root / LD_PERF / f
+            ok = p.exists() and json.loads(p.read_text(encoding="utf-8")).get(key) is True
+            rep.add("perf_parity", "ok" if ok else "FAIL", f"{LD_PERF}/{f}", "" if ok else f"missing or {key} not true")
+        if not needs:
+            rep.add("perf_parity", "ok", "cuDNN GRU and CPU renderer", "no parity record needed")
+    if want("versions"):
+        for dist, pin in PINS.items():
+            v = _version(dist)
+            ok = v is not None and (v == pin or v.split("+")[0] == pin or v.startswith(pin + "."))
+            rep.add("versions", "ok" if ok else "FAIL", dist, f"{v} (want {pin})")
+    if want("evidence"):
+        for f in LD_EVIDENCE:
+            rep.add("evidence", "ok" if (root / f).exists() else "FAIL", f,
+                    "" if (root / f).exists() else "missing: run the bench stage (scripts/r8_box_setup.sh)")
+
+
+def train_perf(cfg):
+    """perf settings as training resolves them; a config without the block trains the legacy loop (numerics None)."""
+    from vaani import train as T
+    num, ops = T.perf_settings(cfg)
+    return dict(numerics=num, ops=ops)
+
+
 def smoke(root, cfgs, rep, steps):
     for src, c in cfgs.items():
         c = json.loads(json.dumps(c)); name = "preflight_" + c["name"]
@@ -399,7 +551,11 @@ def main(argv=None):
     ap.add_argument("--g1-items", type=int, default=G1_MIN_ITEMS)
     ap.add_argument("--mem-summary", nargs="+", metavar="LOG", help="summarise bench memwatch logs and exit")
     ap.add_argument("--mem-out", default="results_r2/r8/loader_mem_box.json")
+    ap.add_argument("--low-delay", action="store_true", help="the low-delay queue's configs and checks (module doc)")
+    ap.add_argument("--gate0", default=LD_GATE0, help="Gate 0a record (--low-delay)")
     a = ap.parse_args(argv)
+    if a.low_delay and a.json == "runs/preflight.json":
+        a.json = os.environ.get("LD_READY_JSON") or LD_READY
     root = Path(a.root).resolve()
     if a.mem_summary:
         s = {Path(p).stem: mem_summary(p) for p in a.mem_summary}
@@ -434,7 +590,7 @@ def main(argv=None):
             print(f"G1 manifest list unavailable: {e}", file=sys.stderr); g1 = []
         f, r = fetch_order(root, extra_manifests=g1); print("FIRST=" + ",".join(f)); print("REST=" + ",".join(r)); return 0
     skip = set(filter(None, a.skip.split(",")))
-    paths = a.config or default_configs(root)
+    paths = a.config or (ld_configs(root) if a.low_delay and (root / LD_ARMS).exists() else default_configs(root))
     cfgs = load_cfgs(root, paths)
     rep = Report()
     cache_p = root / "data" / "rirs" / ".sha256_cache.json"
@@ -451,6 +607,8 @@ def main(argv=None):
     for name, fn in steps:
         if name not in skip:
             fn()
+    if a.low_delay:
+        check_low_delay(root, rep, a.gate0, skip)
     if a.smoke and not rep.failed():   # no GPU steps on a box whose inputs already failed
         smoke(root, cfgs, rep, a.smoke)
     try:
@@ -460,7 +618,10 @@ def main(argv=None):
     for r in rep.rows:
         print(f"{r['status']:4} {r['check']:9} {r['what']}  {r['detail']}")
     out = root / a.json; out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(dict(configs=paths, rows=rep.rows, failed=len(rep.failed())), indent=1))
+    import time
+    out.write_text(json.dumps(dict(configs=paths, rows=rep.rows, failed=len(rep.failed()),
+                                   status="fail" if rep.failed() else "pass", low_delay=a.low_delay,
+                                   skipped=sorted(skip), written=time.strftime("%Y-%m-%dT%H:%M:%S")), indent=1))
     bad = rep.failed()
     print(f"PREFLIGHT {'FAIL' if bad else 'PASS'}: {len(bad)} failed, "
           f"{sum(r['status'] == 'WARN' for r in rep.rows)} warnings, {len(paths)} configs")

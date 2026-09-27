@@ -235,10 +235,27 @@ bench() {  # the memory logs size run_r8.sh's VAANI_WORKER_RSS_GB (per-worker me
     --label "rental box GPU0" --configs configs/retraining/r8_fe_mini.yaml configs/retraining/r8_refvalid_v2.yaml
   "$PY" scripts/r8_preflight.py --mem-summary "$S/bench_mem_loader.log" "$S/bench_mem_step.log" --mem-out results_r2/r8/loader_mem_box.json
 }
+# the low-delay networks (Arm A at the selected support, Arm R) under the same memory log: the evidence the low-delay
+# preflight requires and the measured throughput the rental estimate is revised from (R8_RUNBOOK.md)
+LD_BENCH_CFGS=(configs/retraining/r8_ld_fe_mini.yaml configs/retraining/r8_ld_ablations/ld_r_s0.yaml)
+ld_bench() {
+  watched "$S/bench_mem_ld_loader.log" "$PY" scripts/bench_loader.py --out results_r2/r8_ld/loader_bench_box.json --workers 8 16 24 32 \
+    --batches 20 --label "rental box $(nproc) vCPU" --configs "${LD_BENCH_CFGS[@]}"
+  CUDA_VISIBLE_DEVICES=0 watched "$S/bench_mem_ld_step.log" "$PY" scripts/bench_loader.py --step-time \
+    --out results_r2/r8_ld/step_time_box.json --label "rental box GPU0" --configs "${LD_BENCH_CFGS[@]}"
+  "$PY" scripts/r8_preflight.py --mem-summary "$S/bench_mem_ld_loader.log" "$S/bench_mem_ld_step.log" \
+    --mem-out results_r2/r8_ld/loader_mem_box.json
+}
 [ "${SKIP_BENCH:-0}" = 1 ] || stage bench bench
+[ "${SKIP_BENCH:-0}" = 1 ] || stage ld_bench ld_bench
 PF=("$PY" scripts/r8_preflight.py --sample 50 --gpus "$GPUS" --g1 "$G1_JSON")
 [ -n "${PREFLIGHT_SMOKE:-}" ] && PF+=(--smoke "$PREFLIGHT_SMOKE")
 if [ "$MODE" = dry ]; then say "DRY preflight: ${PF[*]}"; else "${PF[@]}" || die "preflight FAILED (runs/preflight.json)"; fi
+# low-delay readiness evidence (runs/r8_queue/preflight_ld.json): its failure does not block the legacy C0 queue, and
+# the low-delay queue refuses without a fresh pass (Gate 0a pending is a FAIL here until the board record is complete)
+PFLD=("$PY" scripts/r8_preflight.py --low-delay --sample 50 --gpus "$GPUS" --g1 "$G1_JSON")
+if [ "$MODE" = dry ]; then say "DRY preflight-ld: ${PFLD[*]}"
+elif ! "${PFLD[@]}"; then say "WARNING: low-delay preflight FAILED (runs/r8_queue/preflight_ld.json): no low-delay full runs until it passes"; fi
 
 # --- 11. launch ----------------------------------------------------------------------------------------------------
 if [ $LAUNCH = 1 ]; then

@@ -196,29 +196,31 @@ def _g1(path, ok=True):
     path.write_text(json.dumps(dict(gate_pass=ok, seed=202, bank="bank_r3.npz", param=dict(items=200), room=dict(items=200))))
 
 
+D4_PILOTS = ["ab1_fe_mini_s0", "ab1_fe_mini_s1"]   # low-delay plan D4: C0 is the only legacy pilot left
+
+
 @pytest.mark.timeout(900)   # Git Bash forks slowly on a loaded Windows host
-def test_run_r8_dry_run_queues_both_gpus_in_priority_order(tmp_path):
+def test_run_r8_dry_run_queues_the_d4_pilots_in_priority_order(tmp_path):
     g1 = tmp_path / "g1.json"; _g1(g1)
     env = dict(DRY_RUN="1", RUNS_DIR=str(tmp_path / "runs"), G1_JSON=str(g1), WORKERS_GPU0="7", WORKERS_GPU1="5")
     r = _bash(["scripts/run_r8.sh", "start", "pilots"], env)
     assert r.returncode == 0, r.stdout + r.stderr
     dry = [ln for ln in r.stdout.splitlines() if ln.startswith("DRY gpu")]
-    g0 = [ln for ln in dry if ln.startswith("DRY gpu0")]; g1l = [ln for ln in dry if ln.startswith("DRY gpu1")]
-    assert "CUDA_VISIBLE_DEVICES=0 VAANI_WORKERS=7" in g0[0] and g0[0].endswith("ab1_fe_mini_s0.yaml")
-    assert "CUDA_VISIBLE_DEVICES=1 VAANI_WORKERS=5" in g1l[0] and g1l[0].endswith("ab1_refvalid_s0.yaml")
-    assert g0[2].endswith("ab2_pr_nhat_s0.yaml")   # the NLMS arm leads ablation 2
+    assert "CUDA_VISIBLE_DEVICES=0 VAANI_WORKERS=7" in dry[0] and dry[0].endswith("ab1_fe_mini_s0.yaml")
+    assert dry[1].endswith("ab1_fe_mini_s1.yaml") and len(dry) == 2, dry
     assert not any("r8_fe_mini.yaml" in ln or "r8_refvalid_v2.yaml" in ln for ln in dry)
-    # every generated pilot is queued exactly once, across both GPUs
+    # D4: the legacy queue holds C0 only; the refvalid arms and the 32 ms ab2-ab7 pilots are generated but not queued
     heads = [ln.split(": ", 1)[1].split() for ln in r.stdout.splitlines() if ln.startswith(("gpu0 workers", "gpu1 workers"))]
-    queued = heads[0] + heads[1]
-    stems = sorted(p.stem for p in (REPO / "configs/retraining/r8_ablations").glob("*.yaml"))
-    assert len(heads) == 2 and sorted(queued) == stems and len(set(queued)) == len(queued), heads
-    # a finished run is skipped, and `next` names the head of each queue
+    assert len(heads) == 2 and heads[0] == D4_PILOTS and heads[1] == [], heads
+    stems = {p.stem for p in (REPO / "configs/retraining/r8_ablations").glob("*.yaml")}
+    assert set(D4_PILOTS) <= stems and not any(s in r.stdout for s in stems - set(D4_PILOTS)), r.stdout
+    # a finished run is skipped, and `next` names the head of the queue
     (tmp_path / "runs/ab1_fe_mini_s0").mkdir(parents=True); (tmp_path / "runs/ab1_fe_mini_s0/DONE").write_text("x")
     n = _bash(["scripts/run_r8.sh", "next"], env)
-    assert "gpu0 PENDING ab1_fe_mini_s1" in n.stdout and "gpu1 PENDING ab1_refvalid_s0" in n.stdout, n.stdout
+    assert "gpu0 PENDING ab1_fe_mini_s1" in n.stdout and "gpu1" not in n.stdout, n.stdout
     s = _bash(["scripts/run_r8.sh", "status"], env)
-    assert "DONE     ab1_fe_mini_s0" in s.stdout and "G1: gate_pass True" in s.stdout, s.stdout
+    assert "DONE     ab1_fe_mini_s0" in s.stdout and "PENDING  r8_fe_mini" in s.stdout, s.stdout
+    assert "G1: gate_pass True" in s.stdout, s.stdout
 
 
 def _workers(tmp_path, meminfo=None, **env):
@@ -261,7 +263,7 @@ def test_run_r8_bad_worker_rss_keeps_the_default_cap(tmp_path, rss):
 
 
 @pytest.mark.timeout(900)
-def test_run_r8_queues_the_bank_arm_last_on_gpu0_once_generated(tmp_path):
+def test_run_r8_never_queues_the_bank_arm_or_dropped_pilots_under_d4(tmp_path):
     (tmp_path / "scripts").mkdir(); (tmp_path / "scripts/run_r8.sh").write_bytes((REPO / "scripts/run_r8.sh").read_bytes())
     a = tmp_path / "configs/retraining/r8_ablations"; a.mkdir(parents=True)
     stems = [p.stem for p in (REPO / "configs/retraining/r8_ablations").glob("*.yaml") if p.stem != "ab7_bank_r3"]
@@ -275,11 +277,8 @@ def test_run_r8_queues_the_bank_arm_last_on_gpu0_once_generated(tmp_path):
         heads = {ln.split(" workers ")[0]: ln.split(": ", 1)[1].split() for ln in r.stdout.splitlines()
                  if ln.startswith(("gpu0 workers", "gpu1 workers"))}
         dry0 = [ln for ln in r.stdout.splitlines() if ln.startswith("DRY gpu0")]
-        assert ("ab7_bank_r3" in heads["gpu1"]) is False and len(heads["gpu1"]) == 11, heads
-        if with_arm:
-            assert heads["gpu0"][-1] == "ab7_bank_r3" and len(heads["gpu0"]) == 12 and dry0[-1].endswith("ab7_bank_r3.yaml"), heads
-        else:
-            assert "ab7_bank_r3" not in heads["gpu0"] and len(heads["gpu0"]) == 11, heads
+        assert heads == {"gpu0": D4_PILOTS, "gpu1": []} and "ab7_bank_r3" not in r.stdout, heads
+        assert dry0[-1].endswith("ab1_fe_mini_s1.yaml"), dry0
 
 
 @pytest.mark.timeout(900)

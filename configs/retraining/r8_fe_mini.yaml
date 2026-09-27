@@ -18,6 +18,12 @@
 # mono/web-stereo dSNR filters), scored for the raw and the EMA weights every 4 val points and at the end.
 # Composite is the final selection rule (Rachit, 2026-09-25); val.select: stoi reverts to r7-style STOI selection.
 # lr 5e-4 / warmup 2,000 / EMA 0.999 are inferred starting points (FastEnhancer-style from-scratch training).
+# Framing-independent corrections (low-delay plan Task 8; they apply to C0 and every low-delay arm alike):
+# model_cfg.fp32_islands, the compiled limiter (dsp.limiter_kernel numba, within one float32 ulp of the loop,
+# Section 3.3) and the Task 4b perf block. perf.numerics can move results by rounding, is a resume key and
+# is identical across every compared arm (gen_r8_configs.py copies it from here); cudnn GRU and the CPU mixer until
+# the fused GRU / GPU renderer pass their parity tests (and G1 for the renderer). perf.ops is bit-exact: the box's
+# first hour sets it per run through VAANI_PERF_OPS (scripts/run_r8.sh), so these are only the defaults.
 amp: true
 batch_size: 32
 controller_on: true
@@ -54,6 +60,7 @@ data:
 device: cuda
 dsp:
   limiter: true
+  limiter_kernel: numba
   ref_policy:
     absent: freeze
     ramp_frames: 12
@@ -74,6 +81,7 @@ loss_cfg:
 model: vaani_fe
 model_cfg:
   df_taps: 0
+  fp32_islands: true
   inputs: pr
   mask: unbounded
   norm: bn
@@ -84,6 +92,16 @@ optim:
   clip: 5.0
   lr: 0.0005
   warmup: 2000
+perf:
+  numerics:
+    compile: false
+    cuda_graph: false
+    gru_kernel: cudnn
+    render: cpu
+  ops:
+    priority: 2
+    scorer: inline
+    stream: local
 resume: true
 seed: 0
 val:

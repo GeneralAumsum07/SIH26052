@@ -359,7 +359,12 @@ def perf_settings(cfg):
     if bad:
         raise ValueError(f"unknown perf keys {sorted(bad)}")
     num = {**PERF_NUMERICS, **(pf.get("numerics") or {})}
-    ops = {**PERF_OPS, **(pf.get("ops") or {})}
+    # ops are bit-exact and belong to the box (Section 3.10): the launcher sets them per run through VAANI_PERF_OPS
+    # (a JSON object) without touching the config; they never enter the resume keys
+    env_ops = json.loads(os.environ.get("VAANI_PERF_OPS") or "{}")
+    if not isinstance(env_ops, dict):
+        raise ValueError("VAANI_PERF_OPS must be a JSON object")
+    ops = {**PERF_OPS, **(pf.get("ops") or {}), **env_ops}
     for k in set(num) - set(PERF_NUMERICS):
         raise ValueError(f"unknown perf.numerics key {k!r}")
     for k in set(ops) - set(PERF_OPS):
@@ -520,7 +525,7 @@ def main(config_path):
                     amp=use_amp, start=t_start, best_metric="composite_val" if select == "composite" else "stoi_frozen_val_screen" if vc.get("eval_root") else "stoi_dynamic_val", best_val_stoi=best,
                     steps=step, wall_s=0.0, skipped_steps=0, rejected_steps=0, clipped_steps=0,
                     audio_contract=contract.audio_contract_id if contract is not None else None,
-                    perf=cfg.get("perf"))
+                    perf=cfg.get("perf"), perf_ops=perf_ops)
     run_info.update(schedule=schedule, history=history)
     json.dump(run_info, open(run_dir / "run.json", "w"), indent=2)
 

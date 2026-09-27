@@ -1,5 +1,12 @@
 # r8 ablation pilots (plan 11.6)
 
+**D4 (low-delay plan, decided):** only C0 stays in r8. The legacy queue (`scripts/run_r8.sh start`) now holds
+`ab1_fe_mini_s0/s1` and the full `r8_fe_mini`. The refvalid arms (`ab1_refvalid_*`, `r8_refvalid_v2`), the 32 ms
+ab2-ab6 pilots and `ab7_bank_r3` leave the queue. Their files stay here, are regenerated with the framing-independent
+corrections (`fp32_islands`, `limiter_kernel: numba`, the `perf` block), and still pass `--check`. The r8 recipe
+questions of ablations 3, 3b, 4 and 6 are ported to the low-delay Arm A as P4 (`../r8_ld_ablations/README.md`). The
+priority order and schedule below describe the pre-D4 queue.
+
 Pilots, not full runs: every config is **48 epochs = 15 % of the 320-epoch full schedule** (48 x 20,000 = 960,000
 items = 30,000 steps at B 32), mixer v2, held-out exclusion, EMA and composite val selection, exactly as the full
 configs `../r8_fe_mini.yaml` / `../r8_refvalid_v2.yaml` except for the one field each arm changes. Nothing here has been
@@ -37,8 +44,8 @@ Priority order when rental hours run short (plan 11.6):
 1 (gates the family), 3b, 2, 3, 4, 6, 7. Two seeds where listed; single-seed arms are read as directional only.
 
 Ablation 7 (decision 2026-09-26: separate the bank change from the recipe change) is written by
-`python scripts/gen_r8_configs.py --bank-arm`. Once `ab7_bank_r3.yaml` exists, `scripts/run_r8.sh` queues it last on
-GPU 0 (beside its baseline), `--check` and the box tests stage verify it like any pilot, and the box setup fetches
+`python scripts/gen_r8_configs.py --bank-arm`. Before D4, `scripts/run_r8.sh` queued it last on GPU 0 once
+`ab7_bank_r3.yaml` existed (under D4 it is not queued); `--check` and the box tests stage verify it like any pilot, and the box setup fetches
 bank_r3 as a trained-on bank. bank_r3 shares 1,394 rooms (27.9 %) with `bank.npz`, the bank of the eval_r2 val render
 that selects checkpoints (about 246 of 1,480 val items, inferred), while bank_r8 shares none
 (`results_r2/r8/banks/README.md`, `overlap_bank_r3.json`); on bank_r3 the M6 armoured scene/room pairing is also off
