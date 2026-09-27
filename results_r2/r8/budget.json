@@ -115,5 +115,240 @@
       "ref_extension_macs_per_hop": 156000,
       "within_budget": false
     }
+  ],
+  "vaani_fe_rows": [
+    {
+      "name": "C0 Mini (legacy 512/256)",
+      "model_cfg": {
+        "tier": "mini"
+      },
+      "audio_contract": "vaanife_r8_control_legacy512_h256_v1",
+      "hops_per_s": 62.5,
+      "matrix_macs_per_hop": 1116160,
+      "matrix_mmac_per_second": 69.76,
+      "entries_inference": 29274,
+      "entries_training_form": 29914,
+      "state_bytes": 3072,
+      "deployable": true,
+      "within_budget": true
+    },
+    {
+      "name": "Arm A Mini-P18 @ vaanife_ld_asym512_h96_s160_v1",
+      "model_cfg": {
+        "tier": "mini",
+        "audio_contract": "vaanife_ld_asym512_h96_s160_v1",
+        "freq_windows": "p18",
+        "valid_bias": true,
+        "df_bins": 96,
+        "df_lags": [
+          0,
+          3,
+          5
+        ]
+      },
+      "audio_contract": "vaanife_ld_asym512_h96_s160_v1",
+      "hops_per_s": 166.66666666666666,
+      "matrix_macs_per_hop": 521504,
+      "matrix_mmac_per_second": 86.917,
+      "entries_inference": 55222,
+      "entries_training_form": 55862,
+      "state_bytes": 6912,
+      "deployable": true,
+      "within_budget": true
+    },
+    {
+      "name": "Arm A Mini-P18 @ vaanife_ld_asym512_h96_s144_v1",
+      "model_cfg": {
+        "tier": "mini",
+        "audio_contract": "vaanife_ld_asym512_h96_s144_v1",
+        "freq_windows": "p18",
+        "valid_bias": true,
+        "df_bins": 96,
+        "df_lags": [
+          0,
+          3,
+          5
+        ]
+      },
+      "audio_contract": "vaanife_ld_asym512_h96_s144_v1",
+      "hops_per_s": 166.66666666666666,
+      "matrix_macs_per_hop": 521504,
+      "matrix_mmac_per_second": 86.917,
+      "entries_inference": 55222,
+      "entries_training_form": 55862,
+      "state_bytes": 6912,
+      "deployable": true,
+      "within_budget": true
+    },
+    {
+      "name": "Arm A Mini-P18 @ vaanife_ld_asym512_h96_s128_v1",
+      "model_cfg": {
+        "tier": "mini",
+        "audio_contract": "vaanife_ld_asym512_h96_s128_v1",
+        "freq_windows": "p18",
+        "valid_bias": true,
+        "df_bins": 96,
+        "df_lags": [
+          0,
+          3,
+          5
+        ]
+      },
+      "audio_contract": "vaanife_ld_asym512_h96_s128_v1",
+      "hops_per_s": 166.66666666666666,
+      "matrix_macs_per_hop": 521504,
+      "matrix_mmac_per_second": 86.917,
+      "entries_inference": 55222,
+      "entries_training_form": 55862,
+      "state_bytes": 6912,
+      "deployable": true,
+      "within_budget": true
+    },
+    {
+      "name": "Arm B Mini-P32 @ vaanife_ld_asym512_h128_s160_v1",
+      "model_cfg": {
+        "tier": "mini",
+        "audio_contract": "vaanife_ld_asym512_h128_s160_v1",
+        "freq_windows": "p32",
+        "valid_bias": true,
+        "df_bins": 144,
+        "df_lags": [
+          0,
+          2,
+          4
+        ]
+      },
+      "audio_contract": "vaanife_ld_asym512_h128_s160_v1",
+      "hops_per_s": 125.0,
+      "matrix_macs_per_hop": 697376,
+      "matrix_mmac_per_second": 87.172,
+      "entries_inference": 40302,
+      "entries_training_form": 40942,
+      "state_bytes": 7680,
+      "deployable": true,
+      "within_budget": true
+    },
+    {
+      "name": "Arm A Mini-P18 pr_nhat @ vaanife_ld_asym512_h96_s160_v1 (over the entry budget; not eligible)",
+      "model_cfg": {
+        "tier": "mini",
+        "audio_contract": "vaanife_ld_asym512_h96_s160_v1",
+        "inputs": "pr_nhat",
+        "freq_windows": "p18",
+        "valid_bias": true,
+        "df_bins": 96,
+        "df_lags": [
+          0,
+          3,
+          5
+        ]
+      },
+      "audio_contract": "vaanife_ld_asym512_h96_s160_v1",
+      "hops_per_s": 166.66666666666666,
+      "matrix_macs_per_hop": 537888,
+      "matrix_mmac_per_second": 89.648,
+      "entries_inference": 63158,
+      "entries_training_form": 63798,
+      "state_bytes": 6912,
+      "deployable": false,
+      "within_budget": false
+    },
+    {
+      "name": "Arm A Mini-P18 pr_nhat @ vaanife_ld_asym512_h96_s144_v1 (over the entry budget; not eligible)",
+      "model_cfg": {
+        "tier": "mini",
+        "audio_contract": "vaanife_ld_asym512_h96_s144_v1",
+        "inputs": "pr_nhat",
+        "freq_windows": "p18",
+        "valid_bias": true,
+        "df_bins": 96,
+        "df_lags": [
+          0,
+          3,
+          5
+        ]
+      },
+      "audio_contract": "vaanife_ld_asym512_h96_s144_v1",
+      "hops_per_s": 166.66666666666666,
+      "matrix_macs_per_hop": 537888,
+      "matrix_mmac_per_second": 89.648,
+      "entries_inference": 63158,
+      "entries_training_form": 63798,
+      "state_bytes": 6912,
+      "deployable": false,
+      "within_budget": false
+    },
+    {
+      "name": "Arm A Mini-P18 pr_nhat @ vaanife_ld_asym512_h96_s128_v1 (over the entry budget; not eligible)",
+      "model_cfg": {
+        "tier": "mini",
+        "audio_contract": "vaanife_ld_asym512_h96_s128_v1",
+        "inputs": "pr_nhat",
+        "freq_windows": "p18",
+        "valid_bias": true,
+        "df_bins": 96,
+        "df_lags": [
+          0,
+          3,
+          5
+        ]
+      },
+      "audio_contract": "vaanife_ld_asym512_h96_s128_v1",
+      "hops_per_s": 166.66666666666666,
+      "matrix_macs_per_hop": 537888,
+      "matrix_mmac_per_second": 89.648,
+      "entries_inference": 63158,
+      "entries_training_form": 63798,
+      "state_bytes": 6912,
+      "deployable": false,
+      "within_budget": false
+    },
+    {
+      "name": "Arm B Mini-P32 pr_nhat @ vaanife_ld_asym512_h128_s160_v1",
+      "model_cfg": {
+        "tier": "mini",
+        "audio_contract": "vaanife_ld_asym512_h128_s160_v1",
+        "inputs": "pr_nhat",
+        "freq_windows": "p32",
+        "valid_bias": true,
+        "df_bins": 144,
+        "df_lags": [
+          0,
+          2,
+          4
+        ]
+      },
+      "audio_contract": "vaanife_ld_asym512_h128_s160_v1",
+      "hops_per_s": 125.0,
+      "matrix_macs_per_hop": 713760,
+      "matrix_mmac_per_second": 89.22,
+      "entries_inference": 44142,
+      "entries_training_form": 44782,
+      "state_bytes": 7680,
+      "deployable": true,
+      "within_budget": true
+    },
+    {
+      "name": "Arm R Mini + P18 deep filter @ vaanife_ld_asym512_h96_s160_v1 (reference, never eligible)",
+      "model_cfg": {
+        "tier": "mini",
+        "audio_contract": "vaanife_ld_asym512_h96_s160_v1",
+        "df_bins": 96,
+        "df_lags": [
+          0,
+          3,
+          5
+        ]
+      },
+      "audio_contract": "vaanife_ld_asym512_h96_s160_v1",
+      "hops_per_s": 166.66666666666666,
+      "matrix_macs_per_hop": 1153024,
+      "matrix_mmac_per_second": 192.171,
+      "entries_inference": 30816,
+      "entries_training_form": 31456,
+      "state_bytes": 6912,
+      "deployable": false,
+      "within_budget": false
+    }
   ]
 }

@@ -178,6 +178,17 @@ def front_end(mixed, dsp_cfg=None, avail=None, contract=None, per_sample=False):
     return out, pipeline.frame_avail(av, n // stft.HOP + 1)
 
 
+def nhat_front_end(mixed, dsp_cfg, avail, contract, controller_on=True):
+    """Low-delay VaaniFE inputs pr_nhat (owner decision D5): the low-delay frontend with the decoupled-cadence NLMS
+    (vaani.dsp.decoupled_nlms), run hop by hop exactly as the stream runs it. Returns (mix (2, n), per-sample
+    availability (n,) uint8, n_hat (n,)); the mix equals front_end's for the same input."""
+    from vaani.dsp.low_delay_frontend import LowDelayFrontend
+    if contract is None or contract.is_legacy:
+        raise ValueError("nhat_front_end is for low-delay contracts; C0 pr_nhat runs pipeline.run")
+    y, av = LowDelayFrontend(contract, dsp_cfg, nhat=True, controller_on=controller_on).process_offline(mixed, avail)
+    return np.ascontiguousarray(y[:2]), av.astype(np.uint8), np.ascontiguousarray(y[2])
+
+
 class CachedScenePool(ScenePool):
     """Kept as a name for callers and tests: ScenePool now memoises _groups itself (same arrays, same order, so the
     rng draws and the mixtures are unchanged)."""
@@ -250,9 +261,9 @@ class DynamicMixDataset(Dataset):
         # prepare_batch reduces frame validity per contract; C0 keeps its legacy frame labels and adds "avail"
         from vaani.audio_contract import get_audio_contract
         self.contract = get_audio_contract(audio_contract)
+        # a low-delay loader with with_dsp runs the decoupled-cadence NLMS (inputs pr_nhat, D5), never pipeline.run
+        self.ld_nhat = not self.contract.is_legacy and bool(with_dsp)
         if not self.contract.is_legacy:
-            if with_dsp:
-                raise ValueError("the low-delay route supports inputs 'pr' without NLMS/features (plan D5)")
             pipeline.ramp_samples_of((dsp_cfg or {}).get("ref_policy"), self.contract)   # rejects ramp_frames
         # mixer v2 (M8): scenes draw their noise classes; v1 never builds or touches the pool
         self.scene_pool = CachedScenePool(self.noise) if cfg.version == 2 else None
@@ -368,7 +379,10 @@ class DynamicMixDataset(Dataset):
             mixed, avail, tr = corrupt_reference(np.random.default_rng([self.seed, epoch, i, REF_SEED]), mixed, clean, self.ref_corrupt)
             meta["ref_fault"] = tr
         out = {"mix": torch.from_numpy(mixed), "clean": torch.from_numpy(clean), "meta": meta}
-        if self.with_dsp:
+        if self.ld_nhat:
+            m2, av, nh = nhat_front_end(mixed, self.dsp_cfg, avail, self.contract, self.controller_on)
+            out["mix"], out["avail"], out["n_hat"] = torch.from_numpy(m2), torch.from_numpy(av), torch.from_numpy(nh)
+        elif self.with_dsp:
             r = pipeline.run(mixed, controller_on=self.controller_on, dsp_cfg=self.dsp_cfg, ref_avail=avail)
             out["n_hat"] = torch.from_numpy(r["n_hat"]); out["feats"] = torch.from_numpy(r["features"])
             out["mix"] = torch.from_numpy(r["mix"])   # the limited signal when the limiter is on

@@ -5,7 +5,8 @@ LowDelayStreamEngine(contract, backend).process(primary, reference, available) t
 the parity reference for the ORT graph and the native runtime, not the timing vehicle. Per hop (Section 3.1 order):
   0. (resampler) the 48 kHz hop is decimated to 16 kHz; availability is reduced per 16 kHz sample
   1. guards (optional) judge the raw hop; a hop they distrust is an absent hop (as the legacy trained path)
-  2. the shared frontend (vaani.dsp.low_delay_frontend.LowDelayFrontend): limiter, zeroing and reconnect ramp
+  2. the shared frontend (vaani.dsp.low_delay_frontend.LowDelayFrontend): limiter, zeroing and reconnect ramp; for
+     a model with inputs pr_nhat (6 raw channels, owner decision D5) also the decoupled-cadence NLMS's n_hat
   3. frame validity (StreamValidity: any unavailable real sample in the 512-sample support invalidates the frame)
   4. analysis: the H new samples join the retained K - H history; the last K samples are transformed
   5. one neural step through the backend (the recurrent state, deep-filter cache included, lives in its StreamState)
@@ -76,10 +77,10 @@ def _value(key: str, a: np.ndarray):
 
 
 class LowDelayStreamEngine:
-    SUBSTATE = ("frontend", "validity", "an_p", "an_r", "synth", "guards", "dec", "interp")
+    SUBSTATE = ("frontend", "validity", "an_p", "an_r", "an_n", "synth", "guards", "dec", "interp")
 
     def __init__(self, contract, backend, dsp: dict | None = None, guards: dict | bool | None = None,
-                 resampler=None):
+                 resampler=None, controller_on: bool = True):
         self.c = ac.get_audio_contract(contract)
         if self.c.is_legacy:
             raise ValueError("LowDelayStreamEngine runs low-delay contracts; C0 uses vaani.live.StreamEngine")
@@ -87,22 +88,28 @@ class LowDelayStreamEngine:
         if bc != self.c:
             raise ValueError(f"backend runs {getattr(bc, 'audio_contract_id', None)}, engine contract is "
                              f"{self.c.audio_contract_id}")
-        if getattr(backend, "kind", None) != bk.FE_KIND or getattr(backend, "n_raw", 4) != 4:
-            raise ValueError("the low-delay route runs VaaniFE inputs 'pr' (4 raw channels) only")
+        if getattr(backend, "kind", None) != bk.FE_KIND or getattr(backend, "n_raw", 4) not in (4, 6):
+            raise ValueError("the low-delay route runs VaaniFE inputs 'pr' (4 raw channels) or 'pr_nhat' (6) only")
         self.backend, self.hop = backend, self.c.hop
+        self.n_raw = getattr(backend, "n_raw", 4)
+        self.nhat = self.n_raw == 6
+        self.controller_on = bool(controller_on)
         self.dsp = dict(dsp or {})
         self.guards_cfg = guards or None
         self.resampler = resampler
         self.rate = 3 if resampler is not None else 1
         rid = None if resampler is None else resampler.id
-        self.config_hash = bk.config_hash(False, {"dsp": self.dsp, "guards": self.guards_cfg, "resampler": rid},
+        # the controller gates only the n_hat stage, so a 'pr' engine keeps its hash whatever controller_on says
+        self.config_hash = bk.config_hash(self.controller_on and self.nhat,
+                                          {"dsp": self.dsp, "guards": self.guards_cfg, "resampler": rid},
                                           ac.config_extra(self.c))
-        self.frontend = LowDelayFrontend(self.c, self.dsp)
+        self.frontend = LowDelayFrontend(self.c, self.dsp, nhat=self.nhat, controller_on=self.controller_on)
         self.validity = StreamValidity(self.c)
         self.an_p, self.an_r = StreamAnalyzer(self.c), StreamAnalyzer(self.c)
+        self.an_n = StreamAnalyzer(self.c) if self.nhat else None
         self.synth = StreamSynthesizer(self.c)
         self.state = backend.new_state(self.config_hash)
-        self._spec = np.zeros((1, 257, 1, 4), np.float32)              # reused per hop: no per-hop allocation
+        self._spec = np.zeros((1, 257, 1, self.n_raw), np.float32)     # reused per hop: no per-hop allocation
         self.reset()
 
     # ---- lifecycle ---------------------------------------------------------------------------------
@@ -115,12 +122,15 @@ class LowDelayStreamEngine:
         """A fresh stream: every piece of state back to its start (deterministic)."""
         self.frontend.reset(); self.validity.reset()
         self.an_p.reset(); self.an_r.reset(); self.synth.reset()
+        if self.an_n is not None:
+            self.an_n.reset()
         self.guards = self._new_guards()
         self.dec = self.interp = None
         if self.resampler is not None:
             self.dec, self.interp = self.resampler.decimator(2), self.resampler.interpolator(1)
         self.state = self.backend.new_state(self.config_hash)
         self._pend = np.zeros((2, 0), np.float32)
+        self._real = None                    # real samples of the hop being flushed (None = all)
         self._pend_av = np.zeros(0, bool)
         self.hops = 0
         self.last = {}
@@ -154,14 +164,20 @@ class LowDelayStreamEngine:
         v = self.validity.push(fr["valid"])                              # 3.
         P = self.an_p.push(fr["mix"][0])                                 # 4.
         R = self.an_r.push(fr["mix"][1])
+        N = None
+        if self.an_n is not None:
+            nh = fr["n_hat"]
+            if self._real is not None:                                   # the end-of-stream padding carries no n_hat,
+                nh = nh.copy()                                           # as the offline route (truncate, zero-pad)
+                nh[self._real:] = 0.0
+            N = self.an_n.push(nh)
         if fr["discontinuity"]:                                          # never into the recurrent model
             Y = P
             self.backend.reset(self.state)
             self.state.discontinuity_flags |= bk.DISC_GAP | bk.DISC_RESET
         else:
-            s = self._spec
-            s[0, :, 0, 0], s[0, :, 0, 1], s[0, :, 0, 2], s[0, :, 0, 3] = P.real, P.imag, R.real, R.imag
-            out = self.backend.step(s, None, self.state, v)              # 5.
+            self._fill(P, R, N)
+            out = self.backend.step(self._spec, None, self.state, v)     # 5.
             Y = out[0, :, 0, 0] + 1j * out[0, :, 0, 1]
         if self.guards is not None:
             self.guards.post(P, Y)
@@ -175,6 +191,12 @@ class LowDelayStreamEngine:
         if self.interp is not None:                                      # 7.
             return self.interp(y[None])[0]
         return y
+
+    def _fill(self, P, R, N=None):
+        s = self._spec
+        s[0, :, 0, 0], s[0, :, 0, 1], s[0, :, 0, 2], s[0, :, 0, 3] = P.real, P.imag, R.real, R.imag
+        if N is not None:
+            s[0, :, 0, 4], s[0, :, 0, 5] = N.real, N.imag
 
     # ---- arbitrary chunks, whole signals ---------------------------------------------------------------
     def push(self, primary, reference, available=True) -> np.ndarray:
@@ -197,14 +219,17 @@ class LowDelayStreamEngine:
         out = []
         if self._pend.shape[1]:
             pad = self.in_hop - self._pend.shape[1]
-            out.append(self.push(np.zeros(pad, np.float32), np.zeros(pad, np.float32), True))
+            self._real = -(-self._pend.shape[1] // (self.in_hop // self.hop))
+            try:
+                out.append(self.push(np.zeros(pad, np.float32), np.zeros(pad, np.float32), True))
+            finally:
+                self._real = None
         # the flush hop is synthetic padding: it bypasses the frontend, as the offline right padding does
         z = np.zeros(self.hop, np.float32)
         v = self.validity.push(np.ones(self.hop, bool))
         P, R = self.an_p.push(z), self.an_r.push(z)
-        s = self._spec
-        s[0, :, 0, 0], s[0, :, 0, 1], s[0, :, 0, 2], s[0, :, 0, 3] = P.real, P.imag, R.real, R.imag
-        o = self.backend.step(s, None, self.state, v)
+        self._fill(P, R, self.an_n.push(z) if self.an_n is not None else None)
+        o = self.backend.step(self._spec, None, self.state, v)
         y = self.synth.push(o[0, :, 0, 0] + 1j * o[0, :, 0, 1])
         out.append(self.interp(y[None])[0] if self.interp is not None else y)
         return np.concatenate(out)
@@ -273,4 +298,4 @@ class LowDelayStreamEngine:
         live.verify_onnx(onnx_path, cfg.get("onnx_sha256"))
         b = bk.FeOrtBackend(onnx_path, profile=cfg.get("profile"), audio_contract=c.audio_contract_id,
                             threads=kw.pop("threads", 1))
-        return cls(c, b, cfg["dsp"], **kw)
+        return cls(c, b, cfg["dsp"], controller_on=cfg["controller_on"], **kw)

@@ -50,7 +50,9 @@ checkpoints load unchanged):
                   resolution has its own strided input conv (kernel = stride = width, no padding) and transposed
                   output conv, so the mask keeps 31.25 Hz resolution. Bin 256's mask is a learned complex constant.
                   The validity plane is replaced by v x a learned C1-vector (valid_bias), equal to convolving a
-                  constant plane on unpadded windows at C1 MACs. Only inputs "p" and "pr".
+                  constant plane on unpadded windows at C1 MACs. Inputs "p", "pr" and "pr_nhat" (the decoupled-cadence
+                  NLMS output, owner decision D5; its RI planes add 2 x C1 x sum(widths) entries: Mini-P18 then exceeds
+                  spec 6.2's 60,000, Mini-P32 does not, scripts/audit_budget.py).
   df_bins, df_lags deep-filter band (bins 0..df_bins-1) and tap lags in frames (default 64 and 0..df_taps-1).
                   Mini-P18: 96 bins, lags (0, 3, 5); Mini-P32: 144 bins, lags (0, 2, 4). The cache holds max(lags)
                   past compressed low-band frames, oldest first.
@@ -229,8 +231,8 @@ class VaaniFE(nn.Module):
             raise ValueError(f"gru_init must be 'default' or 'tc_matched', got {gru_init!r}")
         if freq_windows is not None and freq_windows not in FREQ_WINDOWS:
             raise ValueError(f"freq_windows must be one of {sorted(FREQ_WINDOWS)} or absent, got {freq_windows!r}")
-        if freq_windows is not None and inputs not in ("p", "pr"):
-            raise ValueError("the Mini-P tiling supports inputs 'p' and 'pr' only")
+        if freq_windows is not None and inputs not in ("p", "pr", "pr_nhat"):
+            raise ValueError("the Mini-P tiling supports inputs 'p', 'pr' and 'pr_nhat' only")
         if freq_windows is None and valid_bias:
             raise ValueError("valid_bias belongs to the Mini-P tiling (freq_windows)")
         if overparam and norm != "bn":

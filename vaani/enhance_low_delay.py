@@ -6,7 +6,8 @@ physical evaluation) dispatches here on the model's audio contract:
               frame validity (pipeline.frame_avail), stft.istft
   low delay   enhance_low_delay: LowDelayFrontend, the asymmetric analysis, the model with per-contract frame
               validity, the explicit synthesis. It never calls the legacy transform on model output and never runs
-              the NLMS pipeline (tests/test_low_delay_eval.py).
+              the legacy NLMS pipeline (tests/test_low_delay_eval.py); inputs pr_nhat get n_hat from the frontend's
+              decoupled-cadence NLMS (vaani.dsp.decoupled_nlms, owner decision D5).
 Both routes then go through the same metric code on identical clips.
 
 Resampler in the loop (Section 4): with `resampler`, enhance_low_delay takes 48 kHz input, runs the pair's decimator
@@ -37,11 +38,13 @@ WARMUP_SAMPLES = 7680        # 480 ms past-context warm-up prefix (Stage-2 item 
 
 # ---- model inputs --------------------------------------------------------------------------------
 def ld_model_inputs(mix: torch.Tensor, avail: torch.Tensor | None, contract, n_raw: int = 4):
-    """(B, 2, N) processed mix, (B, N) per-sample availability -> (spec (B,257,T,n_raw), frame validity (B,T))."""
+    """(B, 2, N) processed mix ((B, 3, N) with n_hat for inputs pr_nhat), (B, N) per-sample availability ->
+    (spec (B,257,T,n_raw), frame validity (B,T))."""
     c = get_audio_contract(contract)
-    if n_raw != 4:
-        raise ValueError("the low-delay route supports inputs 'pr' (4 raw channels) only")
-    spec = torch.cat([ld.analyze(mix[:, 0], c), ld.analyze(mix[:, 1], c)], dim=-1)
+    if n_raw not in (4, 6) or mix.shape[1] != n_raw // 2:
+        raise ValueError(f"the low-delay route takes inputs 'pr' (2 channels) or 'pr_nhat' (3 channels with n_hat); "
+                         f"got {mix.shape[1]} channels for {n_raw} raw planes")
+    spec = torch.cat([ld.analyze(mix[:, i], c) for i in range(mix.shape[1])], dim=-1)
     valid = None if avail is None else ld.frame_validity(avail, c, spec.shape[2]).to(spec.dtype)
     return spec, valid
 
@@ -53,9 +56,10 @@ def _dsp_needs_nlms(cfg) -> bool:
 # ---- runners -----------------------------------------------------------------------------------
 @torch.no_grad()
 def enhance_low_delay(mix, available, model, contract, resampler=None, dsp_cfg=None, device=None,
-                      preprocessed=False):
+                      preprocessed=False, controller_on=True):
     """(2, N) mix (16 kHz; 48 kHz with `resampler`) + availability ((N,) bool or None) -> (y (N,), diagnostics).
-    preprocessed=True: `mix` is already the frontend output (validation screens cache it).
+    preprocessed=True: `mix` is already the frontend output (validation screens cache it; (3, N) with n_hat for a
+    model with inputs pr_nhat). controller_on gates the decoupled NLMS's adaptation (pr_nhat only).
     Diagnostics carry absolute input sample positions: for frame j, `computable_at` = (j+1)H - 1 and
     `release` = [(j+1)H - L, (j+2)H - L)."""
     c = get_audio_contract(contract)
@@ -65,6 +69,7 @@ def enhance_low_delay(mix, available, model, contract, resampler=None, dsp_cfg=N
     x = np.asarray(mix, np.float32)
     n_in = x.shape[1]
     av = np.ones(n_in, bool) if available is None else np.asarray(available, bool)
+    nhat = getattr(model, "n_raw", 4) == 6
     if resampler is not None:
         if n_in % 3:
             raise ValueError("48 kHz input length must be a multiple of 3")
@@ -74,11 +79,11 @@ def enhance_low_delay(mix, available, model, contract, resampler=None, dsp_cfg=N
     if n == 0:
         return np.zeros(n_in, np.float32), {"frames": 0}
     if not preprocessed:
-        x, av = LowDelayFrontend(c, dsp_cfg).process_offline(x, av)
+        x, av = LowDelayFrontend(c, dsp_cfg, nhat=nhat, controller_on=controller_on).process_offline(x, av)
     was = model.training
     model.eval()
     xt = torch.from_numpy(np.ascontiguousarray(x))[None].to(device)
-    spec, valid = ld_model_inputs(xt, torch.from_numpy(av)[None].to(device), c, getattr(model, "n_raw", 4))
+    spec, valid = ld_model_inputs(xt, torch.from_numpy(av)[None].to(device), c, 6 if nhat else 4)
     out = model(spec, None, valid).float()
     model.train(was)
     y, _ = ld.synthesize(out, [n], c)
@@ -134,8 +139,9 @@ def enhance_c0(mix, available, model, cfg, device=None):
 @torch.no_grad()
 def forward_fe_batch(model, cfg, mixes, avails=None, n_hats=None, device=None):
     """Frontend-processed clips of one length -> enhanced waveforms, batched (validation screens). mixes (B, 2, N),
-    avails (B, N) per-sample availability or None, n_hats (B, N) for C0 pr_nhat. Eval mode: BatchNorm uses its
-    running statistics, so every item equals its batch-1 forward."""
+    avails (B, N) per-sample availability or None, n_hats (B, N) for inputs pr_nhat (C0: pipeline.run's; low delay:
+    the frontend's decoupled NLMS). Eval mode: BatchNorm uses its running statistics, so every item equals its
+    batch-1 forward."""
     device = torch.device(device or "cpu")
     c = contract_of(cfg.get("model_cfg"))
     x = torch.as_tensor(np.ascontiguousarray(mixes, np.float32), device=device)
@@ -151,6 +157,8 @@ def forward_fe_batch(model, cfg, mixes, avails=None, n_hats=None, device=None):
         fa = None if av is None else ld.frame_validity(av, c, spec.shape[2])
         y = stft.istft(model(spec, None, fa).float(), length=n)
     else:
+        if n_hats is not None:
+            x = torch.cat([x, torch.as_tensor(np.asarray(n_hats, np.float32), device=device)[:, None]], 1)
         spec, valid = ld_model_inputs(x, av, c, getattr(model, "n_raw", 4))
         y, _ = ld.synthesize(model(spec, None, valid).float(), [n] * b, c)
     model.train(was)
@@ -164,7 +172,8 @@ def enhance_fe(mix, available, model, cfg, device=None, resampler=None):
         if resampler is not None:
             raise ValueError("resampler-in-the-loop scoring is defined for the low-delay route")
         return enhance_c0(mix, available, model, cfg, device)
-    return enhance_low_delay(mix, available, model, c, resampler, cfg.get("dsp"), device)[0]
+    return enhance_low_delay(mix, available, model, c, resampler, cfg.get("dsp"), device,
+                             controller_on=cfg.get("controller_on", True))[0]
 
 
 def load_fe_checkpoint(path, device="cpu"):

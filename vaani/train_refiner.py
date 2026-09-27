@@ -113,16 +113,21 @@ def _metric_item(args):
 
 
 def _fe_item(args):
-    """VaaniFE screen front end: the contract's front end (C0: front_end, or pipeline.run for pr_nhat), with per-sample
-    availability so the runner reduces frame validity per contract. Never the NLMS pipeline under a low-delay contract."""
+    """VaaniFE screen front end: the contract's front end (C0: front_end, or pipeline.run for pr_nhat; low delay: the
+    low-delay frontend, with the decoupled-cadence NLMS for pr_nhat), with per-sample availability so the runner
+    reduces frame validity per contract. Never the legacy NLMS pipeline under a low-delay contract."""
     mix, clean, cfg = args
     from vaani.audio_contract import contract_of
     from vaani.data.dataset import front_end
     c = contract_of(cfg.get("model_cfg"))
     out = {"clean": clean, "n": mix.shape[1], "avail": np.ones(mix.shape[1], np.uint8)}
-    if c.is_legacy and (cfg.get("model_cfg") or {}).get("inputs") == "pr_nhat":
+    nhat = (cfg.get("model_cfg") or {}).get("inputs") == "pr_nhat"
+    if c.is_legacy and nhat:
         r = pipeline.run(mix, controller_on=cfg["controller_on"], dsp_cfg=cfg.get("dsp"))
         out.update(mix=r["mix"], n_hat=r["n_hat"])
+    elif nhat:   # low delay: the decoupled-cadence NLMS in the frontend (D5)
+        from vaani.data.dataset import nhat_front_end
+        out["mix"], out["avail"], out["n_hat"] = nhat_front_end(mix, cfg.get("dsp"), None, c, cfg["controller_on"])
     else:
         out["mix"], out["avail"] = front_end(mix, cfg.get("dsp"), None, None if c.is_legacy else c, per_sample=True)
     return out

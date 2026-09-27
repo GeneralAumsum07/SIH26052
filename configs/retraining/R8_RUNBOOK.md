@@ -30,7 +30,12 @@ tests/test_train_smoke.py cover this). Whether r8 replaces r7 is Rachit's call a
 - **D5: the low-delay path uses the NLMS** (the hybrid path). This needs the decoupled-cadence NLMS (plan Section
   3.3): the NLMS runs sample by sample, its adaptation gate comes from the unchanged legacy features and controller on
   their own 256-sample cadence (completed past frames only), and n_hat enters the low-delay analysis as a channel.
-  Until it is built, the low-delay route accepts `inputs: pr` only.
+  Built (`vaani/dsp/decoupled_nlms.py`, tests `tests/test_decoupled_nlms.py`): hop-invariant, causal, bit-exact
+  with `pipeline.run` with the controller off, and with the legacy controller on its cadence. The low-delay loader,
+  runner, stream engine and eval accept `inputs: pr_nhat`; a low-delay `ref_policy` sets `ramp_samples`.
+  **Open (Rachit): the budget.** Mini-P18 with n_hat is 63,798 training-form entries (limit 60,000, not relaxed;
+  89.648 MMAC/s), so Arm A cannot take `pr_nhat` as is; Mini-P32 at Arm B is 44,782 entries, 89.220 MMAC/s, within
+  budget (`results_r2/r8/budget.md`). The LD queue configs stay on `inputs: pr` until Rachit picks a way forward.
 - **Compute authorization granted** for the r8 pilots and full runs.
 
 ## Before renting (Rachit's checklist)

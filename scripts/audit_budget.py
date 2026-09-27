@@ -59,6 +59,11 @@ def fe_rows():
     arms = [("C0 Mini (legacy 512/256)", {}, True)]
     arms += [(f"Arm A Mini-P18 @ {cid}", dict(audio_contract=cid, **V.MINI_P["p18"]), True) for cid in ac.ARM_A_IDS]
     arms += [(f"Arm B Mini-P32 @ {ac.ARM_B_ID}", dict(audio_contract=ac.ARM_B_ID, **V.MINI_P["p32"]), True)]
+    # inputs pr_nhat (owner decision D5: the decoupled-cadence NLMS). Mini-P18 with n_hat exceeds the entry budget,
+    # so it is never eligible as is; the budget is not relaxed (an owner decision picks the way forward)
+    arms += [(f"Arm A Mini-P18 pr_nhat @ {cid} (over the entry budget; not eligible)",
+              dict(audio_contract=cid, inputs="pr_nhat", **V.MINI_P["p18"]), False) for cid in ac.ARM_A_IDS]
+    arms += [(f"Arm B Mini-P32 pr_nhat @ {ac.ARM_B_ID}", dict(audio_contract=ac.ARM_B_ID, inputs="pr_nhat", **V.MINI_P["p32"]), True)]
     arms += [(f"Arm R Mini + P18 deep filter @ {ac.ARM_A_IDS[0]} (reference, never eligible)",
               dict(audio_contract=ac.ARM_A_IDS[0], df_bins=96, df_lags=(0, 3, 5)), False)]
     rows = []

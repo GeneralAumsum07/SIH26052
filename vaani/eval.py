@@ -79,7 +79,8 @@ def _ld_onnx_system(onnx_path, ckpt_path):
     c = contract_of(cfg.get("model_cfg"))
     if cfg.get("model") != "vaani_fe" or c.is_legacy:
         raise ValueError(f"{ckpt_path}: ld_onnx: scores low-delay VaaniFE graphs only")
-    eng = LowDelayStreamEngine(c, bk.FeOrtBackend(onnx_path, audio_contract=c.audio_contract_id), cfg.get("dsp"))
+    eng = LowDelayStreamEngine(c, bk.FeOrtBackend(onnx_path, audio_contract=c.audio_contract_id), cfg.get("dsp"),
+                               controller_on=cfg.get("controller_on", True))
     return lambda mix: eng.run(mix[0], mix[1])
 
 

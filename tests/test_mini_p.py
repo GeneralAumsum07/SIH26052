@@ -101,7 +101,7 @@ def test_from_arch_accepts_new_fields_and_rejects_unknown():
     assert m.cfg["freq_windows"] == "p18" and m.cfg["df_lags"] == [0, 3, 5]
     with pytest.raises(TypeError):
         V.from_arch({"model_cfg": {"tier": "mini", "bogus": 1}})
-    for bad in (dict(freq_windows="p99"), dict(freq_windows="p18", inputs="pr_nhat"), dict(valid_bias=True),
+    for bad in (dict(freq_windows="p99"), dict(freq_windows="p18", inputs="pr_pld"), dict(valid_bias=True),
                 dict(freq_windows="p18", df_bins=100, df_lags=(0, 1)), dict(df_lags=(1, 2)),
                 dict(df_lags=(0, 2, 2)), dict(gru_init="orthogonal"), dict(audio_contract="nope")):
         with pytest.raises(ValueError):

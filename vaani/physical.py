@@ -144,7 +144,7 @@ def _run_low_delay(mix, onnx, config, cfg, threads, dsp, trace, ref_valid, guard
     from vaani.low_delay_live import LowDelayStreamEngine
     eng = LowDelayStreamEngine.from_config(onnx, config, threads=threads, guards=guards)
     if dsp is not None:
-        eng = LowDelayStreamEngine(eng.c, eng.backend, dsp, guards=guards)
+        eng = LowDelayStreamEngine(eng.c, eng.backend, dsp, guards=guards, controller_on=eng.controller_on)
     mix = np.asarray(mix, np.float32)
     T, H = mix.shape[1], eng.hop
     eng.reset()

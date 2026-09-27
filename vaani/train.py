@@ -29,7 +29,7 @@ from pystoi import stoi
 
 from vaani import losses
 from vaani.data import manifests
-from vaani.data.dataset import DynamicMixDataset, EpochBatchSampler, EpochSampler, RenderedDataset, collate, front_end
+from vaani.data.dataset import DynamicMixDataset, EpochBatchSampler, EpochSampler, RenderedDataset, collate, front_end, nhat_front_end
 from vaani.data.mixer import MixConfig
 from vaani.dsp import pipeline, stft
 from vaani.models import vaani_fe
@@ -103,11 +103,13 @@ def prepare_batch(batch, model_name, device, burst_weight=1.0, contract=None):
     nb = dict(non_blocking=True)   # pinned host buffers: overlap the copy with compute
     mix, clean, metas = batch["mix"].to(device, **nb), batch["clean"].to(device, **nb), batch["meta"]
     if contract is not None and not contract.is_legacy:
-        if model_name != "vaani_fe" or "n_hat" in batch:
-            raise ValueError("the low-delay route supports VaaniFE inputs 'pr' only")
+        if model_name != "vaani_fe":
+            raise ValueError("the low-delay route is VaaniFE only")
         from vaani.enhance_low_delay import ld_model_inputs
         avail = batch["avail"].to(device, **nb) if "avail" in batch else None
-        spec, valid = ld_model_inputs(mix, avail, contract)
+        if "n_hat" in batch:   # inputs pr_nhat: the decoupled-cadence NLMS ran in the workers (D5)
+            mix = torch.cat([mix, batch["n_hat"].to(device, **nb)[:, None]], 1)
+        spec, valid = ld_model_inputs(mix, avail, contract, 2 * mix.shape[1])
         is_clean = torch.tensor([bool(m.get("clean_bucket", False)) for m in metas])
         return (spec, None, valid), clean, None, _host_to_device(is_clean, device)
     target = stft.stft(clean)  # STFTs on device: cheaper than CPU + transfer of the wider spec
@@ -261,6 +263,9 @@ class CompositeScreen:
                 m2, avail = self.construct(cond, mix, clean)
                 if cfg["model"] == "gtcrn":
                     fe = dict(mix=m2)
+                elif dsp and low_delay:   # inputs pr_nhat: the decoupled-cadence NLMS (D5), never pipeline.run
+                    m3, av, nh = nhat_front_end(m2, cfg.get("dsp"), avail, self.contract, cfg["controller_on"])
+                    fe = dict(mix=m3, avail=av, n_hat=nh)
                 elif dsp:
                     r = pipeline.run(m2, controller_on=cfg["controller_on"], dsp_cfg=cfg.get("dsp"), ref_avail=avail if pol else None)
                     fe = dict(mix=r["mix"], n_hat=r["n_hat"], feats=r["features"])
@@ -309,7 +314,8 @@ class CompositeScreen:
     def enhance(self, model, it, device):
         if "avail" in it:   # low-delay contract: the shared runner, never the legacy transform
             from vaani.enhance_low_delay import forward_fe_batch
-            return forward_fe_batch(model, self.cfg, it["mix"][None], it["avail"][None], None, device)[0]
+            nh = it["n_hat"][None] if "n_hat" in it else None
+            return forward_fe_batch(model, self.cfg, it["mix"][None], it["avail"][None], nh, device)[0]
         x = torch.from_numpy(it["mix"])[None].to(device); n = x.shape[-1]
         if self.cfg["model"] == "gtcrn":
             out = model(stft.stft(x[:, 0]))
