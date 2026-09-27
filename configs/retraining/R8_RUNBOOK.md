@@ -22,6 +22,17 @@ tests/test_train_smoke.py cover this). Whether r8 replaces r7 is Rachit's call a
 - **DRDO cannot be asked for anything:** every defence condition is simulated.
 - **Box specs:** Rachit sends the offer's vCPU / RAM / disk before renting; the sizing rule below says what is enough.
 
+## Decisions (Rachit, 2026-09-27; low-delay plan)
+
+- **D2 approved:** the registered metrics, margins (0.25 dB, 0.005, 0.05, 2.0 pp, 0.005), variance floors and the
+  speech-loss floor rule as proposed. `compare_r8_ld.py register --approved-by` records it from C0 seeds 0 and 1,
+  before any low-delay arm is scored.
+- **D5: the low-delay path uses the NLMS** (the hybrid path). This needs the decoupled-cadence NLMS (plan Section
+  3.3): the NLMS runs sample by sample, its adaptation gate comes from the unchanged legacy features and controller on
+  their own 256-sample cadence (completed past frames only), and n_hat enters the low-delay analysis as a channel.
+  Until it is built, the low-delay route accepts `inputs: pr` only.
+- **Compute authorization granted** for the r8 pilots and full runs.
+
 ## Before renting (Rachit's checklist)
 
 1. **Dataset accounts.** The access table, with the steps per account, is
