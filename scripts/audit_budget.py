@@ -6,6 +6,10 @@ activation, elementwise, DSP or STFT). Costs only: random weights, no quality cl
 Budget (spec 6.2, 10 % over r7): at most 60,000 total entries (every parameter, frozen ERB banks included) and
 at most 90.706 matrix MMAC/s for core + reliability extension + refiner.
 
+VaaniFE rows (low-delay plan, Task 1) are counted with vaani.models.vaani_fe.count_macs / param_count at each row's
+audio-contract hop rate (entries in training form, the folded network): the C0 Mini, Mini-P18 at every Arm A contract,
+Mini-P32 at Arm B's, and Arm R (a reference that exceeds the per-second limit by design; never eligible).
+
 usage: .venv/Scripts/python.exe scripts/audit_budget.py [--out results_r2/r8/budget]
 """
 import argparse, json, sys
@@ -48,6 +52,28 @@ def audit(name, mc, rc, trained):
             "within_budget": params <= BUDGET_ENTRIES and mmacs <= BUDGET_MMACS}
 
 
+def fe_rows():
+    """Spec 6.2 per VaaniFE contract, at the contract's hop rate."""
+    from vaani import audio_contract as ac
+    from vaani.models import vaani_fe as V
+    arms = [("C0 Mini (legacy 512/256)", {}, True)]
+    arms += [(f"Arm A Mini-P18 @ {cid}", dict(audio_contract=cid, **V.MINI_P["p18"]), True) for cid in ac.ARM_A_IDS]
+    arms += [(f"Arm B Mini-P32 @ {ac.ARM_B_ID}", dict(audio_contract=ac.ARM_B_ID, **V.MINI_P["p32"]), True)]
+    arms += [(f"Arm R Mini + P18 deep filter @ {ac.ARM_A_IDS[0]} (reference, never eligible)",
+              dict(audio_contract=ac.ARM_A_IDS[0], df_bins=96, df_lags=(0, 3, 5)), False)]
+    rows = []
+    for name, mc, deployable in arms:
+        torch.manual_seed(20260924)
+        s = V.summary(V.build("mini", **mc))
+        ok = s["params_training_form"] <= BUDGET_ENTRIES and s["mmac_per_s"] <= BUDGET_MMACS
+        rows.append({"name": name, "model_cfg": {"tier": "mini", **{k: list(v) if isinstance(v, tuple) else v for k, v in mc.items()}},
+                     "audio_contract": s["audio_contract"], "hops_per_s": s["hops_per_s"],
+                     "matrix_macs_per_hop": s["mac_per_hop"], "matrix_mmac_per_second": s["mmac_per_s"],
+                     "entries_inference": s["params"], "entries_training_form": s["params_training_form"],
+                     "state_bytes": s["state_bytes"], "deployable": deployable, "within_budget": ok})
+    return rows
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(); ap.add_argument("--out", default="results_r2/r8/budget")
     a = ap.parse_args(argv)
@@ -57,11 +83,12 @@ def main(argv=None):
             audit("refvalid Mini (C16 + ref_validity + r7 refiner)", dict(base, ref_validity=True), rc, False)]
     for w in (32, 64, 96):   # projection only: untrained, and warm start cannot widen, so these would train from scratch
         rows.append(audit(f"C{w} + ref_validity (untrained projection)", dict(base, channels=w, ref_validity=True), rc, False))
+    fe = fe_rows()
     out = Path(a.out); out.parent.mkdir(parents=True, exist_ok=True)
     cmd = "python scripts/audit_budget.py" + (" " + " ".join(argv) if argv else "")
     out.with_suffix(".json").write_text(json.dumps({"budget": {"total_entries": BUDGET_ENTRIES, "matrix_mmac_per_second": BUDGET_MMACS},
                                                     "counting": "vaani.export.layer_macs on StreamCascade, one hop", "command": cmd,
-                                                    "rows": rows}, indent=2) + "\n", encoding="utf-8")
+                                                    "rows": rows, "vaani_fe_rows": fe}, indent=2) + "\n", encoding="utf-8")
     lines = ["# Mini budget audit", "", f"Source: `budget.json`. Command: `{cmd}` (CPU, deterministic; counts, not timings).", "",
              f"Budget (spec 6.2): total entries <= {BUDGET_ENTRIES:,}, matrix MMAC/s <= {BUDGET_MMACS}.", "",
              "| system | total entries | learnable | ref extension entries | MMAC/s | ref extension MAC/hop | within budget |",
@@ -70,7 +97,13 @@ def main(argv=None):
         lines.append(f"| {r['name']} | {r['total_entries']:,} | {r['learnable_entries']:,} | {r['ref_extension_entries']:,} | "
                      f"{r['matrix_mmac_per_second']:.3f} | {r['ref_extension_macs_per_hop']:,} | {'yes' if r['within_budget'] else 'NO'} |")
     lines += ["", "Total entries count every parameter, the frozen ERB banks included; BN running buffers and the streaming",
-              "state are listed separately in the JSON. C32/C64/C96 rows are untrained projections of cost only."]
+              "state are listed separately in the JSON. C32/C64/C96 rows are untrained projections of cost only.", "",
+              "## VaaniFE per audio contract (vaani_fe.count_macs at the contract's hop rate)", "",
+              "| network @ contract | hops/s | MAC/hop | MMAC/s | entries (training form) | within budget |",
+              "|---|---:|---:|---:|---:|---|"]
+    for r in fe:
+        lines.append(f"| {r['name']} | {r['hops_per_s']:.2f} | {r['matrix_macs_per_hop']:,} | {r['matrix_mmac_per_second']:.3f} | "
+                     f"{r['entries_training_form']:,} | {'yes' if r['within_budget'] else 'NO'} |")
     out.with_suffix(".md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     print("\n".join(lines))
 
