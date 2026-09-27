@@ -1,0 +1,39 @@
+{
+  "label": "smoke: shared, loaded laptop; not reportable",
+  "command": "uv run --with numba python scripts/bench_loader.py --limiter-only --crops 30 --out results_r2/r8_ld/gate0/limiter_bench.json",
+  "numba": "0.67.0",
+  "cpu_count": 4,
+  "platform": "Linux-6.18.44-fc-v37-x86_64-with-glibc2.39",
+  "rows": [
+    {
+      "kernel": "loop",
+      "sub": 32,
+      "crops": 30,
+      "crop_s": 4.0,
+      "s_per_crop_median": 0.036429,
+      "s_per_crop_max": 0.037284,
+      "crops_per_s": 27.5,
+      "max_abs_vs_first_kernel": 0.0
+    },
+    {
+      "kernel": "numba",
+      "sub": 32,
+      "crops": 30,
+      "crop_s": 4.0,
+      "s_per_crop_median": 0.000382,
+      "s_per_crop_max": 0.00055,
+      "crops_per_s": 2620.6,
+      "max_abs_vs_first_kernel": 0.0
+    },
+    {
+      "kernel": "numpy",
+      "sub": 32,
+      "crops": 30,
+      "crop_s": 4.0,
+      "s_per_crop_median": 0.005231,
+      "s_per_crop_max": 0.005543,
+      "crops_per_s": 191.2,
+      "max_abs_vs_first_kernel": 0.0
+    }
+  ]
+}

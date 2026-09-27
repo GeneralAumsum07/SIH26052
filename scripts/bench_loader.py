@@ -8,6 +8,11 @@ rental's vCPU count: loader items/s must reach the GPU's step rate x batch size.
 usage: uv run --with numba python scripts/bench_loader.py --out results_r2/r8/loader_bench.json \
            --configs configs/retraining/r8_fe_mini.yaml configs/retraining/r8_refvalid_v2.yaml \
            configs/retraining/r7_e256_wr64.yaml --workers 1 2 3 --batches 6
+
+Low-delay (Task 0): --limiter-kernels loop numba numpy repeats every configuration with dsp.limiter_kernel set to each
+kernel (the r8 32-sample sub-block loop and its compiled and vectorized kernels), and --limiter-only times the limiter
+alone over 4 s crops without data:
+       python scripts/bench_loader.py --limiter-only --out results_r2/r8_ld/gate0/limiter_bench.json
 """
 import argparse, json, os, platform, sys, time
 from pathlib import Path
@@ -50,6 +55,44 @@ def bench(ds, workers, batch, batches):
                 items_per_s=round(n / (t2 - t1), 2), items_per_s_per_worker=round(n / (t2 - t1) / max(workers, 1), 2))
 
 
+def with_kernel(cfg, kernel):
+    """A copy of cfg whose limiter runs on `kernel` (None = as configured). A config without a limiter is unchanged."""
+    if kernel is None or not (cfg.get("dsp") or {}).get("limiter"):
+        return cfg
+    return dict(cfg, dsp=dict(cfg["dsp"], limiter_kernel=kernel))
+
+
+def limiter_only(kernels, subs=(32,), crop_s=4.0, crops=50, sr=16000, seed=0):
+    """Seconds per 4 s two-channel crop through the limiter for each kernel and sub-block, one item at a time as a
+    loader worker runs it. Speech-like bursts at training levels so the limiter engages and releases."""
+    import numpy as np
+    from vaani.dsp.limiter_kernel import make_limiter
+    rng = np.random.default_rng(seed)
+    n = int(crop_s * sr)
+    env = np.repeat(rng.uniform(0.02, 2.0, n // 800 + 1), 800)[:n]
+    items = [((rng.standard_normal(n) * env).astype(np.float32), (0.5 * rng.standard_normal(n) * env).astype(np.float32))
+             for _ in range(4)]
+    rows = []
+    for sub in subs:
+        ref = None
+        for k in kernels:
+            lim = make_limiter({"sub": sub, "fix_latch": True}, k)
+            lim.process_block(*items[0])                     # JIT / first-call warm-up excluded
+            ts = []
+            for i in range(crops):
+                lim.reset(); t0 = time.perf_counter()
+                out = lim.process_block(*items[i % len(items)])
+                ts.append(time.perf_counter() - t0)
+            lim.reset(); y = lim.process_block(*items[0])[0]
+            ref = y if ref is None else ref
+            ts.sort()
+            rows.append(dict(kernel=k, sub=sub, crops=crops, crop_s=crop_s, s_per_crop_median=round(ts[len(ts) // 2], 6),
+                             s_per_crop_max=round(ts[-1], 6), crops_per_s=round(1 / ts[len(ts) // 2], 1),
+                             max_abs_vs_first_kernel=float(np.max(np.abs(y - ref)))))
+            print(json.dumps(rows[-1]), flush=True)
+    return rows
+
+
 def step_time(cfg, batch, steps, warm):
     """Median / mean seconds per optimiser step on one fixed batch; the first `warm` steps (cuDNN autotune) dropped."""
     from vaani import losses
@@ -81,12 +124,23 @@ def step_time(cfg, batch, steps, warm):
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("--configs", nargs="+", required=True); ap.add_argument("--workers", nargs="+", type=int, default=[1, 2, 3])
+    ap.add_argument("--configs", nargs="+", default=[]); ap.add_argument("--workers", nargs="+", type=int, default=[1, 2, 3])
+    ap.add_argument("--limiter-kernels", nargs="+", default=None, choices=["loop", "numba", "numpy"])
+    ap.add_argument("--limiter-only", action="store_true"); ap.add_argument("--crops", type=int, default=50)
     ap.add_argument("--batch", type=int, default=32); ap.add_argument("--batches", type=int, default=6)
     ap.add_argument("--out", required=True); ap.add_argument("--label", default="smoke: shared, loaded laptop; not reportable")
     ap.add_argument("--step-time", action="store_true"); ap.add_argument("--steps", type=int, default=20)
     a = ap.parse_args(argv)
     cmd = "uv run --with numba python scripts/bench_loader.py " + " ".join(argv or sys.argv[1:])
+    if a.limiter_only:
+        import numba
+        rows = limiter_only(a.limiter_kernels or ["loop", "numba", "numpy"], crops=a.crops)
+        out = dict(label=a.label, command=cmd, numba=numba.__version__, cpu_count=os.cpu_count(),
+                   platform=platform.platform(), rows=rows)
+        Path(a.out).parent.mkdir(parents=True, exist_ok=True); Path(a.out).write_text(json.dumps(out, indent=2) + "\n")
+        return out
+    if not a.configs:
+        ap.error("--configs is required unless --limiter-only")
     if a.step_time:
         rows = []
         for c in a.configs:
@@ -101,11 +155,13 @@ def main(argv=None):
         nb = None
     rows = []
     for c in a.configs:
-        cfg = yaml.safe_load(open(c)); ds = build_dataset(cfg)
-        for w in a.workers:
-            r = dict(config=c, model=cfg["model"], mix_version=int(cfg["data"].get("mix", {}).get("version", 1)),
-                     dsp=train.needs_dsp(cfg), **bench(ds, w, a.batch, a.batches))
-            print(json.dumps(r), flush=True); rows.append(r)
+        for k in (a.limiter_kernels or [None]):
+            cfg = with_kernel(yaml.safe_load(open(c)), k); ds = build_dataset(cfg)
+            for w in a.workers:
+                r = dict(config=c, model=cfg["model"], mix_version=int(cfg["data"].get("mix", {}).get("version", 1)),
+                         dsp=train.needs_dsp(cfg), limiter_kernel=(cfg.get("dsp") or {}).get("limiter_kernel"),
+                         **bench(ds, w, a.batch, a.batches))
+                print(json.dumps(r), flush=True); rows.append(r)
     out = dict(label=a.label, command=cmd,
                numba=nb, torch=torch.__version__, cpu_count=os.cpu_count(), platform=platform.platform(),
                crop_s=4.0, batch=a.batch, rows=rows)
