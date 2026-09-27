@@ -44,6 +44,16 @@ void ld_windows(const Contract& c, std::vector<double>& a, std::vector<double>& 
     for (int n = 0; n < K; ++n) s[n] = a[n] > 0 ? p[n] / a[n] : 0.0;
 }
 
+std::string window_round_hash(const Contract& c) {
+    std::vector<double> a, p, s;
+    ld_windows(c, a, p, s);
+    std::vector<double> r;
+    r.reserve(a.size() + s.size());
+    for (const auto* v : {&a, &s})
+        for (double x : *v) r.push_back(std::nearbyint(x * 1e12) / 1e12);
+    return sha256_hex(reinterpret_cast<const uint8_t*>(r.data()), r.size() * sizeof(double));
+}
+
 // ---- limiter ----------------------------------------------------------------------------------------
 static const double HEADROOM_DB = 26.0, RELEASE_MS = 50.0, ENV_MS = 500.0, FAR_FIELD_DB = 4.0;
 static const double FLOOR_UP = 0.002, FLOOR_DOWN = 0.3, FLOOR_MAX = 3.0, MIN_ENV = 1e-4;
@@ -206,8 +216,23 @@ std::string coef_sha256(const std::vector<double>& h) {
 static std::string json_field(const std::string& js, const std::string& key) {
     const std::string k = "\"" + key + "\"";
     size_t at = js.find(k);
-    if (at == std::string::npos) throw std::runtime_error("coefficient file lacks \"" + key + "\"");
+    if (at == std::string::npos) throw std::runtime_error("JSON record lacks \"" + key + "\"");
     return js.substr(js.find(':', at) + 1);
+}
+
+std::string json_string(const std::string& js, const std::string& key) {
+    const std::string v = json_field(js, key);
+    const size_t a = v.find('"'), b = v.find('"', a + 1);
+    if (a == std::string::npos || b == std::string::npos) throw std::runtime_error("\"" + key + "\" is not a string");
+    return v.substr(a + 1, b - a - 1);
+}
+
+double json_number(const std::string& js, const std::string& key) {
+    const std::string v = json_field(js, key);
+    char* end;
+    const double x = std::strtod(v.c_str(), &end);
+    if (end == v.c_str()) throw std::runtime_error("\"" + key + "\" is not a number");
+    return x;
 }
 
 Fir load_fir(const std::string& path) {
@@ -216,8 +241,7 @@ Fir load_fir(const std::string& path) {
     std::stringstream ss; ss << f.rdbuf();
     const std::string js = ss.str();
     Fir fir;
-    std::string idv = json_field(js, "id");
-    fir.id = idv.substr(idv.find('"') + 1, idv.find('"', idv.find('"') + 1) - idv.find('"') - 1);
+    fir.id = json_string(js, "id");
     std::string co = json_field(js, "coefficients");
     const char* p = co.c_str() + co.find('[') + 1;
     while (true) {
@@ -229,24 +253,26 @@ Fir load_fir(const std::string& path) {
         while (*p == ' ' || *p == ',' || *p == '\n' || *p == '\r' || *p == '\t') ++p;
         if (*p == ']') break;
     }
-    std::string sh = json_field(js, "sha256");
-    fir.sha256 = sh.substr(sh.find('"') + 1, 64);
-    std::string pk = json_field(js, "pair_peak_ms");
-    fir.pair_peak_ms = std::strtod(pk.c_str(), nullptr);
+    fir.sha256 = json_string(js, "sha256");
+    fir.pair_peak_ms = json_number(js, "pair_peak_ms");
     if (fir.h.empty()) throw std::runtime_error(path + ": no coefficients");
     if (coef_sha256(fir.h) != fir.sha256)
         throw std::runtime_error(path + ": coefficient sha256 differs from the recorded one");
     return fir;
 }
 
-Decimate3::Decimate3(int channels, const std::vector<double>& h_) : ch(channels), h(h_) { reset(); }
+Decimate3::Decimate3(int channels, const std::vector<double>& h_, int max_block_)
+    : ch(channels), max_block(max_block_), h(h_) {
+    buf.assign(h.size() - 1 + static_cast<size_t>(max_block), 0.0);
+    reset();
+}
 
 void Decimate3::reset() { state.assign(static_cast<size_t>(ch) * (h.size() - 1), 0.0); }
 
 void Decimate3::process(const float* in, int n, float* out) {
     if (n % 3) throw std::runtime_error("Decimate3 needs blocks whose length is a multiple of 3");
+    if (n > max_block) throw std::runtime_error("Decimate3 block longer than its max_block");
     const int T = static_cast<int>(h.size()) - 1;
-    buf.resize(static_cast<size_t>(T + n));
     for (int c = 0; c < ch; ++c) {
         double* s = state.data() + static_cast<size_t>(c) * T;
         std::memcpy(buf.data(), s, sizeof(double) * T);

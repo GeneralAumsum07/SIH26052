@@ -185,6 +185,10 @@ def main(argv=None):
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     files = {}
     for rid, h, design, m in (
+            # R0 is designed in numpy at load time (vaani.resampler.load); its file serves the native runtime, whose
+            # control path must load the same coefficients by hash
+            (RESAMPLER_R0, h0, {"method": "vaani.live.lowpass_fir", "taps": 193, "cutoff_hz": 7300.0, "beta": 8.6,
+                                "note": "linear phase; the Python loader designs it in numpy and ignores this file"}, m0),
             (RESAMPLER_R1, h1, {"method": "scipy.signal.minimum_phase", "of": RESAMPLER_R0, "kwargs":
                                 {"method": "homomorphic", "half": False, "n_fft": 65536}}, m1),
             (RESAMPLER_R2, h2, {"method": "complex weighted least squares, Lawson reweighting", "of": RESAMPLER_R0,

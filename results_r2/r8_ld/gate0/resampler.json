@@ -1,6 +1,7 @@
 {
   "generated_by": "python scripts/make_resampler_fir.py",
   "files": {
+    "r0_linphase_kaiser193_v1": "deploy/resampler/r0_linphase_kaiser193_v1.json",
     "r1_minphase_kaiser193_v1": "deploy/resampler/r1_minphase_kaiser193_v1.json",
     "r2_cdelay_ls193_v1": "deploy/resampler/r2_cdelay_ls193_v1.json"
   },

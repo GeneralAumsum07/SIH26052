@@ -23,6 +23,12 @@ struct Contract {
 
 // "vaanife_ld_asym512_h96_s160_v1" -> K 512, H 96, L 160. Throws on a legacy or malformed id.
 Contract parse_contract_id(const std::string& id);
+// vaani.audio_contract._round_hash(a, s): SHA-256 of the windows rounded to 12 decimals (numpy's multiply-rint-divide).
+std::string window_round_hash(const Contract& c);
+
+// Readers for the flat JSON records the Python side writes (contract record, coefficient files). A missing key throws.
+std::string json_string(const std::string& js, const std::string& key);
+double json_number(const std::string& js, const std::string& key);
 // (a, p, s) float64 windows, as vaani.audio_contract.ld_windows.
 void ld_windows(const Contract& c, std::vector<double>& a, std::vector<double>& p, std::vector<double>& s);
 
@@ -98,13 +104,14 @@ std::string coef_sha256(const std::vector<double>& h);
 // Polyphase Decimate3: out[m] = sum_k h[k] x[3m - k] (x of the whole stream), float64 accumulation, float32 out.
 class Decimate3 {
 public:
-    Decimate3(int channels, const std::vector<double>& h);
+    // max_block: the largest block process() accepts; its scratch buffer is sized here, so process() never allocates
+    Decimate3(int channels, const std::vector<double>& h, int max_block = 4096);
     void reset();
-    // in: channels x n (n % 3 == 0), channel-major; out: channels x n/3
+    // in: channels x n (n % 3 == 0, n <= max_block), channel-major; out: channels x n/3
     void process(const float* in, int n, float* out);
     std::vector<double> state;   // channels x (taps - 1): the previous input samples
 private:
-    int ch; std::vector<double> h; std::vector<double> buf;
+    int ch, max_block; std::vector<double> h; std::vector<double> buf;
 };
 
 // Polyphase Interpolate3: zero-stuff by 3, filter with 3*h, float64 accumulation, float32 out.
