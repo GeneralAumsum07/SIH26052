@@ -2410,10 +2410,15 @@ template<typename T> void radbg(size_t ido, size_t ip, size_t l1,
   public:
     template<typename T> void exec(T c[], T0 fct, bool r2hc) const
       {
+      arr<T> ch(length);
+      exec(c, fct, r2hc, ch.data());
+      }
+    // vaani_ld patch: the same transform with caller-owned scratch (length values), so it never allocates
+    template<typename T> void exec(T c[], T0 fct, bool r2hc, T *scratch) const
+      {
       if (length==1) { c[0]*=fct; return; }
       size_t nf=fact.size();
-      arr<T> ch(length);
-      T *p1=c, *p2=ch.data();
+      T *p1=c, *p2=scratch;
 
       if (r2hc)
         for(size_t k1=0, l1=length; k1<nf;++k1)
@@ -2710,6 +2715,12 @@ template<typename T0> class pocketfft_r
 
     template<typename T> POCKETFFT_NOINLINE void exec(T c[], T0 fct, bool fwd) const
       { packplan ? packplan->exec(c,fct,fwd) : blueplan->exec_r(c,fct,fwd); }
+    // vaani_ld patch: allocation-free execution for lengths planned without Bluestein (scratch: length values)
+    template<typename T> POCKETFFT_NOINLINE void exec(T c[], T0 fct, bool fwd, T *scratch) const
+      {
+      if (!packplan) throw std::runtime_error("scratch execution needs a non-Bluestein length");
+      packplan->exec(c,fct,fwd,scratch);
+      }
 
     size_t length() const { return len; }
   };

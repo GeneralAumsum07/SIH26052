@@ -6,6 +6,7 @@
 #pragma once
 #include <complex>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -74,6 +75,8 @@ private:
     Contract c;
 };
 
+struct RealFft;   // a planned length-K real FFT (PocketFFT, float64), shared by the transforms of one contract
+
 class Analyzer {
 public:
     explicit Analyzer(const Contract& c);
@@ -83,6 +86,8 @@ public:
 private:
     Contract c;
     std::vector<float> a, frame;
+    std::vector<double> f64, scratch;
+    std::shared_ptr<const RealFft> fft;
 };
 
 class Synthesizer {
@@ -94,6 +99,8 @@ public:
 private:
     Contract c;
     std::vector<float> s_tail, y;
+    std::vector<double> y64, scratch;
+    std::shared_ptr<const RealFft> fft;
 };
 
 // 48 kHz FIR resampler pair (vaani.resampler): coefficients from deploy/resampler/<id>.json, SHA-256 verified.

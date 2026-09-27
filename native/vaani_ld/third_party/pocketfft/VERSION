@@ -2,6 +2,9 @@ PocketFFT (C++ header-only), https://github.com/mreineck/pocketfft
 branch: cpp
 commit: c90e55b3d529f8efa40ed01a20de22405f45fc65
 licence: BSD-3-Clause (LICENSE.md, Copyright (C) 2010-2018 Max-Planck-Society)
-pocketfft_hdronly.h sha256: 3e9a05318d8e3b1446bda1c4617e6a103cdd23599ae0a776a92a6e8800e92fdc
+pocketfft_hdronly.h sha256: 0b512b472e7f616380f189e24af0bf9a4d0723bcf611706af591ec043a69d166 (patched)
+upstream header sha256:     3e9a05318d8e3b1446bda1c4617e6a103cdd23599ae0a776a92a6e8800e92fdc
+patch: vaani_ld_scratch.patch adds exec() overloads that take caller-owned scratch (rfftp, pocketfft_r), so the
+       audio hot path never allocates; the transform arithmetic is unchanged.
 LICENSE.md sha256:          a85ca13fdf90160b64a0698215868c13b74d835ad0a4e2ba44713b8c5058a056
 Chosen over FFTW (GPL/commercial) and a handwritten FFT (low-delay plan Task 7). NumPy 2.x uses the same library.

@@ -166,24 +166,38 @@ float Validity::push(const uint8_t* avail) {
 }
 
 // ---- analysis / synthesis ---------------------------------------------------------------------------------
+struct RealFft {
+    explicit RealFft(size_t n) : plan(n) {}
+    pocketfft::detail::pocketfft_r<double> plan;
+};
+
+static std::shared_ptr<const RealFft> real_fft(int k) { return std::make_shared<const RealFft>(static_cast<size_t>(k)); }
+
 Analyzer::Analyzer(const Contract& c_) : c(c_) {
     std::vector<double> a64, p64, s64;
     ld_windows(c, a64, p64, s64);
     a.assign(a64.begin(), a64.end());
     frame.assign(c.k, 0.0f);
+    f64.assign(c.k, 0.0);
+    scratch.assign(c.k, 0.0);
+    fft = real_fft(c.k);
     reset();
 }
 
 void Analyzer::reset() { hist.assign(c.history(), 0.0f); }
 
+// np.fft.rfft of the float32 windowed frame: NumPy transforms in float64 (PocketFFT's r2c: a real-to-halfcomplex
+// pass) and the result rounds to complex64
 void Analyzer::push(const float* hop, std::complex<float>* spec) {
     const int K = c.k, H = c.hop, Hs = c.history();
     std::memcpy(frame.data(), hist.data(), sizeof(float) * Hs);
     std::memcpy(frame.data() + Hs, hop, sizeof(float) * H);
     std::memcpy(hist.data(), frame.data() + H, sizeof(float) * Hs);
-    for (int n = 0; n < K; ++n) frame[n] = frame[n] * a[n];
-    pocketfft::r2c<float>({static_cast<size_t>(K)}, {sizeof(float)}, {sizeof(std::complex<float>)}, 0, true,
-                          frame.data(), spec, 1.0f, 1);
+    for (int n = 0; n < K; ++n) f64[n] = static_cast<double>(frame[n] * a[n]);
+    fft->plan.exec(f64.data(), 1.0, true, scratch.data());
+    spec[0] = {static_cast<float>(f64[0]), 0.0f};
+    for (int b = 1; b < K / 2; ++b) spec[b] = {static_cast<float>(f64[2 * b - 1]), static_cast<float>(f64[2 * b])};
+    spec[K / 2] = {static_cast<float>(f64[K - 1]), 0.0f};
 }
 
 Synthesizer::Synthesizer(const Contract& c_) : c(c_) {
@@ -191,17 +205,24 @@ Synthesizer::Synthesizer(const Contract& c_) : c(c_) {
     ld_windows(c, a64, p64, s64);
     s_tail.assign(s64.begin() + (c.k - c.support), s64.end());
     y.assign(c.k, 0.0f);
+    y64.assign(c.k, 0.0);
+    scratch.assign(c.k, 0.0);
+    fft = real_fft(c.k);
     reset();
 }
 
 void Synthesizer::reset() { pending.assign(c.crossfade(), 0.0f); }
 
+// np.fft.irfft(spec, n=K) in float64 (PocketFFT's c2r: the imaginary parts of DC and Nyquist are ignored), rounded to
+// float32, then the float32 window and overlap-add
 void Synthesizer::push(const std::complex<float>* spec, float* out) {
     const int K = c.k, H = c.hop, L = c.support, X = c.crossfade();
-    pocketfft::c2r<float>({static_cast<size_t>(K)}, {sizeof(std::complex<float>)}, {sizeof(float)}, 0, false,
-                          spec, y.data(), 1.0f / K, 1);
+    y64[0] = spec[0].real();
+    for (int b = 1; b < K / 2; ++b) { y64[2 * b - 1] = spec[b].real(); y64[2 * b] = spec[b].imag(); }
+    y64[K - 1] = spec[K / 2].real();
+    fft->plan.exec(y64.data(), 1.0 / K, false, scratch.data());
     float* t = y.data() + (K - L);
-    for (int n = 0; n < L; ++n) t[n] = t[n] * s_tail[n];
+    for (int n = 0; n < L; ++n) t[n] = static_cast<float>(y64[K - L + n]) * s_tail[n];
     for (int n = 0; n < X; ++n) t[n] += pending[n];
     std::memcpy(pending.data(), t + H, sizeof(float) * X);
     std::memcpy(out, t, sizeof(float) * H);
