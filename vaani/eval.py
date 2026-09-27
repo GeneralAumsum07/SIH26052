@@ -42,6 +42,8 @@ def enhance_fn(spec: str, device=None):
             zt = torch.view_as_real(torch.from_numpy(z))[None].to(out.device)
             return stft.istft(zt, length=mix.shape[1])[0].cpu().numpy()
         return f
+    if spec.startswith("ld_onnx:"):   # `ld_onnx:<graph.onnx>@<checkpoint.pt>`: a low-delay graph, streamed
+        return _ld_onnx_system(*spec[8:].rsplit("@", 1))
     if spec.startswith("onnx:"):      # `onnx:<graph.onnx>@<checkpoint.pt>`: score the exported graph itself
         graph, ckpt = spec[5:].rsplit("@", 1)
         spec_fn = _onnx_spectrum_fn(graph, ckpt)
@@ -64,6 +66,21 @@ def enhance_fn(spec: str, device=None):
 
 def _is_fe_checkpoint(path) -> bool:
     return torch.load(path, map_location="cpu", weights_only=True)["config"].get("model") == "vaani_fe"
+
+
+def _ld_onnx_system(onnx_path, ckpt_path):
+    """A low-delay VaaniFE graph scored as deployed: vaani.low_delay_live.LowDelayStreamEngine over the graph (ORT
+    CPU), fresh state per clip, output aligned with the offline route. The checkpoint supplies the DSP block and the
+    contract, which must equal the graph's stamp."""
+    from vaani import backend as bk
+    from vaani.audio_contract import contract_of
+    from vaani.low_delay_live import LowDelayStreamEngine
+    cfg = torch.load(ckpt_path, map_location="cpu", weights_only=True)["config"]
+    c = contract_of(cfg.get("model_cfg"))
+    if cfg.get("model") != "vaani_fe" or c.is_legacy:
+        raise ValueError(f"{ckpt_path}: ld_onnx: scores low-delay VaaniFE graphs only")
+    eng = LowDelayStreamEngine(c, bk.FeOrtBackend(onnx_path, audio_contract=c.audio_contract_id), cfg.get("dsp"))
+    return lambda mix: eng.run(mix[0], mix[1])
 
 
 def _onnx_spectrum_fn(onnx_path, ckpt_path):

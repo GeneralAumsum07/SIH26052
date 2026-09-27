@@ -1,0 +1,277 @@
+{
+  "generated_by": "python scripts/make_ld_golden_vectors.py --seed 0",
+  "git_sha": "fa87b4058d0f5dc763d2a6e7942928faf752d45e",
+  "dsp": {
+    "limiter": true,
+    "limiter_kernel": "numba",
+    "ref_policy": {
+      "absent": "freeze",
+      "ramp_samples": 3072
+    }
+  },
+  "clip_samples": 8000,
+  "sr": 16000,
+  "tolerance": 1e-05,
+  "contracts": {
+    "vaanife_ld_asym512_h96_s160_v1": {
+      "contract_hash": "1e902f11784a87d6",
+      "network": "mini_p18",
+      "seed": 0,
+      "model": {
+        "file": "vaanife_ld_asym512_h96_s160_v1/model.onnx",
+        "sha256": "464d5a1a7b35a8757b174a607992276d249209c065f8babd2c0f73addf7d2f16"
+      },
+      "state_floats": 1728,
+      "hop": 96,
+      "support": 160,
+      "release_lead": 64,
+      "cases": {
+        "speech_plus_noise": {
+          "file": "vaanife_ld_asym512_h96_s160_v1/speech_plus_noise.npz",
+          "sha256": "bab13eb36986d19587ba29061c10fe257e242cda0f7169b2ab9db3234668606a",
+          "hops": 85,
+          "stream_vs_offline_max_abs": 5.960464477539063e-08
+        },
+        "ref_dropout": {
+          "file": "vaanife_ld_asym512_h96_s160_v1/ref_dropout.npz",
+          "sha256": "e235e43d1aa84ad53ac82ea6a5edad434b0eeb9547bac8285996d21de4eda53b",
+          "hops": 85,
+          "stream_vs_offline_max_abs": 5.960464477539063e-08
+        },
+        "limiter_burst": {
+          "file": "vaanife_ld_asym512_h96_s160_v1/limiter_burst.npz",
+          "sha256": "d3a729387ce931b3c62d65381527b15352aca1146507a4e1633b336e9b4bc707",
+          "hops": 85,
+          "stream_vs_offline_max_abs": 4.76837158203125e-07
+        },
+        "nonfinite": {
+          "file": "vaanife_ld_asym512_h96_s160_v1/nonfinite.npz",
+          "sha256": "e8b2edd67cd73a74cf7b73107fa368a6608c010bd70128c2b37eb03489f7a5cd",
+          "hops": 85,
+          "stream_vs_offline_max_abs": null
+        },
+        "silence": {
+          "file": "vaanife_ld_asym512_h96_s160_v1/silence.npz",
+          "sha256": "014b0cce251af1e51f769bfb327ad2db51fb7785ba67ee6cf086acc6a2d75b51",
+          "hops": 85,
+          "stream_vs_offline_max_abs": 0.0
+        },
+        "low_level": {
+          "file": "vaanife_ld_asym512_h96_s160_v1/low_level.npz",
+          "sha256": "edfca19a666b4520f2dfb164298c0a36e9294f99a254029ccea692a77699f093",
+          "hops": 85,
+          "stream_vs_offline_max_abs": 1.9895196601282805e-13
+        }
+      }
+    },
+    "vaanife_ld_asym512_h96_s144_v1": {
+      "contract_hash": "5151004ac0117296",
+      "network": "mini_p18",
+      "seed": 0,
+      "model": {
+        "file": "vaanife_ld_asym512_h96_s144_v1/model.onnx",
+        "sha256": "fe5fa44d4ce3e629f2182af82d7270d25245462c7e8ae74f391472b2988e9aba"
+      },
+      "state_floats": 1728,
+      "hop": 96,
+      "support": 144,
+      "release_lead": 48,
+      "cases": {
+        "speech_plus_noise": {
+          "file": "vaanife_ld_asym512_h96_s144_v1/speech_plus_noise.npz",
+          "sha256": "fc5aeffdb0fc1dcd9808d42b3eca4aa2daafb4b223b13231c97e9e2872f53bfc",
+          "hops": 85,
+          "stream_vs_offline_max_abs": 7.450580596923828e-08
+        },
+        "ref_dropout": {
+          "file": "vaanife_ld_asym512_h96_s144_v1/ref_dropout.npz",
+          "sha256": "ba6325dcd9c2d8fdb3933239127c3580abeb1b0939d1e41125b2bcf2dc011592",
+          "hops": 85,
+          "stream_vs_offline_max_abs": 7.450580596923828e-08
+        },
+        "limiter_burst": {
+          "file": "vaanife_ld_asym512_h96_s144_v1/limiter_burst.npz",
+          "sha256": "dd64d1412fca55213d0ee5ac5afa67947941f7dbed0f8009e886f74efda7ff72",
+          "hops": 85,
+          "stream_vs_offline_max_abs": 4.76837158203125e-07
+        },
+        "nonfinite": {
+          "file": "vaanife_ld_asym512_h96_s144_v1/nonfinite.npz",
+          "sha256": "0c1f149f013ed9b997ae2910d25e7802eea84b2207ade2922eaeb2fa1899db6e",
+          "hops": 85,
+          "stream_vs_offline_max_abs": null
+        },
+        "silence": {
+          "file": "vaanife_ld_asym512_h96_s144_v1/silence.npz",
+          "sha256": "014b0cce251af1e51f769bfb327ad2db51fb7785ba67ee6cf086acc6a2d75b51",
+          "hops": 85,
+          "stream_vs_offline_max_abs": 0.0
+        },
+        "low_level": {
+          "file": "vaanife_ld_asym512_h96_s144_v1/low_level.npz",
+          "sha256": "95421b07886c02bf9d45cf9d92a17acee9a1504fd2442d4181cb435b1fbdd3b3",
+          "hops": 85,
+          "stream_vs_offline_max_abs": 2.5579538487363607e-13
+        }
+      }
+    },
+    "vaanife_ld_asym512_h96_s128_v1": {
+      "contract_hash": "f62cdc73b51f3c4f",
+      "network": "mini_p18",
+      "seed": 0,
+      "model": {
+        "file": "vaanife_ld_asym512_h96_s128_v1/model.onnx",
+        "sha256": "ef3718091b9717edcb50af9560dc8385e766f0eb19c5cd92a682dec03296d0ce"
+      },
+      "state_floats": 1728,
+      "hop": 96,
+      "support": 128,
+      "release_lead": 32,
+      "cases": {
+        "speech_plus_noise": {
+          "file": "vaanife_ld_asym512_h96_s128_v1/speech_plus_noise.npz",
+          "sha256": "8e1e9498e4d6da187196c360ba431ab2925abfbd4c4165d053d4a7d7d809fee4",
+          "hops": 85,
+          "stream_vs_offline_max_abs": 1.043081283569336e-07
+        },
+        "ref_dropout": {
+          "file": "vaanife_ld_asym512_h96_s128_v1/ref_dropout.npz",
+          "sha256": "2e64aa1c2d1c5956d743be498ed6d04c267af659e8f3c5eab5dbe7a1fb2b4a77",
+          "hops": 85,
+          "stream_vs_offline_max_abs": 1.043081283569336e-07
+        },
+        "limiter_burst": {
+          "file": "vaanife_ld_asym512_h96_s128_v1/limiter_burst.npz",
+          "sha256": "3166c7cdca2551f252bd1af43b3b297e193a0e4854e0527a7f3ebbb77fbd0048",
+          "hops": 85,
+          "stream_vs_offline_max_abs": 7.152557373046875e-07
+        },
+        "nonfinite": {
+          "file": "vaanife_ld_asym512_h96_s128_v1/nonfinite.npz",
+          "sha256": "3b8598d58fe5381a393c267b9d7ef4928192d79c3de60db9b858391d7a5f262b",
+          "hops": 85,
+          "stream_vs_offline_max_abs": null
+        },
+        "silence": {
+          "file": "vaanife_ld_asym512_h96_s128_v1/silence.npz",
+          "sha256": "014b0cce251af1e51f769bfb327ad2db51fb7785ba67ee6cf086acc6a2d75b51",
+          "hops": 85,
+          "stream_vs_offline_max_abs": 0.0
+        },
+        "low_level": {
+          "file": "vaanife_ld_asym512_h96_s128_v1/low_level.npz",
+          "sha256": "0d362b10032710dddf8c39573d63eae709f5fa99670167b4f2220d964b6739f2",
+          "hops": 85,
+          "stream_vs_offline_max_abs": 2.8421709430404007e-13
+        }
+      }
+    },
+    "vaanife_ld_asym512_h128_s160_v1": {
+      "contract_hash": "41ae1effc663f55a",
+      "network": "mini_p32",
+      "seed": 0,
+      "model": {
+        "file": "vaanife_ld_asym512_h128_s160_v1/model.onnx",
+        "sha256": "bae702d86a20378e423c05e542c9adb6dd9566f618858f8636c5be17aad24340"
+      },
+      "state_floats": 1920,
+      "hop": 128,
+      "support": 160,
+      "release_lead": 32,
+      "cases": {
+        "speech_plus_noise": {
+          "file": "vaanife_ld_asym512_h128_s160_v1/speech_plus_noise.npz",
+          "sha256": "5b3fcc4dae3aae991dbfde7b3098667ea44ac0b6fdb83b9e67e15f1ce4129726",
+          "hops": 64,
+          "stream_vs_offline_max_abs": 2.421438694000244e-08
+        },
+        "ref_dropout": {
+          "file": "vaanife_ld_asym512_h128_s160_v1/ref_dropout.npz",
+          "sha256": "2368abdf04e66c119365021200e12a544f12ff3ad077867e45c472521c536de1",
+          "hops": 64,
+          "stream_vs_offline_max_abs": 2.60770320892334e-08
+        },
+        "limiter_burst": {
+          "file": "vaanife_ld_asym512_h128_s160_v1/limiter_burst.npz",
+          "sha256": "833d454e68f33dc73faf960c6e414559d8950360bf21972bc1ceacf58163e4c4",
+          "hops": 64,
+          "stream_vs_offline_max_abs": 4.172325134277344e-07
+        },
+        "nonfinite": {
+          "file": "vaanife_ld_asym512_h128_s160_v1/nonfinite.npz",
+          "sha256": "31e553fa11d3b197112632b3de14806355ca1029d86939581d0ce0a41dd9025a",
+          "hops": 64,
+          "stream_vs_offline_max_abs": null
+        },
+        "silence": {
+          "file": "vaanife_ld_asym512_h128_s160_v1/silence.npz",
+          "sha256": "334b7e0e37fda4674f03d623caae8c99377c170b0399a4f3ba6d26b4bdb6bbac",
+          "hops": 64,
+          "stream_vs_offline_max_abs": 0.0
+        },
+        "low_level": {
+          "file": "vaanife_ld_asym512_h128_s160_v1/low_level.npz",
+          "sha256": "7e7084bb28097d2ae64d0f2066f6ca4a433cd85ae91be1c9b51fb253113bd9ec",
+          "hops": 64,
+          "stream_vs_offline_max_abs": 9.237055564881302e-14
+        }
+      }
+    }
+  },
+  "resampler": {
+    "r0_linphase_kaiser193_v1": {
+      "file": "resampler/r0_linphase_kaiser193_v1.npz",
+      "sha256": "72fbbd7bce192e5152fbfa6c94facf540a475481b3a11d1c6f0b21e8b111ea56",
+      "coef_sha256": "794d2848fe8e8675bf54e25d2ef0c0e90d30486d70f5f3689edff81570fca9fa",
+      "delays": {
+        "pair_peak_ms": 4.0,
+        "per_conversion_ms": 2.0,
+        "source": "linear phase: (taps-1)/2 samples per conversion"
+      }
+    },
+    "r1_minphase_kaiser193_v1": {
+      "file": "resampler/r1_minphase_kaiser193_v1.npz",
+      "sha256": "da64152b1d3bd5ac75863c98d638e810a99ea0d9b336e98207cccd622716be7d",
+      "coef_sha256": "5fb6af448cb37e80c684ac05e73727d87ce2bca04e708ae9a23fc77e3902e1c3",
+      "delays": {
+        "pair_peak_ms": 0.3333333333333333,
+        "per_conversion_peak_ms": 0.1875,
+        "group_delay_ms": {
+          "100": 0.1476264525728987,
+          "1000": 0.15022786403789865,
+          "4000": 0.20353501215906625,
+          "6000": 0.37879425921649706,
+          "7000": 0.921449736689922
+        },
+        "group_delay_0p1_6k_ms": [
+          0.1476264525728987,
+          0.37879425921649706
+        ],
+        "pair_group_delay_300_4000_max_ms": 0.4070700243181325,
+        "source": "measured by scripts/make_resampler_fir.py"
+      }
+    },
+    "r2_cdelay_ls193_v1": {
+      "file": "resampler/r2_cdelay_ls193_v1.npz",
+      "sha256": "fa7466f5f2a998be8d936867cc9d2ea8f8b9c5311075e9a275426b73e5ff25bb",
+      "coef_sha256": "e36fdcde2c4a0a85b31520c259439e62c4d70d054575cdd5da72a0dc0f93f908",
+      "delays": {
+        "pair_peak_ms": 1.5,
+        "per_conversion_peak_ms": 0.75,
+        "group_delay_ms": {
+          "100": 0.7550976791981778,
+          "1000": 0.7479555733050204,
+          "4000": 0.7520602038753964,
+          "6000": 0.7574409108272055,
+          "7000": 0.7401407117797482
+        },
+        "group_delay_0p1_6k_ms": [
+          0.7415692962767615,
+          0.7619028778051603
+        ],
+        "pair_group_delay_300_4000_max_ms": 1.5152611673774388,
+        "source": "measured by scripts/make_resampler_fir.py"
+      }
+    }
+  }
+}

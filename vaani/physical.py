@@ -22,6 +22,7 @@ from pathlib import Path
 
 import numpy as np
 
+from vaani import audio_contract as ac
 from vaani import live
 
 REPO = Path(__file__).resolve().parents[1]
@@ -114,6 +115,8 @@ def run_engine(mix: np.ndarray, onnx=ONNX, config=CONFIG, threads: int = 1, dsp:
     guards: StreamEngine's `guards=` (None = off, the r7 default path)."""
     cfg = live.load_model_config(config)
     kw = {"guards": guards} if guards else {}
+    if cfg.get("audio_contract") and not ac.get_audio_contract(cfg["audio_contract"]).is_legacy:
+        return _run_low_delay(mix, onnx, config, cfg, threads, dsp, trace, ref_valid, guards)
     eng = live.StreamEngine(onnx, cfg["controller_on"], cfg["dsp"] if dsp is None else dsp, threads=threads, **kw)
     pkw = {"ref_valid": False} if not ref_valid and (getattr(eng, "takes_valid", False) or getattr(eng, "pol", None) is not None) else {}
     mix = np.asarray(mix, np.float32)
@@ -132,6 +135,33 @@ def run_engine(mix: np.ndarray, onnx=ONNX, config=CONFIG, threads: int = 1, dsp:
     diag = {"gate_mean": mean(gate), "burst_frac": mean(burst), "limiter_frac": mean(lim)}
     if trace:
         diag["trace"] = tr                             # tr[j] was computed on input hop j (starts at j*HOP)
+    return y, diag
+
+
+def _run_low_delay(mix, onnx, config, cfg, threads, dsp, trace, ref_valid, guards):
+    """run_engine for a low-delay model: LowDelayStreamEngine hop by hop, output aligned to the input (the release
+    lead L - H and the flush hop handled by the engine). ref_valid=False marks every reference sample absent."""
+    from vaani.low_delay_live import LowDelayStreamEngine
+    eng = LowDelayStreamEngine.from_config(onnx, config, threads=threads, guards=guards)
+    if dsp is not None:
+        eng = LowDelayStreamEngine(eng.c, eng.backend, dsp, guards=guards)
+    mix = np.asarray(mix, np.float32)
+    T, H = mix.shape[1], eng.hop
+    eng.reset()
+    ys, lim, tr = [], [], []
+    x = np.pad(mix, ((0, 0), (0, -(-T // H) * H - T)))
+    for j in range(x.shape[1] // H):
+        ys.append(eng.process(x[0, j * H:(j + 1) * H], x[1, j * H:(j + 1) * H], bool(ref_valid)))
+        lim.append(eng.last.get("limiter", np.nan))
+        if trace:
+            tr.append(dict(eng.last))
+    ys.append(eng.flush())
+    lead = eng.c.release_lead
+    y = np.concatenate(ys)[lead:lead + T]
+    diag = {"gate_mean": float("nan"), "burst_frac": float("nan"), "limiter_frac": float(np.mean(np.asarray(lim, float))),
+            "audio_contract": eng.c.audio_contract_id}
+    if trace:
+        diag["trace"] = tr                             # tr[j] was computed on input hop j (starts at j*H)
     return y, diag
 
 

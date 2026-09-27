@@ -242,9 +242,10 @@ class LowDelayStreamEngine:
         if state.config_hash != self.config_hash:
             raise ValueError("stream state was built under another contract or configuration (config_hash differs)")
         model = {k[6:]: v for k, v in state.caches.items() if k.startswith("model/")}
-        mine = {k for k in self.export_state().caches}
-        if set(state.caches) != mine:
-            raise ValueError(f"state caches differ from this engine's: {sorted(set(state.caches) ^ mine)[:6]}")
+        base = lambda keys: {k.split("#")[0] for k in keys}                # "#none"/"#py" mark a value's type only
+        mine, theirs = base(self.export_state().caches), base(state.caches)
+        if theirs != mine:
+            raise ValueError(f"state caches differ from this engine's: {sorted(theirs ^ mine)[:6]}")
         self.state = self.backend.from_host(
             bk.StreamState(state.profile_id, state.config_hash, model, state.sample_counter,
                            tuple(state.channel_validity), state.discontinuity_flags), config_hash=self.config_hash)
