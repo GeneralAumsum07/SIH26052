@@ -699,6 +699,21 @@ def count_macs(model: VaaniFE):
     return total[0]
 
 
+def profile_of(model: VaaniFE) -> str | None:
+    """Network name of a model: the tier when its sizes are a named tier's, with the Mini-P tiling ("mini_p18") or
+    the deep-filter band of a plain tiling ("mini_df96", Arm R); None for an unnamed size."""
+    c = model.cfg
+    tier = next((t for t, d in TIERS.items() if all(c.get(k) == v for k, v in d.items())), None)
+    if tier is None:
+        return None
+    fw = c.get("freq_windows")
+    if fw is not None:
+        return f"{tier}_{fw}" if isinstance(fw, str) else f"{tier}_fw{len(fw)}"
+    if c.get("df_bins") is not None:
+        return f"{tier}_df{c['df_bins']}"
+    return tier
+
+
 def summary(model: VaaniFE):
     """Budget figures of the deployed (folded) network at its contract's hop rate."""
     if model.overparam:

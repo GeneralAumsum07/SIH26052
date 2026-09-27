@@ -259,12 +259,19 @@ def fe_untrained(arch, seed=0):
 
 
 def fe_load(ckpt_path):
-    """Trained VaaniFE from a train.py checkpoint ({'model': state_dict, 'config': {'model_cfg': ...}})."""
+    """Trained VaaniFE from a train.py checkpoint ({'model': state_dict, 'config': {'model_cfg': ...}}), in its
+    deployable form: an over-parameterized checkpoint is folded. The checkpoint's contract (model_cfg.audio_contract,
+    and its recorded contract when present) must be a registered one."""
+    from vaani import audio_contract as ac
     from vaani.models import vaani_fe
     ck = torch.load(ckpt_path, map_location="cpu", weights_only=True)
-    m = vaani_fe.from_arch(ck["config"].get("model_cfg", {}))
+    mc = ck["config"].get("model_cfg", {})
+    c = ac.contract_of(mc)
+    if ck.get("audio_contract") is not None and ac.verify_record(ck["audio_contract"]) != c:
+        raise ValueError(f"{ckpt_path}: recorded contract differs from model_cfg's {c.audio_contract_id}")
+    m = vaani_fe.from_arch(mc)
     m.load_state_dict(ck["model"])
-    return m.eval()
+    return m.fold().eval() if m.overparam else m.eval()
 
 
 def fe_fold(onnx_path, out_path, level="basic"):
@@ -277,7 +284,27 @@ def fe_fold(onnx_path, out_path, level="basic"):
     so.log_severity_level = 3
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     ort.InferenceSession(str(onnx_path), sess_options=so, providers=["CPUExecutionProvider"])
+    src, got = onnx_metadata(onnx_path), onnx_metadata(out_path)
+    if any(got.get(k) != v for k, v in src.items()):
+        raise RuntimeError(f"{out_path}: folding dropped or changed metadata_props ({src} -> {got})")
     return Path(out_path)
+
+
+def onnx_metadata(onnx_path) -> dict:
+    import onnx
+    return {p.key: p.value for p in onnx.load(str(onnx_path), load_external_data=False).metadata_props}
+
+
+def stamp_contract(onnx_path, model):
+    """Write the model's audio contract, profile and model_cfg into the graph's metadata_props (before hashing)."""
+    import onnx
+    from vaani import audio_contract as ac
+    from vaani.models.vaani_fe import profile_of
+    meta = ac.onnx_metadata(model.contract, profile_of(model), dict(model.cfg))
+    mo = onnx.load(str(onnx_path))
+    onnx.helper.set_model_props(mo, {**{p.key: p.value for p in mo.metadata_props}, **meta})
+    onnx.save(mo, str(onnx_path))
+    return meta
 
 
 def fe_parity_corpus(model, streams=3, hops=200, seed=0):
@@ -308,29 +335,71 @@ def fe_stream_ort(sess, model, spec, valid):
     return np.concatenate(outs, 2), state
 
 
-def fe_parity(model, onnx_path, streams=3, hops=200, seed=0):
-    """ORT vs torch step (carried state) and torch step vs torch offline, on the same corpus."""
+def _torch_stream(model, spec, valid):
     from vaani.models import vaani_fe
+    s, v = torch.from_numpy(spec), torch.from_numpy(valid)
+    with torch.no_grad():
+        st, ref = model.init_state(1), []
+        for t in range(s.shape[2]):
+            o, st = model.step(vaani_fe.frame_to_step(s[:, :, t:t + 1]), v[:, t:t + 1], st)
+            ref.append(vaani_fe.step_to_frame(o))
+        return torch.cat(ref, 2).numpy(), st.numpy(), model(s, None, v).numpy()
+
+
+def _ort_interleaved(sess, model, a, b):
+    """Two independent streams stepped alternately on one session, each carrying its own state."""
+    (sa, va), (sb, vb) = a, b
+    st = [np.zeros((1, model.state_size), np.float32) for _ in range(2)]
+    outs = [[], []]
+    for t in range(max(sa.shape[2], sb.shape[2])):
+        for j, (s, v) in enumerate(((sa, va), (sb, vb))):
+            if t >= s.shape[2]:
+                continue
+            feeds = {"spec": np.ascontiguousarray(s[:, :, t].transpose(0, 2, 1)), "state": st[j]}
+            if model.uses_ref:
+                feeds["valid"] = v[:, t:t + 1]
+            o, st[j] = sess.run(["spec_out", "state_out"], feeds)
+            outs[j].append(o.transpose(0, 2, 1)[:, :, None])
+    return [np.concatenate(o, 2) for o in outs]
+
+
+def fe_parity(model, onnx_path, streams=3, hops=200, seed=0):
+    """ORT vs torch step (carried state: output and recurrent state), torch step vs torch offline, a reset
+    mid-stream (zero state == a fresh stream) and two interleaved independent streams, on the same corpus.
+    Absolute and relative errors are reported separately; `pass` needs every one within FE_PARITY_TOL."""
     sess = load_session(onnx_path)
-    err, rel, state_err, off_err = 0.0, 0.0, 0.0, 0.0
-    for spec, valid in fe_parity_corpus(model, streams, hops, seed):
+    err = rel = state_err = state_rel = off_err = 0.0
+    corpus = fe_parity_corpus(model, streams, hops, seed)
+    refs = []
+    for spec, valid in corpus:
         got, st_ort = fe_stream_ort(sess, model, spec, valid)
-        s, v = torch.from_numpy(spec), torch.from_numpy(valid)
-        with torch.no_grad():
-            st, ref = model.init_state(1), []
-            for t in range(s.shape[2]):
-                o, st = model.step(vaani_fe.frame_to_step(s[:, :, t:t + 1]), v[:, t:t + 1], st)
-                ref.append(vaani_fe.step_to_frame(o))
-            ref = torch.cat(ref, 2).numpy()
-            off = model(s, None, v).numpy()
+        ref, st, off = _torch_stream(model, spec, valid)
+        refs.append(ref)
         d = np.abs(got - ref)
         err, off_err = max(err, float(d.max())), max(off_err, float(np.abs(ref - off).max()))
         rel = max(rel, float(d.max() / max(np.abs(ref).max(), 1e-12)))
-        state_err = max(state_err, float(np.abs(st_ort - st.numpy()).max()))
+        ds = float(np.abs(st_ort - st).max())
+        state_err, state_rel = max(state_err, ds), max(state_rel, ds / max(float(np.abs(st).max()), 1e-12))
+    # reset: the second half after zeroing the state equals that half streamed from a fresh state
+    spec, valid = corpus[0]
+    h = spec.shape[2] // 2
+    fresh, _, _ = _torch_stream(model, np.ascontiguousarray(spec[:, :, h:]), np.ascontiguousarray(valid[:, h:]))
+    fe_stream_ort(sess, model, spec[:, :, :h], valid[:, :h])          # a carried first half, then discarded
+    after, _ = fe_stream_ort(sess, model, np.ascontiguousarray(spec[:, :, h:]), np.ascontiguousarray(valid[:, h:]))
+    reset_err = float(np.abs(after - fresh).max())
+    inter_err = 0.0
+    if len(corpus) >= 2:
+        ia, ib = _ort_interleaved(sess, model, corpus[0], corpus[1])
+        inter_err = max(float(np.abs(ia - refs[0]).max()), float(np.abs(ib - refs[1]).max()))
+    checks = {"output": err, "state": state_err, "stream_vs_offline": off_err, "reset": reset_err,
+              "interleaved": inter_err}
     return {"ort_vs_torch_max_abs": err, "ort_vs_torch_max_rel": rel, "state_max_abs": state_err,
-            "stream_vs_offline_max_abs": off_err, "streams": streams, "hops_per_stream": hops, "seed": seed,
+            "state_max_rel": state_rel, "stream_vs_offline_max_abs": off_err, "reset_max_abs": reset_err,
+            "interleaved_max_abs": inter_err, "streams": streams, "hops_per_stream": hops, "seed": seed,
+            "audio_contract": model.contract.audio_contract_id,
             "corpus": "randn*0.1 raw spectra, validity in random 10-60 hop runs (p_valid 0.7)",
-            "pass": err <= FE_PARITY_TOL and off_err <= FE_PARITY_TOL}
+            "failed": sorted(k for k, v in checks.items() if not v <= FE_PARITY_TOL),
+            "pass": all(v <= FE_PARITY_TOL for v in checks.values())}
 
 
 def fe_timing(onnx_path, model, hops=500, warm=50, seed=0):
@@ -350,11 +419,27 @@ def fe_timing(onnx_path, model, hops=500, warm=50, seed=0):
             "hops": hops, "warmup": warm, "intra_op_num_threads": 1, "provider": "CPUExecutionProvider"}
 
 
+def fold_check(model, folded, seed=0, hops=24):
+    """Max abs difference between an over-parameterized model and its fold (eval mode, offline forward)."""
+    g = torch.Generator().manual_seed(seed)
+    x = torch.randn(1, 257, hops, model.n_raw, generator=g) * 0.1
+    v = torch.ones(1, hops)
+    with torch.no_grad():
+        return float((model.eval()(x, None, v) - folded.eval()(x, None, v)).abs().max())
+
+
 def export_fe(model, out_path, folded_path=None, level="basic", parity=True, streams=3, hops=200, seed=0):
-    """Export VaaniFE.step (opset 17, static batch one, flat state, named I/O), save ORT's folded graph
-    and check ORT-vs-torch parity over carried-state hops. Returns a report dict."""
+    """Export VaaniFE.step (opset 17, static batch one, flat state, named I/O), stamp its audio contract into the
+    graph's metadata_props, save ORT's folded graph (metadata re-checked) and check ORT-vs-torch parity over
+    carried-state hops. An over-parameterized model is folded first and the fold re-checked. Returns a report."""
     from vaani.models.vaani_fe import StepGraph, summary
     model = model.eval()
+    fold_rep = None
+    if model.overparam:
+        plain = model.fold().eval()
+        fold_rep = {"fold_max_abs": fold_check(model, plain, seed)}
+        fold_rep["pass"] = fold_rep["fold_max_abs"] <= FE_PARITY_TOL
+        model = plain
     wrap = StepGraph(model).eval()
     ins, outs = wrap.io_names()
     out_path = Path(out_path)
@@ -364,11 +449,15 @@ def export_fe(model, out_path, folded_path=None, level="basic", parity=True, str
         warnings.simplefilter("ignore")  # tracer warnings on static batch-one shapes; parity below is the proof
         torch.onnx.export(wrap, wrap.example_inputs(seed), str(out_path), opset_version=FE_OPSET,
                           input_names=ins, output_names=outs, dynamo=False, do_constant_folding=True)
-    fe_fold(out_path, folded_path, level)
+    meta = stamp_contract(out_path, model)     # before any hash is taken
+    fe_fold(out_path, folded_path, level)      # raises if the metadata did not survive
     rep = {"onnx": out_path.as_posix(), "folded": folded_path.as_posix(), "fold_level": level, "opset": FE_OPSET,
            "inputs": ins, "outputs": outs, "onnx_sha256": hashlib.sha256(out_path.read_bytes()).hexdigest(),
            "folded_sha256": hashlib.sha256(folded_path.read_bytes()).hexdigest(), **summary(model),
+           "audio_contract_hash": model.contract.contract_hash, "metadata": meta,
            "torch": torch.__version__, "onnxruntime": ort.__version__}
+    if fold_rep is not None:
+        rep["overparam_fold"] = fold_rep
     if parity:
         rep["parity"] = fe_parity(model, folded_path, streams, hops, seed)
     return rep

@@ -11,7 +11,11 @@ fusion, redundant-node removal); every count is on the folded graph. Checks:
   layout_share     layout ops < 30% of nodes; layout = LAYOUT_OPS below (pure data movement)
   parity           ORT-vs-torch carried-state max abs spectral error <= 1e-5 (twin only)
   stream_offline   torch step vs torch offline forward <= 1e-5 (twin only)
-Without a twin, parity/stream_offline are reported "not_run" and do not fail the gate.
+  state            ORT-vs-torch carried recurrent state max abs <= 1e-5 (twin only)
+  reset/interleaved  a mid-stream reset and two interleaved streams match fresh/separate streams <= 1e-5 (twin only)
+  contract         the audio contract stamped in metadata_props is a registered one, equal to the twin's; an
+                   unstamped graph is legacy (C0) and never passes as a low-delay twin
+Without a twin, parity/stream_offline/state are reported "not_run" and do not fail the gate.
 
   python scripts/graph_gate.py runs/fe_tiers/mini.onnx --tier mini --seed 0 --json out.json
   python scripts/graph_gate.py deploy/r7/cascade.onnx          # documented comparison; expected FAIL
@@ -69,6 +73,19 @@ def structure(onnx_path, level="basic"):
             "symbolic_examples": sym_names, "fold_level": level}
 
 
+def _contract(onnx_path, twin):
+    """(report, ok): the stamped contract, checked against the registry and the twin's contract."""
+    from vaani import audio_contract as ac
+    meta = E.onnx_metadata(onnx_path)
+    try:
+        c = ac.contract_from_metadata(meta, twin.contract.audio_contract_id if twin is not None else None,
+                                      where=str(onnx_path))
+    except ValueError as e:
+        return {"error": str(e), "stamped": ac.META_ID in meta}, False
+    return {"audio_contract_id": c.audio_contract_id, "audio_contract_hash": c.contract_hash,
+            "stamped": ac.META_ID in meta, "profile": meta.get(ac.META_PROFILE)}, True
+
+
 def gate(onnx_path, twin=None, level="basic", streams=3, hops=200, seed=0):
     s = structure(onnx_path, level)
     checks = {"nodes": s["folded_nodes"] < MAX_NODES, "loops": s["loop_nodes"] == 0,
@@ -77,12 +94,16 @@ def gate(onnx_path, twin=None, level="basic", streams=3, hops=200, seed=0):
     rep = {"onnx": Path(onnx_path).as_posix(), "structure": s,
            "limits": {"max_nodes": MAX_NODES, "max_layout_share": MAX_LAYOUT_SHARE,
                       "parity_tol": E.FE_PARITY_TOL, "layout_ops": sorted(LAYOUT_OPS), "loop_ops": sorted(LOOP_OPS)}}
+    rep["audio_contract"], checks["contract"] = _contract(onnx_path, twin)
     if twin is not None:
         with tempfile.TemporaryDirectory() as td:  # parity on the folded graph, i.e. what ships
             p = E.fe_parity(twin, E.fe_fold(onnx_path, Path(td) / "folded.onnx", level), streams, hops, seed)
         rep["parity"] = p
         checks["parity"] = p["ort_vs_torch_max_abs"] <= E.FE_PARITY_TOL
         checks["stream_offline"] = p["stream_vs_offline_max_abs"] <= E.FE_PARITY_TOL
+        checks["state"] = p["state_max_abs"] <= E.FE_PARITY_TOL
+        checks["reset"] = p["reset_max_abs"] <= E.FE_PARITY_TOL
+        checks["interleaved"] = p["interleaved_max_abs"] <= E.FE_PARITY_TOL
     else:
         rep["parity"] = "not_run: no torch twin"
     rep["checks"] = checks

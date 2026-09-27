@@ -24,6 +24,13 @@ capture-path reference validity of this frame. Validity 0 is the trained referen
 Width/profile changes happen only by building a new backend and a new state: `check_state` refuses a state whose
 cache shapes differ from the backend's, so hidden state is never resized or reused across widths.
 
+Audio contracts (low-delay plan Task 5): a VaaniFE graph stamped with a low-delay contract (vaani.export.export_fe
+metadata_props) runs under the profile `vaani_fe-<tier>@<audio_contract_id>` with the contract's hop as deadline,
+and its streams' config_hash carries the contract ID and hash (config_hash's `extra`). `check_state` and `from_host`
+verify config_hash when the caller passes the one it runs under, so a state never crosses contracts, even between
+contracts whose state shapes are identical. An unstamped graph is a legacy (C0) graph; it is never accepted where a
+low-delay contract is expected. Legacy profile IDs, deadlines and config hashes are unchanged.
+
 numpy only at import time (torch is imported lazily by TorchBackend), so the board path stays torch-free.
 """
 from __future__ import annotations
@@ -166,10 +173,18 @@ class Backend:
     kind = "cascade"
     takes_valid = False            # True: the graph has a per-frame reference validity input
 
-    def __init__(self, profile_id: str, cache_specs: dict, deadline_ms: float = DEADLINE_MS):
+    def __init__(self, profile_id: str, cache_specs: dict, deadline_ms: float | None = DEADLINE_MS, audio_contract=None):
+        from vaani import audio_contract as ac
         self.profile_id = profile_id
+        self.audio_contract = ac.get_audio_contract(audio_contract)    # C0 unless the model/graph says otherwise
         self._specs = {k: (tuple(s), np.dtype(d)) for k, (s, d) in cache_specs.items()}
-        self.telemetry = Telemetry(deadline_ms)
+        self.telemetry = Telemetry(self.audio_contract.deadline_ms if deadline_ms is None else deadline_ms)
+
+    def config_hash(self, controller_on: bool, dsp: dict | None) -> str:
+        """config_hash of a stream on this backend: the DSP configuration plus, for a low-delay contract, its ID
+        and hash (C0 adds nothing, so legacy hashes are unchanged)."""
+        from vaani import audio_contract as ac
+        return config_hash(controller_on, dsp, ac.config_extra(self.audio_contract))
 
     def cache_specs(self) -> dict:
         return dict(self._specs)
@@ -184,7 +199,11 @@ class Backend:
         state.sample_counter = 0; state.discontinuity_flags |= DISC_RESET
         return state
 
-    def check_state(self, state: StreamState, host: bool = True) -> None:
+    def check_state(self, state: StreamState, host: bool = True, config_hash: str | None = None) -> None:
+        """Refuse a state of another profile, cache layout or (when `config_hash` is given) configuration."""
+        if config_hash is not None and state.config_hash != config_hash:
+            raise ValueError(f"state was built under config_hash {state.config_hash[:16]}..., this stream runs "
+                             f"{config_hash[:16]}... (another DSP configuration or audio contract)")
         if state.profile_id != self.profile_id:
             raise ValueError(f"state is for profile {state.profile_id!r}, backend runs {self.profile_id!r}; "
                              "change profiles by building a new state at a reset boundary")
@@ -207,9 +226,10 @@ class Backend:
         return StreamState(state.profile_id, state.config_hash, {k: self._host(v) for k, v in state.caches.items()},
                            state.sample_counter, tuple(state.channel_validity), state.discontinuity_flags)
 
-    def from_host(self, state: StreamState) -> StreamState:
-        """Adopt a host (numpy) state, e.g. from `StreamState.load`, after checking shapes and dtypes."""
-        self.check_state(state, host=True)
+    def from_host(self, state: StreamState, config_hash: str | None = None) -> StreamState:
+        """Adopt a host (numpy) state, e.g. from `StreamState.load`, after checking profile, shapes, dtypes and (when
+        given) the config_hash the caller runs under."""
+        self.check_state(state, host=True, config_hash=config_hash)
         return StreamState(state.profile_id, state.config_hash, {k: self._device(np.asarray(v)) for k, v in state.caches.items()},
                            state.sample_counter, tuple(state.channel_validity), state.discontinuity_flags)
 
@@ -304,7 +324,11 @@ def _ort_session(onnx_path, threads, providers):
         raise RuntimeError(f"execution provider(s) {missing} not available; this onnxruntime has "
                            f"{ort.get_available_providers()}")
     opts = ort.SessionOptions(); opts.intra_op_num_threads = threads; opts.log_severity_level = 3
-    return ort, ort.InferenceSession(str(onnx_path), sess_options=opts, providers=providers), providers
+    sess = ort.InferenceSession(str(onnx_path), sess_options=opts, providers=providers)
+    dropped = [p for p in (q if isinstance(q, str) else q[0] for q in providers) if p not in sess.get_providers()]
+    if dropped:     # ORT drops a provider that fails to initialize and runs on the next one: never silently
+        raise RuntimeError(f"execution provider(s) {dropped} failed to initialize; session has {sess.get_providers()}")
+    return ort, sess, providers
 
 
 class TorchBackend(Backend):
@@ -372,9 +396,13 @@ FE_INPUTS = (["spec", "valid", "state"], ["spec", "state"])      # vaani.models.
 FE_OUTPUTS = ["spec_out", "state_out"]
 
 
-def fe_profile_id(profile: str | None, state_floats: int) -> str:
-    """Profile id of a VaaniFE stream: the tier name when known ("vaani_fe-mini"), else the state size."""
-    return f"{FE_KIND}-{profile}" if profile else f"{FE_KIND}-s{int(state_floats)}"
+def fe_profile_id(profile: str | None, state_floats: int, audio_contract=None) -> str:
+    """Profile id of a VaaniFE stream: the tier name when known ("vaani_fe-mini"), else the state size; a low-delay
+    contract appends "@<audio_contract_id>" ("vaani_fe-mini_p18@vaanife_ld_asym512_h96_s160_v1")."""
+    from vaani import audio_contract as ac
+    base = f"{FE_KIND}-{profile}" if profile else f"{FE_KIND}-s{int(state_floats)}"
+    c = ac.get_audio_contract(audio_contract)
+    return base if c.is_legacy else f"{base}@{c.audio_contract_id}"
 
 
 def _fe_frame(spec6: np.ndarray, n_raw: int) -> np.ndarray:
@@ -391,8 +419,14 @@ class FeOrtBackend(Backend):
 
     def __init__(self, onnx_path, threads: int = 1, providers=None, io_binding: bool | None = None,
                  device: str | None = None, profile_id: str | None = None, profile: str | None = None,
-                 deadline_ms: float = DEADLINE_MS):
+                 deadline_ms: float | None = None, audio_contract: str | None = None):
+        """audio_contract: the contract the caller expects (e.g. the sidecar's); the graph's stamp must agree, and
+        an unstamped graph is refused for a low-delay contract. deadline_ms defaults to the contract's hop."""
+        from vaani import audio_contract as ac
         self.ort, self.sess, providers = _ort_session(onnx_path, threads, providers)
+        meta = dict(self.sess.get_modelmeta().custom_metadata_map)
+        contract = ac.contract_from_metadata(meta, audio_contract, where=str(onnx_path))
+        profile = profile or meta.get(ac.META_PROFILE)
         ins, outs = self.sess.get_inputs(), self.sess.get_outputs()
         names = [i.name for i in ins]
         if names not in FE_INPUTS or [o.name for o in outs] != FE_OUTPUTS:
@@ -414,8 +448,8 @@ class FeOrtBackend(Backend):
         self.tested = not gpu
         self.onnx_path = str(onnx_path)
         self._valid = np.ones((1, 1), np.float32)                    # reused host buffer: no per-hop alloc
-        super().__init__(profile_id or fe_profile_id(profile, self.state_floats),
-                         {"state": ((1, self.state_floats), np.float32)}, deadline_ms)
+        super().__init__(profile_id or fe_profile_id(profile, self.state_floats, contract),
+                         {"state": ((1, self.state_floats), np.float32)}, deadline_ms, contract)
 
     _zeros = OrtBackend._zeros
     _host = OrtBackend._host
@@ -454,8 +488,9 @@ class FeTorchBackend(Backend):
     kind = FE_KIND
 
     def __init__(self, model, device: str = "cpu", profile_id: str | None = None, profile: str | None = None,
-                 deadline_ms: float = DEADLINE_MS):
+                 deadline_ms: float | None = None):
         import torch
+        from vaani.models.vaani_fe import profile_of
         self.torch = torch
         self.module = model.to(device).eval()
         self.device = device
@@ -464,8 +499,8 @@ class FeTorchBackend(Backend):
         self._spec_dev = torch.zeros(1, self.n_raw, 257, device=device)
         self._valid_dev = torch.ones(1, 1, device=device)
         self.name = f"torch-{device}"
-        super().__init__(profile_id or fe_profile_id(profile or _tier_of(model), self.state_floats),
-                         {"state": ((1, self.state_floats), np.float32)}, deadline_ms)
+        super().__init__(profile_id or fe_profile_id(profile or profile_of(model), self.state_floats, model.contract),
+                         {"state": ((1, self.state_floats), np.float32)}, deadline_ms, model.contract)
 
     @classmethod
     def from_arch(cls, arch, seed: int = 0, device: str = "cpu", profile_id: str | None = None):
@@ -492,16 +527,6 @@ class FeTorchBackend(Backend):
             return y.transpose(1, 2)[:, :, None].cpu().numpy()
 
 
-def _tier_of(model) -> str | None:
-    """Tier name when the model's sizes are exactly a named tier's, else None."""
-    from vaani.models.vaani_fe import TIERS
-    c = model.cfg
-    for t, d in TIERS.items():
-        if all(c[k] == v for k, v in d.items()):
-            return t
-    return None
-
-
 def graph_kind(onnx_path) -> str:
     """FE_KIND for a VaaniFE step graph, "cascade" for the r7-style spec6/feats/caches graph (input names only)."""
     import onnxruntime as ort
@@ -520,4 +545,9 @@ def open_onnx(onnx_path, kind: str | None = None, profile: str | None = None, **
         raise ValueError(f"{onnx_path}: model_config kind {kind!r} but the graph is a {got!r} graph")
     if got == FE_KIND:
         return FeOrtBackend(onnx_path, profile=profile, **kw)
+    contract = kw.pop("audio_contract", None)
+    if contract is not None:
+        from vaani import audio_contract as ac
+        if not ac.get_audio_contract(contract).is_legacy:
+            raise ValueError(f"{onnx_path}: a cascade graph cannot run the low-delay contract {contract}")
     return OrtBackend(onnx_path, **kw)

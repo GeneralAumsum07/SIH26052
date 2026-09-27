@@ -242,3 +242,76 @@ def verify_record(d: dict) -> AudioContract:
     if reg != c:
         raise ValueError(f"contract record {c.audio_contract_id} differs from the registered contract")
     return reg
+
+
+# ---- artifact metadata (Task 5) ---------------------------------------------------------------------
+# ONNX metadata_props keys stamped by vaani.export.export_fe before the graph hashes are taken. The board path reads
+# them through onnxruntime's custom_metadata_map, so this module stays numpy-only.
+META_ID = "audio_contract_id"
+META_HASH = "audio_contract_hash"
+META_RECORD = "audio_contract"          # the full contract record, JSON
+META_PROFILE = "vaani_profile"          # tier / network name, e.g. "mini", "mini_p18", "mini_df96"
+META_MODEL_CFG = "vaani_model_cfg"      # the exported (folded) model_cfg, JSON
+
+
+def onnx_metadata(contract, profile: str | None = None, model_cfg: dict | None = None) -> dict:
+    c = get_audio_contract(contract)
+    meta = {META_ID: c.audio_contract_id, META_HASH: c.contract_hash,
+            META_RECORD: json.dumps(c.to_dict(), sort_keys=True)}
+    if profile:
+        meta[META_PROFILE] = profile
+    if model_cfg is not None:
+        meta[META_MODEL_CFG] = json.dumps(model_cfg, sort_keys=True, default=list)
+    return meta
+
+
+def contract_from_metadata(meta: dict | None, expected: str | None = None, where: str = "artifact") -> AudioContract:
+    """The contract an artifact's metadata declares, verified against the registry.
+
+    Metadata without a contract is a known legacy artifact (C0, explicit legacy dispatch); it is never accepted as a
+    low-delay artifact. `expected` (a contract ID, e.g. from the sidecar) must agree when given."""
+    meta = meta or {}
+    exp = None if expected is None else get_audio_contract(expected)
+    if META_ID not in meta:
+        if exp is not None and not exp.is_legacy:
+            raise ValueError(f"{where}: no {META_ID} metadata; an unstamped artifact is never accepted as the "
+                             f"low-delay contract {exp.audio_contract_id}")
+        return get_audio_contract(None)
+    if META_RECORD not in meta or META_HASH not in meta:
+        raise ValueError(f"{where}: {META_ID} is stamped without its record and hash")
+    rec = verify_record(json.loads(meta[META_RECORD]))
+    if rec.audio_contract_id != meta[META_ID] or rec.contract_hash != meta[META_HASH]:
+        raise ValueError(f"{where}: contract metadata disagree (id {meta[META_ID]}, hash {meta[META_HASH]}, "
+                         f"record {rec.audio_contract_id}/{rec.contract_hash})")
+    if exp is not None and exp != rec:
+        raise ValueError(f"{where}: stamped for {rec.audio_contract_id} ({rec.contract_hash}) but "
+                         f"{exp.audio_contract_id} ({exp.contract_hash}) is expected")
+    return rec
+
+
+def config_extra(contract) -> dict | None:
+    """The contract's part of vaani.backend.config_hash: None for C0, so legacy hashes are unchanged."""
+    c = get_audio_contract(contract)
+    return None if c.is_legacy else {META_ID: c.audio_contract_id, META_HASH: c.contract_hash}
+
+
+def sidecar_fields(contract) -> dict:
+    """model_config.json fields of a low-delay artifact (empty for C0: legacy sidecars are unchanged)."""
+    c = get_audio_contract(contract)
+    return {} if c.is_legacy else {META_ID: c.audio_contract_id, META_HASH: c.contract_hash, META_RECORD: c.to_dict()}
+
+
+def contract_from_sidecar(cfg: dict, where: str = "model_config") -> AudioContract:
+    """The contract of a model_config.json: model_cfg's audio_contract, which must agree with the recorded fields.
+    A low-delay model_cfg without its recorded contract is refused."""
+    c = contract_of(cfg.get("model_cfg"))
+    if META_RECORD not in cfg and META_ID not in cfg:
+        if not c.is_legacy:
+            raise ValueError(f"{where}: model_cfg names {c.audio_contract_id} but the contract record is missing")
+        return c
+    rec = verify_record(cfg[META_RECORD]) if META_RECORD in cfg else get_audio_contract(cfg[META_ID])
+    if rec != c or cfg.get(META_ID, rec.audio_contract_id) != rec.audio_contract_id \
+            or cfg.get(META_HASH, rec.contract_hash) != rec.contract_hash:
+        raise ValueError(f"{where}: recorded contract {cfg.get(META_ID)} / {cfg.get(META_HASH)} disagrees with "
+                         f"model_cfg's {c.audio_contract_id} / {c.contract_hash}")
+    return rec

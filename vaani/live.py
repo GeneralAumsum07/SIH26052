@@ -54,14 +54,19 @@ def load_model_config(path) -> dict:
 
     The ONNX graph does not encode it, and the board has no torch to read a checkpoint, so the export step writes
     it next to the graph (`write_model_config`). A plain JSON file keeps the board free of pickles."""
+    from vaani import audio_contract as ac
     cfg = json.loads(Path(path).read_text(encoding="utf-8"))
     if "controller_on" not in cfg:
         raise ValueError(f"{path}: missing 'controller_on'")
     # kind: "cascade" (r7 spec6/feats/caches graph) or "vaani_fe" (step graph); profile: the VaaniFE tier name
     kind = cfg.get("kind") or ("vaani_fe" if cfg.get("model") == "vaani_fe" else "cascade")
+    # the contract: model_cfg's, agreeing with the recorded record/hash (a low-delay model_cfg must carry them)
+    contract = ac.contract_from_sidecar(cfg, where=str(path))
     return {"controller_on": bool(cfg["controller_on"]), "dsp": cfg.get("dsp") or {},
             "onnx_sha256": cfg.get("onnx_sha256"), "kind": kind,
-            "profile": cfg.get("profile") or (cfg.get("model_cfg") or {}).get("tier")}
+            "profile": cfg.get("profile") or (cfg.get("model_cfg") or {}).get("tier"),
+            "model_cfg": cfg.get("model_cfg"), "audio_contract": contract.audio_contract_id,
+            "audio_contract_hash": contract.contract_hash}
 
 
 def write_fe_model_config(out_path, onnx_path, profile: str | None, controller_on: bool = True,
@@ -69,9 +74,11 @@ def write_fe_model_config(out_path, onnx_path, profile: str | None, controller_o
     """model_config.json for a VaaniFE step graph without a checkpoint (e.g. an untrained tier export): kind,
     profile, DSP front end and the graph's sha256. `extra` is recorded as-is (e.g. note="untrained")."""
     import hashlib
+    from vaani import audio_contract as ac
     cfg = {"kind": "vaani_fe", "model": "vaani_fe", "profile": profile, "controller_on": bool(controller_on),
            "dsp": dsp or {}, "model_cfg": model_cfg, "onnx": Path(onnx_path).as_posix(),
-           "onnx_sha256": hashlib.sha256(Path(onnx_path).read_bytes()).hexdigest(), **extra}
+           "onnx_sha256": hashlib.sha256(Path(onnx_path).read_bytes()).hexdigest(),
+           **ac.sidecar_fields(ac.contract_of(model_cfg)), **extra}
     Path(out_path).write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
     return cfg
 
@@ -87,7 +94,9 @@ def write_model_config(ckpt_path, out_path, onnx_path=None) -> dict:
            "controller_on": bool(c["controller_on"]),
            "dsp": c.get("dsp") or {}, "model_cfg": c.get("model_cfg")}
     if c["model"] == "vaani_fe":
+        from vaani import audio_contract as ac
         cfg["kind"], cfg["profile"] = "vaani_fe", (c.get("model_cfg") or {}).get("tier")
+        cfg.update(ac.sidecar_fields(ac.contract_of(c.get("model_cfg"))))   # empty for C0: legacy sidecars unchanged
     if onnx_path is not None:
         cfg["onnx_sha256"] = hashlib.sha256(Path(onnx_path).read_bytes()).hexdigest()
     Path(out_path).write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
@@ -147,7 +156,8 @@ class StreamEngine:
                  left_context: np.ndarray | None = None, *, backend=None, onnx_sha256: str | None = None,
                  allow_hash_mismatch: bool = False, ref_ramp_hops: int | None = None, ms_window: int = 4096,
                  stage_timing: bool = False, profile_id: str | None = None, guards: dict | bool | None = None,
-                 kind: str | None = None, profile: str | None = None):
+                 kind: str | None = None, profile: str | None = None, audio_contract: str | None = None):
+        from vaani import audio_contract as ac
         from vaani import backend as bk
         dsp = dsp or {}
         self.controller_on, self.dsp = controller_on, dsp
@@ -156,9 +166,16 @@ class StreamEngine:
         if onnx_path is not None:
             self.onnx_sha256 = verify_onnx(onnx_path, onnx_sha256, allow_hash_mismatch)
         if backend is None:     # graph kind from its input names; an r7-style graph gets the same OrtBackend as before
-            backend = bk.open_onnx(onnx_path, kind=kind, profile=profile, threads=threads, profile_id=profile_id)
+            ckw = {} if audio_contract is None else {"audio_contract": audio_contract}
+            backend = bk.open_onnx(onnx_path, kind=kind, profile=profile, threads=threads, profile_id=profile_id, **ckw)
         elif kind is not None and getattr(backend, "kind", "cascade") != kind:
             raise ValueError(f"model_config kind {kind!r} but the backend runs a {backend.kind!r} model")
+        contract = getattr(backend, "audio_contract", None) or ac.get_audio_contract(None)
+        if audio_contract is not None and ac.get_audio_contract(audio_contract) != contract:
+            raise ValueError(f"expected contract {audio_contract} but the backend runs {contract.audio_contract_id}")
+        if not contract.is_legacy:   # this engine is the 256-sample-hop legacy pipeline
+            raise ValueError(f"{contract.audio_contract_id} is a low-delay contract: use "
+                             "vaani.low_delay_live.LowDelayStreamEngine")
         self.backend = backend
         self.takes_valid = bool(getattr(backend, "takes_valid", False))
         self.pol = dsp.get("ref_policy")        # None: the legacy runtime policy (r7); set: the trained policy
@@ -285,7 +302,7 @@ class StreamEngine:
         model = {k[6:]: v for k, v in state.caches.items() if k.startswith("model/")}
         self.state = self.backend.from_host(bk.StreamState(state.profile_id, state.config_hash, model,
                                                            state.sample_counter, tuple(state.channel_validity),
-                                                           state.discontinuity_flags))
+                                                           state.discontinuity_flags), config_hash=self.config_hash)
         for key, v in state.caches.items():
             if key.startswith("dsp/"):
                 _, name, attr = key.split("/", 2)
@@ -471,6 +488,7 @@ class StreamEngine:
         kw.setdefault("onnx_sha256", cfg.get("onnx_sha256"))
         if cfg["kind"] != "cascade":            # an r7 config builds exactly the engine it always did
             kw.setdefault("kind", cfg["kind"]); kw.setdefault("profile", cfg.get("profile"))
+            kw.setdefault("audio_contract", cfg["audio_contract"])
         return cls(onnx_path, cfg["controller_on"], cfg["dsp"], **kw)
 
 
