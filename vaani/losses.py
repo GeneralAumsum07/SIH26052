@@ -21,6 +21,7 @@ three terms map as:
   magnitude weighting, not a PESQ or PMSQE surrogate, so it does not optimise a
   perceptual *metric* directly.
 """
+import numpy as np
 import torch, torch.nn as nn
 from vaani.dsp import stft
 
@@ -140,33 +141,96 @@ def _sanitize_grad(g):
     return torch.nan_to_num(g, nan=0.0, posinf=0.0, neginf=0.0)
 
 
-def pesq_term(pesq, y_p, y_t):
+_DITHER: dict = {}
+_DUMMY: dict = {}
+
+
+def _dither(n, device):
+    """The fixed -120 dBFS output dither, built once per (length, device) and kept there (it used to be drawn on the
+    CPU from a reseeded generator and copied on every call: the same values, now without the copy)."""
+    key = (n, str(device))
+    d = _DITHER.get(key)
+    if d is None:
+        g = torch.Generator().manual_seed(0)
+        d = _DITHER[key] = (PESQ_DITHER * torch.randn(n, generator=g)).to(device)
+    return d
+
+
+def _dummy(n, device):
+    """A fixed, well-conditioned stand-in for silent-target rows (weight 0): keeps the batch shape static."""
+    key = (n, str(device))
+    d = _DUMMY.get(key)
+    if d is None:
+        g = torch.Generator().manual_seed(1)
+        d = _DUMMY[key] = (0.1 * torch.randn(n, generator=g)).to(device)
+    return d
+
+
+# ---- torch_pesq's fixed IIR filters evaluated by FFT convolution (plan Task 4b) --------------------------------
+PESQ_IR_ENERGY_TAIL = 1e-16
+_IR: dict = {}
+
+
+def pesq_impulse_response(b, a, tail=PESQ_IR_ENERGY_TAIL, n=1 << 15):
+    """float64 impulse response of the IIR (b, a), truncated where the remaining energy falls below `tail` of the total
+    (torch_pesq's float32 coefficients evaluated exactly: 544 taps for the power band-pass, 591 for the pre-emphasis)."""
+    from scipy.signal import lfilter as sp_lfilter
+    x = np.zeros(n); x[0] = 1.0
+    h = sp_lfilter(np.asarray(b, np.float64), np.asarray(a, np.float64), x)
+    e = np.cumsum((h ** 2)[::-1])[::-1]          # energy from k to the end
+    keep = int(np.argmax(e < tail * e[0])) if (e < tail * e[0]).any() else n
+    return h[:keep]
+
+
+def _fft_lfilter(signal, a_coeffs, b_coeffs, clamp=False):
+    """Drop-in for torchaudio.functional.lfilter on torch_pesq's fixed filters: a causal FFT convolution with the
+    exact impulse response, parallel over samples (torchaudio's CUDA recursion runs one thread per signal)."""
+    key = (a_coeffs.data_ptr(), b_coeffs.data_ptr(), str(signal.device))
+    H = _IR.get(key)
+    if H is None:   # one host read per filter and device, then cached
+        h = pesq_impulse_response(b_coeffs.detach().cpu().double().numpy(), a_coeffs.detach().cpu().double().numpy())
+        H = _IR[key] = torch.as_tensor(h, dtype=torch.float64, device=signal.device)
+    H = H.to(signal.dtype)   # float32 convolution for float32 signals (the float64 IR rounded once)
+    n, L = signal.shape[-1], H.shape[0]
+    nfft = 1 << (n + L - 1 - 1).bit_length()
+    y = torch.fft.irfft(torch.fft.rfft(signal, nfft) * torch.fft.rfft(H, nfft), nfft)[..., :n]
+    return y.clamp(-1, 1) if clamp else y
+
+
+def pesq_term(pesq, y_p, y_t, fft_filters=False):
     """Mean torch_pesq distortion (0 = transparent) over items whose target is audible; (value, items scored).
-    Silent-target items are left out before the call, the output gets a fixed -120 dBFS dither so a fully suppressed
-    prediction still has a gradient, and any non-finite gradient left inside torch_pesq is zeroed on this branch
-    only: a NaN there would pass train.py's finite-loss check and poison the weights through the optimiser."""
+    Sync-free: silent-target rows are replaced by a fixed dummy and carry zero weight (torch_pesq scores row by row,
+    so audible rows are unaffected, and an all-silent batch gives 0); the output gets a fixed -120 dBFS dither so a
+    fully suppressed prediction still has a gradient; any non-finite gradient left inside torch_pesq is zeroed on
+    this branch only: a NaN there would pass the trainer's checks and poison the weights through the optimiser.
+    `items` is a 0-d device tensor. fft_filters: evaluate torch_pesq's two fixed IIR filters by FFT convolution."""
     keep = y_t.pow(2).mean(-1).sqrt() > PESQ_MIN_RMS
-    if not bool(keep.any()):
-        return y_p.new_zeros(()), 0
     pesq.to(y_p.device)   # train.py never moves the loss module; torch_pesq keeps its filters as nn.Parameters
-    ref = y_t[keep].detach()
-    g = torch.Generator().manual_seed(0)
-    deg = y_p[keep] + PESQ_DITHER * torch.randn(y_p.shape[-1], generator=g).to(y_p.device)
+    n = y_p.shape[-1]
+    k = keep[:, None]
+    dummy = _dummy(n, y_p.device)
+    ref = torch.where(k, y_t, dummy).detach()
+    deg = torch.where(k, y_p + _dither(n, y_p.device), dummy)
     if deg.requires_grad:
         deg.register_hook(_sanitize_grad)
         if isinstance(pesq.resampler, _PeakCut):   # raw()'s own joint-peak normalisation, with the peak constant
             peak = torch.maximum(deg.abs().amax(1, keepdim=True), ref.abs().amax(1, keepdim=True)).detach()
             pesq.resampler.deg = deg / peak
     import torch_pesq.loss as tpl
-    unfold = tpl.unfold
+    unfold, lfilter = tpl.unfold, tpl.lfilter
     tpl.unfold = _floored_unfold(unfold)   # scoped to this call: other PesqLoss users keep the library's pooling
+    if fft_filters:
+        tpl.lfilter = _fft_lfilter
     try:
         v = pesq(ref, deg).float()
     finally:
-        tpl.unfold = unfold
+        tpl.unfold, tpl.lfilter = unfold, lfilter
         if isinstance(pesq.resampler, _PeakCut):
             pesq.resampler.deg = None
-    return torch.where(torch.isfinite(v), v, torch.zeros_like(v)).mean(), int(keep.sum())
+    w = keep.to(v.dtype)
+    items = keep.sum()
+    val = torch.where(torch.isfinite(v) & keep, v, torch.zeros_like(v)).sum() / items.clamp(min=1).to(v.dtype)
+    return val, items
 
 
 def anti_wrap(x):
@@ -201,13 +265,17 @@ class FELoss(nn.Module):
     TERMS = ("mag", "over", "complex", "consistency", "wave", "pesq", "snr", "mrstft", "phase")
 
     def __init__(self, w_mag=0.3, w_complex=0.2, w_consistency=0.3, w_wave=0.2, w_pesq=0.001, w_snr=0.002,
-                 snr_max_db=30.0, kappa=1.0, w_mrstft=0.0, w_phase=0.0, p=0.3, dominance_db=0.0, pesq_required=False):
+                 snr_max_db=30.0, kappa=1.0, w_mrstft=0.0, w_phase=0.0, p=0.3, dominance_db=0.0, pesq_required=False,
+                 pesq_filters="lfilter"):
         super().__init__()
         if kappa < 1:
             raise ValueError("kappa must be >= 1 (1 = symmetric magnitude loss)")
         self.w = dict(mag=w_mag, complex=w_complex, consistency=w_consistency, wave=w_wave, snr=w_snr,
                       mrstft=w_mrstft, phase=w_phase)
         self.kappa, self.p, self.snr_max_db, self.dominance_db = kappa, p, snr_max_db, dominance_db
+        if pesq_filters not in ("lfilter", "fft"):
+            raise ValueError("pesq_filters must be 'lfilter' or 'fft'")
+        self.pesq_fft = pesq_filters == "fft"   # r8: FFT evaluation of torch_pesq's fixed filters (plan Task 4b)
         self.pesq = _pesq_module() if w_pesq else None
         if pesq_required and w_pesq and self.pesq is None:   # a box missing the `train` extra must not train without it
             raise ImportError("loss_cfg.pesq_required: torch_pesq is not importable (uv sync --extra train)")
@@ -242,7 +310,7 @@ class FELoss(nn.Module):
         snr = absolute_snr(y_p, y_t)
         self.last_snr_clamp_fraction = (snr.detach() >= self.snr_max_db).float().mean()
         t["snr"] = -snr.clamp(max=self.snr_max_db).mean()
-        t["pesq"], self.last_pesq_items = pesq_term(self.pesq, y_p, y_t) if self.w["pesq"] else (pred.new_zeros(()), 0)
+        t["pesq"], self.last_pesq_items = pesq_term(self.pesq, y_p, y_t, self.pesq_fft) if self.w["pesq"] else (pred.new_zeros(()), 0)
         t["mrstft"] = mr_stft(y_p, y_t) if self.w["mrstft"] else pred.new_zeros(())
         if self.w["phase"]:
             # speech-dominant bins: clean power above the residual noise (noisy - clean) by dominance_db;

@@ -29,7 +29,7 @@ from pystoi import stoi
 
 from vaani import losses
 from vaani.data import manifests
-from vaani.data.dataset import DynamicMixDataset, EpochSampler, RenderedDataset, collate, front_end
+from vaani.data.dataset import DynamicMixDataset, EpochBatchSampler, EpochSampler, RenderedDataset, collate, front_end
 from vaani.data.mixer import MixConfig
 from vaani.dsp import pipeline, stft
 from vaani.models import vaani_fe
@@ -89,6 +89,13 @@ def frame_weights_from_meta(metas, n_frames, burst_weight=3.0, half_window_s=0.1
     return w
 
 
+def _host_to_device(t, device):
+    """Pinned, non-blocking host-to-device copy: a pageable copy synchronizes the host with the GPU."""
+    if getattr(device, "type", str(device)) == "cuda":
+        return t.pin_memory().to(device, non_blocking=True)
+    return t.to(device)
+
+
 def prepare_batch(batch, model_name, device, burst_weight=1.0, contract=None):
     """Batch (CPU, from collate) -> (model inputs, target spec, frame weights, is_clean) on device.
     A low-delay `contract` (VaaniFE): inputs are the asymmetric analysis with per-contract frame validity, and the
@@ -102,7 +109,7 @@ def prepare_batch(batch, model_name, device, burst_weight=1.0, contract=None):
         avail = batch["avail"].to(device, **nb) if "avail" in batch else None
         spec, valid = ld_model_inputs(mix, avail, contract)
         is_clean = torch.tensor([bool(m.get("clean_bucket", False)) for m in metas])
-        return (spec, None, valid), clean, None, is_clean.to(device)
+        return (spec, None, valid), clean, None, _host_to_device(is_clean, device)
     target = stft.stft(clean)  # STFTs on device: cheaper than CPU + transfer of the wider spec
     fw = frame_weights_from_meta(metas, target.shape[2], burst_weight)
     is_clean = torch.tensor([bool(m.get("clean_bucket", False)) for m in metas])
@@ -125,7 +132,7 @@ def prepare_batch(batch, model_name, device, burst_weight=1.0, contract=None):
         inputs = (spec6, batch["feats"].to(device, **nb))
         if "ref_avail" in batch:   # data.ref_corrupt: the capture-path availability label rides along as a third input
             inputs = (*inputs, batch["ref_avail"].to(device, **nb))
-    return inputs, target, fw.to(device), is_clean.to(device)
+    return inputs, target, _host_to_device(fw, device), _host_to_device(is_clean, device)
 
 
 def build_param_groups(model, optim_cfg):
@@ -338,6 +345,59 @@ class CompositeScreen:
         return s
 
 
+PERF_NUMERICS = dict(cuda_graph=False, gru_kernel="cudnn", render="cpu", compile=False)
+PERF_OPS = dict(scorer="inline", stream="local", priority=2)
+
+
+def perf_settings(cfg):
+    """(numerics, ops) of the top-level `perf` block (plan Task 4b), validated; None when the config has no block
+    (the legacy loop, unchanged). numerics can move results by rounding and are resume keys; ops are bit-exact."""
+    pf = cfg.get("perf")
+    if pf is None:
+        return None, None
+    bad = set(pf) - {"numerics", "ops"}
+    if bad:
+        raise ValueError(f"unknown perf keys {sorted(bad)}")
+    num = {**PERF_NUMERICS, **(pf.get("numerics") or {})}
+    ops = {**PERF_OPS, **(pf.get("ops") or {})}
+    for k in set(num) - set(PERF_NUMERICS):
+        raise ValueError(f"unknown perf.numerics key {k!r}")
+    for k in set(ops) - set(PERF_OPS):
+        raise ValueError(f"unknown perf.ops key {k!r}")
+    if num["gru_kernel"] not in ("cudnn", "fused") or num["render"] not in ("cpu", "gpu"):
+        raise ValueError("perf.numerics: gru_kernel cudnn|fused, render cpu|gpu")
+    if ops["scorer"] not in ("inline", "async") or ops["stream"] not in ("local", "shared"):
+        raise ValueError("perf.ops: scorer inline|async, stream local|shared")
+    if ops["scorer"] == "async" and (cfg.get("early_stopping") or {}).get("patience") is not None:
+        raise ValueError("perf.ops.scorer async needs early_stopping.patience null (selection must not feed back)")
+    return num, ops
+
+
+def dataset_kwargs(cfg):
+    """DynamicMixDataset keyword arguments of a config (train and val share them)."""
+    d = cfg["data"]
+    dsk = dict(with_dsp=needs_dsp(cfg), controller_on=cfg["controller_on"], dsp_cfg=cfg.get("dsp"),
+               pack_root=d.get("pack", "data/pack"), ref_corrupt=d.get("ref_corrupt"))
+    if cfg["model"] == "vaani_fe":
+        dsk["fe_inputs"] = True
+    for k in ("exclude_groups_file", "scene_weights"):   # r8 keys; absent = the dataset's r7 behaviour
+        if k in d:
+            dsk[k] = str(_abs(d[k])) if k == "exclude_groups_file" and d[k] else d[k]
+    c = contract_of(cfg.get("model_cfg")) if cfg["model"] == "vaani_fe" else None
+    if c is not None and not c.is_legacy:
+        dsk["audio_contract"] = c.audio_contract_id
+    return dsk
+
+
+def build_val_loader(cfg, device, num_workers=None):
+    """The validation loader exactly as main() builds it (the async scorer rebuilds it from run.json's config)."""
+    d = cfg["data"]
+    vds = DynamicMixDataset(d["manifests"], "val", d.get("bank"), MixConfig(**d.get("mix", {})), d.get("crop_s", 4.0),
+                            cfg.get("val", {}).get("dynamic_items", 200), cfg["seed"] + 1, **dataset_kwargs(cfg))
+    nw = runtime.resolve_workers(cfg.get("num_workers", "auto")) if num_workers is None else num_workers
+    return DataLoader(vds, cfg["batch_size"], collate_fn=collate, **runtime.loader_kwargs(nw, device))
+
+
 def main(config_path):
     cfg = yaml.safe_load(open(config_path))
     verify_checkpoint_hash(_abs(cfg.get("init_from")), cfg.get("init_sha256"))
@@ -382,8 +442,14 @@ def main(config_path):
     dl = DataLoader(ds, cfg["batch_size"], sampler=sampler, collate_fn=collate, **lk)
     vdl = DataLoader(vds, cfg["batch_size"], collate_fn=collate, **lk)
     print(f"runtime: {runtime.describe()} num_workers={nw}", flush=True)
+    perf_num, perf_ops = perf_settings(cfg)
+    steps_per_epoch = len(dl)
 
     model = build_model(cfg["model"], cfg.get("init_from"), cfg.get("model_cfg")).to(device)
+    if perf_num is not None and perf_num["gru_kernel"] == "fused":   # perf, not model_cfg: checkpoints are unchanged
+        from vaani.models.gru_fused import use_fused_gru
+        use_fused_gru(model)
+    fwd = torch.compile(model) if perf_num is not None and perf_num["compile"] else model
     n_params = sum(p.numel() for p in model.parameters())
     groups = build_param_groups(model, cfg["optim"])
     opt = torch.optim.AdamW(groups, weight_decay=1e-4)
@@ -416,8 +482,7 @@ def main(config_path):
     select = cfg.get("val", {}).get("select", "stoi")
     if select not in ("stoi", "composite"):
         raise ValueError(f"val.select must be stoi or composite, got {select!r}")
-    plain_best = ema is None and select == "stoi"   # r1-r7 checkpoint layout, byte for byte
-    screen, best_key = None, None
+    best_key = None
 
     step, best, start_epoch, history = 0, -1.0, 0, []
     last = run_dir / "last.pt"
@@ -459,6 +524,24 @@ def main(config_path):
     run_info.update(schedule=schedule, history=history)
     json.dump(run_info, open(run_dir / "run.json", "w"), indent=2)
 
+    from vaani.scorer import Selector, mark_train_done, write_snapshot
+    sel = Selector(cfg, run_dir, device, best, best_key, tb)
+    async_scorer = perf_ops is not None and perf_ops["scorer"] == "async"
+    reader = None
+    if perf_ops is not None and perf_ops["stream"] == "shared":   # the stream's batch server (Task 4b)
+        from vaani.data.stream_server import RingReader, local_batch
+        reader = RingReader.attach(cfg, ds, start_seq=start_epoch * steps_per_epoch)
+        if reader is None:
+            print("WARNING: no batch server for this stream; rendering locally (the same batches)", flush=True)
+    if perf_ops is not None and reader is None:   # one sampler iterator over all epochs: workers never drain
+        bsamp = EpochBatchSampler(len(ds), cfg["batch_size"], start_epoch, cfg["epochs"])
+        assert bsamp.batches_per_epoch == steps_per_epoch
+        batches = iter(DataLoader(ds, batch_sampler=bsamp, collate_fn=collate, **lk))
+    graphed = None
+    if perf_num is not None and perf_num["cuda_graph"]:
+        from vaani.train_graph import GraphedStep
+        graphed = GraphedStep(fwd, loss_fn, device, use_amp, low_delay, scored)
+
     bad, skipped, clipped_total = 0, 0, 0
     for epoch in range(start_epoch, cfg["epochs"]):
         stop_cfg = cfg.get("early_stopping") or {}
@@ -467,32 +550,45 @@ def main(config_path):
         sampler.set_epoch(epoch)
         clamp_sum, clamp_batches = torch.zeros((), device=device), 0
         clipped_dev, steps0 = torch.zeros((), device=device), step
-        for batch in dl:
+        epoch_iter = iter(dl) if perf_ops is None else None
+        for bi in range(steps_per_epoch):
+            if perf_ops is None:
+                batch = next(epoch_iter)
+            elif reader is not None:   # the shared rendered stream; outside the ring's window: the same batch, locally
+                batch = reader.get(epoch, bi)
+                if batch is None:
+                    batch = local_batch(ds, epoch, bi, cfg["batch_size"])
+            else:
+                batch = next(batches)
             inputs, target, fw, is_clean = prepare_batch(batch, cfg["model"], device, burst_w, contract=contract)
             log_now = (step + 1) % cfg.get("log_every", 20) == 0
             if fe_loss:
-                getattr(loss_fn, "fe", loss_fn).keep_live_terms = log_now
-            with torch.autocast("cuda", dtype=torch.bfloat16, enabled=use_amp):
-                pred = model(*inputs)
-            if low_delay:
-                loss = loss_fn(pred.float(), target, None, is_clean, scored=scored)
-            elif fe_loss:   # the phase term's speech-dominance mask needs the noisy primary spectrum
-                noisy = inputs[0][..., :2] if loss_fn.w["phase"] and cfg["model"] != "gtcrn" else None
-                loss = loss_fn(pred.float(), target, fw, is_clean, noisy=noisy)
+                getattr(loss_fn, "fe", loss_fn).keep_live_terms = log_now and graphed is None
+            term_gn = None
+            opt.zero_grad(set_to_none=graphed is None)
+            if graphed is not None:   # forward, loss and backward replayed from one captured graph
+                loss = graphed.step(model, inputs, target, is_clean)
             else:
-                loss = loss_fn(pred.float(), target, fw, is_clean)  # loss/iSTFT stay fp32
+                with torch.autocast("cuda", dtype=torch.bfloat16, enabled=use_amp):
+                    pred = fwd(*inputs)
+                if low_delay:
+                    loss = loss_fn(pred.float(), target, None, is_clean, scored=scored)
+                elif fe_loss:   # the phase term's speech-dominance mask needs the noisy primary spectrum
+                    noisy = inputs[0][..., :2] if loss_fn.w["phase"] and cfg["model"] != "gtcrn" else None
+                    loss = loss_fn(pred.float(), target, fw, is_clean, noisy=noisy)
+                else:
+                    loss = loss_fn(pred.float(), target, fw, is_clean)  # loss/iSTFT stay fp32
+                if fe_loss and log_now:
+                    from vaani.enhance_low_delay import term_grad_norms
+                    term_gn = term_grad_norms(loss_fn, model.parameters())
+                loss.backward()
             if loss_fn.w_snr:
                 clamp_sum += loss_fn.last_snr_clamp_fraction.detach(); clamp_batches += 1   # device-side: no sync
-            term_gn = None
-            if fe_loss and log_now and torch.isfinite(loss):
-                from vaani.enhance_low_delay import term_grad_norms
-                term_gn = term_grad_norms(loss_fn, model.parameters())
-            opt.zero_grad(set_to_none=True); loss.backward()
             # one finiteness decision per step: the loss and the total pre-clip gradient norm, one host read
             gn = torch.nn.utils.get_total_norm([p.grad for p in model.parameters() if p.grad is not None])
             if not bool(torch.isfinite(loss) & torch.isfinite(gn)):
                 bad += 1; skipped += 1
-                opt.zero_grad(set_to_none=True)   # a NaN gradient never reaches the weights, the schedule or the EMA
+                opt.zero_grad(set_to_none=graphed is None)   # a NaN gradient never reaches the weights, schedule or EMA
                 if bad >= MAX_BAD_STEPS:
                     raise RuntimeError(f"{bad} consecutive non-finite losses or gradients at step {step}")
                 continue
@@ -512,47 +608,28 @@ def main(config_path):
                         tb.add_scalar(f"train/gradnorm_{k}", g, step)
             if cfg.get("max_steps") and step >= cfg["max_steps"]:
                 break
-        v = validate(model, vdl, cfg, device); tb.add_scalar("val/stoi", v, step)
         n_clipped = int(clipped_dev.item())
         clipped_total += n_clipped
-        history.append(dict(epoch=epoch, step=step, val_stoi=v, lr=sched.get_last_lr()[0],
-                            snr_clamp_fraction=float(clamp_sum) / max(clamp_batches, 1), val_metrics=getattr(vdl, "_last_val_metrics", {"stoi": v}),
-                            clipped_fraction=n_clipped / max(step - steps0, 1), rejected_steps=skipped))
-        tb.add_scalar("train/snr_clamp_fraction", history[-1]["snr_clamp_fraction"], step)
+        row = dict(epoch=epoch, step=step, lr=sched.get_last_lr()[0],
+                   snr_clamp_fraction=float(clamp_sum) / max(clamp_batches, 1),
+                   clipped_fraction=n_clipped / max(step - steps0, 1), rejected_steps=skipped)
+        history.append(row)
+        tb.add_scalar("train/snr_clamp_fraction", row["snr_clamp_fraction"], step)
         cands = {"raw": model}
         if ema is not None:   # the shadow is scored at every val point
-            ve = validate(ema.model, vdl, cfg, device); tb.add_scalar("val/stoi_ema", ve, step)
-            history[-1].update(val_stoi_ema=ve, val_metrics_ema=getattr(vdl, "_last_val_metrics", {"stoi": ve}))
             cands["ema"] = ema.model
-        if plain_best:
-            if v > best:
-                best = v; _save({"model": model.state_dict(), "config": cfg, "step": step}, run_dir / "best.pt")
-        elif select == "stoi":
-            scores = {"raw": v, "ema": history[-1]["val_stoi_ema"]}
-            pick = max(scores, key=scores.get)   # raw wins ties
-            if scores[pick] > best:
-                best = scores[pick]
-                _save({"model": cands[pick].state_dict(), "config": cfg, "step": step, "weights": pick, "selection": "stoi"}, run_dir / "best.pt")
+        final = epoch == cfg["epochs"] - 1 or bool(cfg.get("max_steps") and step >= cfg["max_steps"])
+        if async_scorer:   # validation beside training: a snapshot, scored by scripts/r8_scorer.py
+            write_snapshot(run_dir, len(history), row, cands, final, perf_ops["priority"])
+            v = float("nan")
         else:
-            final = epoch == cfg["epochs"] - 1 or bool(cfg.get("max_steps") and step >= cfg["max_steps"])
-            every = int((cfg["val"].get("composite") or {}).get("every", COMPOSITE_DEFAULTS["every"]))
-            if len(history) % every == 0 or final:
-                if screen is None:
-                    t0 = time.time(); screen = CompositeScreen(cfg, run_dir)
-                    print(f"composite screen: {len(screen.items)} clip-conditions, baseline dSNR {screen.base_d_snr}, "
-                          f"built in {time.time() - t0:.1f}s", flush=True)
-                for name, m in cands.items():
-                    s = screen.score(m, device); history[-1][f"composite_{name}"] = s; key = composite_key(s)
-                    tb.add_scalar(f"val/pass_rate_{name}", s["pass_rate"], step)
-                    if best_key is None or key > best_key:
-                        best_key, best = key, s["pass_rate"]
-                        _save({"model": m.state_dict(), "config": cfg, "step": step, "weights": name,
-                               "selection": "composite", "composite": s}, run_dir / "best.pt")
+            v = sel.point(row, cands, vdl, len(history), final)
+        best, best_key = sel.best, sel.best_key
         if cfg.get("save_every_epoch"):   # learning-curve pilots score intermediate epochs; off = r1..r7 behaviour
             _save({"model": model.state_dict(), "config": cfg, "step": step, "epoch": epoch}, run_dir / f"epoch{epoch:03d}.pt")
         state = {"model": model.state_dict(), "config": cfg, "step": step, "epoch": epoch, "best": best,
                  "optim": opt.state_dict(), "sched": sched.state_dict(), "schedule": schedule, "history": history}
-        if not plain_best:
+        if not sel.plain_best:
             state.update(best_key=list(best_key) if best_key is not None else None,
                          **({"ema": ema.model.state_dict()} if ema is not None else {}))
         _save(state, last)
@@ -567,6 +644,12 @@ def main(config_path):
     df_norm = float(sum(p.detach().norm() ** 2 for n, p in model.named_parameters() if n.startswith("df.")) ** 0.5)
     run_info.update(end=time.time(), wall_s=time.time() - t_start, best_val_stoi=best, steps=step, skipped_steps=skipped, df_norm=df_norm)
     json.dump(run_info, open(run_dir / "run.json", "w"), indent=2)
+    if async_scorer:   # DONE only once the scorer has scored the last snapshot and merged run.json
+        mark_train_done(run_dir, len(history))
+    if reader is not None:
+        run_info.update(stream_hits=reader.hits, stream_misses=reader.misses)
+        json.dump(run_info, open(run_dir / "run.json", "w"), indent=2)
+        reader.detach()
     tb.close()
 
 

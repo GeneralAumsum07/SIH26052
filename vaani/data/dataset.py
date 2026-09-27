@@ -365,6 +365,25 @@ class EpochSampler(Sampler):
         return iter(range(base, base + self.epoch_len))
 
 
+class EpochBatchSampler(Sampler):
+    """One sampler iterator spanning all epochs (plan Task 4b, loader): yields the same batches as DataLoader over
+    EpochSampler epoch by epoch (sequential chunks of batch_size, a short last batch kept, never crossing an epoch),
+    so persistent workers never drain at an epoch boundary. Item indices stay epoch * epoch_len + i."""
+
+    def __init__(self, epoch_len: int, batch_size: int, start_epoch: int, epochs: int):
+        self.epoch_len, self.batch_size, self.start_epoch, self.epochs = epoch_len, batch_size, start_epoch, epochs
+        self.batches_per_epoch = -(-epoch_len // batch_size)
+
+    def __len__(self):
+        return max(0, self.epochs - self.start_epoch) * self.batches_per_epoch
+
+    def __iter__(self):
+        for e in range(self.start_epoch, self.epochs):
+            base = e * self.epoch_len
+            for a in range(0, self.epoch_len, self.batch_size):
+                yield list(range(base + a, base + min(a + self.batch_size, self.epoch_len)))
+
+
 class RenderedDataset(Dataset):
     def __init__(self, root: Path):
         self.items = sorted(p for p in Path(root).glob("*/*.mix.wav") if not p.name.endswith(".twin.mix.wav"))
