@@ -145,9 +145,13 @@ def corrupt_reference(rng, mixed, clean, c):
     return apply_ref_fault(rng, mixed, clean, kinds[k], c)
 
 
-def front_end(mixed, dsp_cfg=None, avail=None):
+def front_end(mixed, dsp_cfg=None, avail=None, contract=None, per_sample=False):
     """The classical front end without NLMS/features (VaaniFE inputs p/pr/pr_pld): the hop-by-hop limiter and the
-    ref_policy zero/ramp, exactly as the first half of pipeline.run. Returns (mix (2,n), frame validity (T,))."""
+    ref_policy zero/ramp, exactly as the first half of pipeline.run. Returns (mix (2,n), frame validity (T,)).
+    contract (vaani.audio_contract; None = C0): a low-delay contract takes its ramp in samples and rejects
+    ramp_frames. per_sample=True returns the per-sample availability (n,) instead of legacy frame validity, which
+    prepare_batch then reduces per contract (vaani.dsp.low_delay_stft.frame_validity). The processed samples do not
+    depend on the contract: the limiter is chunk-invariant at multiples of its sub-block."""
     dsp_cfg = dsp_cfg or {}
     prim, ref = mixed[0].astype(np.float32), mixed[1].astype(np.float32); n = len(prim)
     av = np.ones(n, bool) if avail is None else np.asarray(avail, bool)
@@ -155,15 +159,23 @@ def front_end(mixed, dsp_cfg=None, avail=None):
     if pol is not None:   # as pipeline.run: a dead channel is zero from the capture on, before the limiter
         ref = np.where(av, ref, np.float32(0.0)).astype(np.float32)
     if dsp_cfg.get("limiter"):
-        lk = dsp_cfg["limiter"]; lim = Limiter(**(lk if isinstance(lk, dict) else {}))
-        lp, lr = np.empty_like(prim), np.empty_like(ref)
-        for i in range(0, n, stft.HOP):
-            lp[i:i + stft.HOP], lr[i:i + stft.HOP] = lim.process_block(prim[i:i + stft.HOP], ref[i:i + stft.HOP])
-            lim.engaged = 0
-        prim, ref = lp, lr
+        lim = pipeline.make_limiter(dsp_cfg)
+        if getattr(lim, "kernel", "loop") != "loop":   # compiled kernels: one call, chunk-invariant by construction
+            prim, ref = lim.process_block(prim, ref)
+        else:
+            lp, lr = np.empty_like(prim), np.empty_like(ref)
+            for i in range(0, n, stft.HOP):
+                lp[i:i + stft.HOP], lr[i:i + stft.HOP] = lim.process_block(prim[i:i + stft.HOP], ref[i:i + stft.HOP])
+                lim.engaged = 0
+            prim, ref = lp, lr
     if pol is not None:
-        ref = ref * pipeline.ref_gain(av, pol.get("ramp_frames", pipeline.RAMP_FRAMES))
-    return np.stack([prim, ref]).astype(np.float32), pipeline.frame_avail(av, n // stft.HOP + 1)
+        ref = ref * pipeline.ref_gain(av, ramp_samples=pipeline.ramp_samples_of(pol, contract))
+    out = np.stack([prim, ref]).astype(np.float32)
+    if per_sample:
+        return out, av.astype(np.uint8)
+    if contract is not None and not contract.is_legacy:
+        raise ValueError("front_end: a low-delay contract reduces validity per contract; pass per_sample=True")
+    return out, pipeline.frame_avail(av, n // stft.HOP + 1)
 
 
 class CachedScenePool(ScenePool):
@@ -212,7 +224,7 @@ def drop_groups(df, ids):
 class DynamicMixDataset(Dataset):
     def __init__(self, manifest_paths, split, bank_path, cfg: MixConfig, crop_s=4.0, epoch_len=20000, seed=0,
                  with_dsp=False, controller_on=True, dsp_cfg=None, pack_root=None, ref_corrupt=None,
-                 fe_inputs=False, exclude_groups_file=None, scene_weights=None):
+                 fe_inputs=False, exclude_groups_file=None, scene_weights=None, audio_contract=None):
         df = pd.concat([manifests.read(p) for p in manifest_paths])
         if exclude_groups_file is not None:   # the key present in the config = the r8 recipe: apply it or warn loudly
             df = drop_groups(df, load_exclude_groups(exclude_groups_file))
@@ -234,6 +246,14 @@ class DynamicMixDataset(Dataset):
         self.ref_corrupt = ref_corrupt_config(ref_corrupt)
         # fe_inputs (VaaniFE without n_hat): limiter/ref_policy front end only, validity always emitted
         self.fe_inputs = bool(fe_inputs) and not with_dsp
+        # the model's audio contract (None = C0): a low-delay loader emits per-sample availability ("avail") and
+        # prepare_batch reduces frame validity per contract; C0 keeps its legacy frame labels and adds "avail"
+        from vaani.audio_contract import get_audio_contract
+        self.contract = get_audio_contract(audio_contract)
+        if not self.contract.is_legacy:
+            if with_dsp:
+                raise ValueError("the low-delay route supports inputs 'pr' without NLMS/features (plan D5)")
+            pipeline.ramp_samples_of((dsp_cfg or {}).get("ref_policy"), self.contract)   # rejects ramp_frames
         # mixer v2 (M8): scenes draw their noise classes; v1 never builds or touches the pool
         self.scene_pool = CachedScenePool(self.noise) if cfg.version == 2 else None
         self.scene_weights = scene_weights
@@ -322,8 +342,10 @@ class DynamicMixDataset(Dataset):
                 fa = r["ref_avail"] if "ref_avail" in r else pipeline.frame_avail(avail, r["features"].shape[0])
                 out["ref_avail"] = torch.from_numpy(fa)
         elif self.fe_inputs:
-            m2, fa = front_end(mixed, self.dsp_cfg, avail)
-            out["mix"] = torch.from_numpy(m2); out["ref_avail"] = torch.from_numpy(fa)
+            m2, av = front_end(mixed, self.dsp_cfg, avail, self.contract, per_sample=True)
+            out["mix"] = torch.from_numpy(m2); out["avail"] = torch.from_numpy(av)
+            if self.contract.is_legacy:   # the legacy label stays, bit for bit; prepare_batch reduces "avail" to it
+                out["ref_avail"] = torch.from_numpy(pipeline.frame_avail(av.astype(bool), len(av) // stft.HOP + 1))
         return out
 
 
@@ -365,7 +387,7 @@ class RenderedDataset(Dataset):
 def collate(batch):
     out = {"mix": torch.stack([b["mix"] for b in batch]), "clean": torch.stack([b["clean"] for b in batch]),
            "meta": [b["meta"] for b in batch]}
-    for k in ("twin", "n_hat", "feats", "ref_avail"):
+    for k in ("twin", "n_hat", "feats", "ref_avail", "avail"):
         if k in batch[0]:
             out[k] = torch.stack([b[k] for b in batch])
     return out

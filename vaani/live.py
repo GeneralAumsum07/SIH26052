@@ -191,7 +191,7 @@ class StreamEngine:
         self.ctl = Controller(**dsp.get("controller", {}))
         bk = dsp.get("blocking"); lk = dsp.get("limiter")
         self.blk = BlockingMatrix(**(bk if isinstance(bk, dict) else {})) if bk else None
-        self.lim = Limiter(**(lk if isinstance(lk, dict) else {})) if lk else None
+        self.lim = pipeline.make_limiter(dsp) if lk else None   # dsp.limiter_kernel: the compiled r8 kernel
         if keep is not None:                    # a soft reset keeps what the adaptive filters learned of the headset
             self.nlms.w[:] = keep[0]
             if self.blk is not None and keep[1] is not None:
@@ -528,6 +528,11 @@ class BoundedHopQueue:
     carries the gap so the consumer can tell the engine (`StreamEngine.skip`). Latency stays bounded by
     capacity x 16 ms and old audio is never replayed. Thread-safe: one producer, one consumer."""
 
+    @classmethod
+    def from_seconds(cls, max_s: float, hop: int = HOP) -> "BoundedHopQueue":
+        """Capacity from a latency bound in seconds (low-delay contracts): floor(max_s / hop duration), at least 1."""
+        return cls(max(1, int(max_s * SR // hop)))
+
     def __init__(self, capacity: int = 8):
         if capacity < 1:
             raise ValueError("capacity must be >= 1")
@@ -582,6 +587,12 @@ class ChannelMonitor:
     def __init__(self, bad_hops: int = 3, good_hops: int = 8, silent_peak: float = 2 ** -20, rail_frac: float = 0.25):
         self.bad_hops, self.good_hops, self.silent_peak, self.rail_frac = bad_hops, good_hops, silent_peak, rail_frac
         self.valid, self._run = True, 0
+
+    @classmethod
+    def from_seconds(cls, hop: int, bad_s: float = 3 * HOP / SR, good_s: float = 8 * HOP / SR, **kw) -> "ChannelMonitor":
+        """Hysteresis in seconds (low-delay contracts): the legacy 48 ms / 128 ms at any hop, rounded up to whole
+        hops so a verdict never flips sooner than the legacy monitor's."""
+        return cls(max(1, -(-int(round(bad_s * SR)) // hop)), max(1, -(-int(round(good_s * SR)) // hop)), **kw)
 
     def update(self, x: np.ndarray) -> bool:
         ax = np.abs(np.asarray(x, np.float32))

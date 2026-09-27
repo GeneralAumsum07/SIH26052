@@ -21,22 +21,56 @@ from vaani.dsp.nlms import NLMS
 RAMP_FRAMES = 12   # reconnect ramp: ~200 ms at the 16 ms hop, the controller's own NLMS ramp length
 
 
-def ref_gain(avail: np.ndarray, ramp_frames: int = RAMP_FRAMES) -> np.ndarray:
+def _n_ramp(ramp_frames, ramp_samples):
+    """Ramp length in samples: ramp_samples when given (hop-independent, the low-delay contracts), else
+    ramp_frames legacy hops."""
+    return max(1, int(ramp_samples) if ramp_samples is not None else int(ramp_frames) * stft.HOP)
+
+
+def ramp_samples_of(pol: dict | None, contract=None) -> int | None:
+    """The configured reconnect ramp in samples. Under a low-delay contract `ramp_frames` is rejected (a frame
+    count would silently change the ramp's duration with the hop) and `ramp_samples` defaults to the contract's."""
+    if pol is None:
+        return None
+    if contract is not None and not contract.is_legacy:
+        if "ramp_frames" in pol:
+            raise ValueError("ref_policy.ramp_frames is not allowed under a low-delay audio contract; use ramp_samples")
+        return int(pol.get("ramp_samples", contract.ramp_samples))
+    if "ramp_samples" in pol:
+        return int(pol["ramp_samples"])
+    return int(pol.get("ramp_frames", RAMP_FRAMES)) * stft.HOP
+
+
+def make_limiter(dsp_cfg: dict):
+    """dsp.limiter (True or Limiter kwargs) through dsp.limiter_kernel (absent/"loop" = the legacy Python loop,
+    "numba" / "numpy" = vaani.dsp.limiter_kernel); None when the limiter is off."""
+    lk = dsp_cfg.get("limiter")
+    if not lk:
+        return None
+    kernel = dsp_cfg.get("limiter_kernel")
+    if kernel in (None, "loop"):
+        return Limiter(**(lk if isinstance(lk, dict) else {}))
+    from vaani.dsp.limiter_kernel import make_limiter as mk
+    return mk(lk, kernel)
+
+
+def ref_gain(avail: np.ndarray, ramp_frames: int = RAMP_FRAMES, ramp_samples: int | None = None) -> np.ndarray:
     """Per-sample reference gain from capture-path availability: 0 while absent, then a linear ramp back to 1 over
-    ramp_frames hops after every reconnect, so the reference influence never steps in with a click."""
+    ramp_frames hops (or ramp_samples samples) after every reconnect, so the reference never steps in with a click."""
     avail = np.asarray(avail, bool); g = avail.astype(np.float32)
-    n_ramp = max(1, int(ramp_frames) * stft.HOP)
+    n_ramp = _n_ramp(ramp_frames, ramp_samples)
     for r in np.flatnonzero(avail[1:] & ~avail[:-1]) + 1:
         end = min(len(g), r + n_ramp); k = np.arange(1, end - r + 1, dtype=np.float32) / n_ramp
         g[r:end] = np.minimum(g[r:end], k)
     return g
 
 
-def ref_gain_step(avail: np.ndarray, since: int, prev: bool, ramp_frames: int = RAMP_FRAMES):
+def ref_gain_step(avail: np.ndarray, since: int, prev: bool, ramp_frames: int = RAMP_FRAMES,
+                  ramp_samples: int | None = None):
     """Streaming twin of ref_gain for one block: (gain (n,) float32, since', prev'). `since` = samples elapsed since
     the latest reconnect at the block start (>= the ramp length when none is ramping), `prev` = the availability of
     the sample before the block. Start a stream with since = ramp length, prev = True. Bit-identical to ref_gain."""
-    avail = np.asarray(avail, bool); n = len(avail); n_ramp = max(1, int(ramp_frames) * stft.HOP)
+    avail = np.asarray(avail, bool); n = len(avail); n_ramp = _n_ramp(ramp_frames, ramp_samples)
     if n == 0:
         return np.zeros(0, np.float32), since, prev
     idx = np.arange(n)
@@ -86,7 +120,7 @@ def run(mix: np.ndarray, controller_on: bool = True, dsp_cfg: dict | None = None
         ref = np.where(avail, ref, np.float32(0.0)).astype(np.float32)
     if dsp_cfg.get("limiter"):
         # hop-by-hop like the port; the STFT below then runs on the limited signal
-        lk = dsp_cfg["limiter"]; lim = Limiter(**(lk if isinstance(lk, dict) else {}))   # True or Limiter kwargs
+        lim = make_limiter(dsp_cfg)   # True or Limiter kwargs; dsp.limiter_kernel picks the compiled kernel
         lp, lr = np.empty_like(prim), np.empty_like(ref)
         for j, i in enumerate(range(0, T, stft.HOP)):
             lp[i:i + stft.HOP], lr[i:i + stft.HOP] = lim.process_block(prim[i:i + stft.HOP], ref[i:i + stft.HOP])
@@ -95,7 +129,7 @@ def run(mix: np.ndarray, controller_on: bool = True, dsp_cfg: dict | None = None
     g_ref, ref_true = None, ref
     if pol is not None:
         # after the limiter; the ramp shapes what the model and features see, the adaptive filters keep the true reference
-        g_ref = ref_gain(avail, pol.get("ramp_frames", RAMP_FRAMES)); ref = ref * g_ref
+        g_ref = ref_gain(avail, pol.get("ramp_frames", RAMP_FRAMES), pol.get("ramp_samples")); ref = ref * g_ref
 
     P = stft.np_stft(prim); R = stft.np_stft(ref)
     n_frames = P.shape[1]

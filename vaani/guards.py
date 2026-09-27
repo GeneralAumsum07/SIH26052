@@ -20,6 +20,10 @@ default-off `guards=` option (the r7 default path does not run a line of this):
 For r7 the reference-absent path is the reference zeroed (plan 11.1: loss 0.11 vs 0.86 with the reference kept on
 low-ILD input); for a model trained with a validity input it is validity 0. Every verdict change is logged as a
 fallback event in the engine's telemetry.
+
+Low-delay contracts (plan Section 3.3): every duration is in seconds and converted with the stream's hop (`hop=`,
+default 256 = the legacy behaviour, bit for bit), and RefInformativeness computes its correlation and ILD over a
+fixed 256-sample sliding window updated every hop, so detector statistics do not depend on the contract.
 """
 from __future__ import annotations
 
@@ -30,8 +34,8 @@ HOPS_PER_S = SR / HOP
 BAND = slice(int(300 / (SR / N_FFT)), int(3400 / (SR / N_FFT)) + 1)   # rfft bins 9..108 of a 512-point frame
 
 
-def _hops(seconds: float) -> int:
-    return max(1, int(round(seconds * HOPS_PER_S)))
+def _hops(seconds: float, hops_per_s: float = HOPS_PER_S) -> int:
+    return max(1, int(round(seconds * hops_per_s)))
 
 
 def band_db(spec: np.ndarray) -> float:
@@ -45,14 +49,21 @@ class RefInformativeness:
 
     def __init__(self, corr_max: float = 0.97, ild_db: float = 1.0, hold_s: float = 0.5,
                  recover_corr: float = 0.9, recover_ild_db: float = 2.0, recover_s: float = 0.5,
-                 silent_rms: float = 1e-4):
+                 silent_rms: float = 1e-4, hop: int = HOP, window: int = HOP):
         self.corr_max, self.ild_db, self.recover_corr, self.recover_ild_db = corr_max, ild_db, recover_corr, recover_ild_db
-        self.hold_hops, self.recover_hops, self.silent_rms = _hops(hold_s), _hops(recover_s), silent_rms
+        hps = SR / hop
+        self.hold_hops, self.recover_hops, self.silent_rms = _hops(hold_s, hps), _hops(recover_s, hps), silent_rms
         self.informative, self._run = True, 0
         self.corr, self.ild = 0.0, float("inf")
+        self.hop, self.window = hop, window
+        self._buf = None if (hop == window) else np.zeros((2, window))   # sliding statistics window
 
     def update(self, prim: np.ndarray, ref: np.ndarray) -> bool:
         p = np.asarray(prim, np.float64); r = np.asarray(ref, np.float64)
+        if self._buf is not None:                            # the last `window` samples, updated every hop
+            n = len(p)
+            self._buf = np.concatenate([self._buf[:, n:], np.stack([p, r])[:, -self.window:]], 1)[:, -self.window:]
+            p, r = self._buf[0], self._buf[1]
         ep, er = float(np.mean(p * p)), float(np.mean(r * r))
         if max(ep, er) < self.silent_rms ** 2:            # silence says nothing about the channels: hold
             return self.informative
@@ -76,9 +87,11 @@ class RefInformativeness:
 class EnergyVAD:
     """Causal energy-over-floor speech detector on the input primary's speech band (module docstring)."""
 
-    def __init__(self, snr_db: float = 6.0, rise_db_per_s: float = 3.0, hang_s: float = 0.2, min_db: float = -90.0):
-        self.snr_db, self.rise = snr_db, rise_db_per_s / HOPS_PER_S
-        self.hang_hops, self.min_db = _hops(hang_s), min_db
+    def __init__(self, snr_db: float = 6.0, rise_db_per_s: float = 3.0, hang_s: float = 0.2, min_db: float = -90.0,
+                 hop: int = HOP):
+        hps = SR / hop
+        self.snr_db, self.rise = snr_db, rise_db_per_s / hps
+        self.hang_hops, self.min_db = _hops(hang_s, hps), min_db
         self.floor, self._hang = None, 0
 
     def update(self, e_db: float) -> bool:
@@ -98,9 +111,11 @@ class EnergyVAD:
 class NeverVanish:
     """update(in_db, out_db) -> True while the fallback (reference-absent path) is engaged."""
 
-    def __init__(self, drop_db: float = 25.0, hold_s: float = 0.5, fallback_s: float = 2.0, vad: dict | None = None):
-        self.drop_db, self.trigger_hops, self.fallback_hops = drop_db, _hops(hold_s), _hops(fallback_s)
-        self.vad = EnergyVAD(**(vad or {}))
+    def __init__(self, drop_db: float = 25.0, hold_s: float = 0.5, fallback_s: float = 2.0, vad: dict | None = None,
+                 hop: int = HOP):
+        hps = SR / hop
+        self.drop_db, self.trigger_hops, self.fallback_hops = drop_db, _hops(hold_s, hps), _hops(fallback_s, hps)
+        self.vad = EnergyVAD(**{**(vad or {}), "hop": hop})
         self.active, self._run, self._left = False, 0, 0
         self.speech = False
 
@@ -125,12 +140,16 @@ class Guards:
     change never switches the reference in one sample. The engine reads `self.ref_ok` from the previous hop
     (informativeness is decided on the raw hop before processing; never-vanish on the previous hop's output)."""
 
-    def __init__(self, cfg: dict | bool | None = True, telemetry=None):
+    def __init__(self, cfg: dict | bool | None = True, telemetry=None, hop: int = HOP, window: int = HOP):
+        """hop: the stream's hop in samples (a low-delay contract's H). Durations are seconds; the crossfade is
+        `fade_s` (default 0.128 s), or legacy `fade_hops` 256-sample hops."""
         cfg = {} if cfg is True else dict(cfg or {})
         inf, nv = cfg.get("informativeness", True), cfg.get("never_vanish", True)
-        self.inf = RefInformativeness(**(inf if isinstance(inf, dict) else {})) if inf else None
-        self.nv = NeverVanish(**(nv if isinstance(nv, dict) else {})) if nv else None
-        self.fade_hops = max(1, int(cfg.get("fade_hops", 8)))          # 128 ms crossfade
+        self.hop = hop
+        self.inf = RefInformativeness(**{**(inf if isinstance(inf, dict) else {}), "hop": hop, "window": window}) if inf else None
+        self.nv = NeverVanish(**{**(nv if isinstance(nv, dict) else {}), "hop": hop}) if nv else None
+        fade_s = cfg.get("fade_s", int(cfg.get("fade_hops", 8)) * HOP / SR)   # 128 ms crossfade
+        self.fade_hops = _hops(fade_s, SR / hop)
         self.telemetry = telemetry
         self.g = 1.0                                                     # weight at the end of the last hop
         self.informative, self.fallback = True, False
@@ -161,11 +180,11 @@ class Guards:
         step = 1.0 / self.fade_hops
         g1 = min(target, g0 + step) if target > g0 else max(target, g0 - step)
         self.g = g1
-        return (g0 + (g1 - g0) * (np.arange(1, HOP + 1, dtype=np.float32) / HOP)).astype(np.float32)
+        return (g0 + (g1 - g0) * (np.arange(1, self.hop + 1, dtype=np.float32) / self.hop)).astype(np.float32)
 
     def post(self, P: np.ndarray, out_spec: np.ndarray) -> None:
         """After the hop: never-vanish on this frame's input spectrum P (257,) and model output (257,)."""
-        self.sample += HOP
+        self.sample += self.hop
         if self.nv is None:
             return
         in_db, out_db = band_db(P), band_db(out_spec)
