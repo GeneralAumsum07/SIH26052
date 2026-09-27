@@ -42,3 +42,7 @@ docs/*
 !docs/licences.md
 !docs/physical_test_schema.md
 !docs/requirements-traceability.md
+
+# native low-delay runtime: fetched dependencies and build trees
+native/vaani_ld/_deps/
+native/vaani_ld/build*/
