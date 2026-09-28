@@ -293,7 +293,7 @@ def test_run_r8_refuses_without_a_passing_g1(tmp_path, g1):
     p = tmp_path / "g1.json"
     if g1 is not None:
         _g1(p, ok=g1)
-    env = dict(DRY_RUN="1", RUNS_DIR=str(tmp_path / "runs"), G1_JSON=str(p))
+    env = dict(DRY_RUN="1", RUNS_DIR=str(tmp_path / "runs"), G1_JSON=str(p), REQUIRE_TRAINING_VALIDATION="1")
     for phase in ("full", "all"):
         r = _bash(["scripts/run_r8.sh", "start", phase], env)
         assert r.returncode == 1 and "REFUSED" in r.stdout and "DRY gpu" not in r.stdout, r.stdout
@@ -344,6 +344,26 @@ def test_box_setup_names_missing_credentials_up_front():
 
 
 # --- requirements files ----------------------------------------------------------------------------------------------
+@pytest.mark.parametrize("strict", ["0", "1"])
+def test_box_diagnostic_failure_only_blocks_in_strict_mode(tmp_path, strict):
+    source = (REPO / "scripts/r8_box_setup.sh").read_text(encoding="utf-8")
+    functions = source[source.index("say() {"):source.index("# background stage:")]
+    script = '''set -euo pipefail
+eval "$FUNCTIONS"
+MODE=run
+S=$(cygpath -u "$STATE" 2>/dev/null || echo "$STATE")
+mkdir -p "$S"
+probe() { false; echo "unexpected continuation"; }
+diagnostic_stage probe probe
+echo "launch enabled"
+'''
+    r = _bash(["-c", script], dict(FUNCTIONS=functions, STATE=str(tmp_path), REQUIRE_TRAINING_VALIDATION=strict))
+    assert "unexpected continuation" not in r.stdout
+    assert not (tmp_path / "probe.ok").exists()
+    assert (r.returncode == 0) == (strict == "0"), r.stdout + r.stderr
+    assert ("launch enabled" in r.stdout) == (strict == "0")
+
+
 def _lock():
     import tomllib
     return {p["name"]: p["version"] for p in tomllib.loads((REPO / "uv.lock").read_text(encoding="utf-8"))["package"]}

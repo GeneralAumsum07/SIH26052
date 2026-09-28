@@ -21,6 +21,36 @@ REC = {Path(a["config"]).stem: a for a in ARMS["arms"]}
 SEL = ARMS["gate0"]["support_contract"]
 
 
+@pytest.fixture(autouse=True)
+def strict_validation_for_existing_cases(monkeypatch):
+    # Keep coverage of the opt-in validation policy independently of the ungated default.
+    monkeypatch.setenv("REQUIRE_TRAINING_VALIDATION", "1")
+
+
+def test_default_training_has_no_measurement_or_release_gates(tmp_path, monkeypatch):
+    monkeypatch.delenv("REQUIRE_TRAINING_VALIDATION")
+    q = _queue(tmp_path, status="pending_board", provisional=True)
+    rows = q.runnable("all")
+    assert {r["name"] for r in rows} == {n for n in NAMES if n in REC}
+    assert all(r["status"] == "PENDING" for r in rows)
+    assert q.readiness()[0] and not q.gate0_ready()[0]
+    q.gate0_path.unlink()
+    q = LQ.Queue(REPO, tmp_path / "runs", NAMES, gate0=q.gate0_path)
+    assert len(q.runnable("all")) == len(rows)
+
+
+def test_default_launcher_needs_no_g1_or_full_release(tmp_path, monkeypatch):
+    monkeypatch.delenv("REQUIRE_TRAINING_VALIDATION")
+    for cmd in ("start", "ld-start"):
+        env = dict(DRY_RUN="1", RUNS_DIR=str(tmp_path / cmd), G1_JSON=str(tmp_path / "missing.json"),
+                   GATE0_JSON=str(tmp_path / "missing_gate0.json"), LD_GPUS="1", PILOT_HOURS="-1")
+        r = _bash(["scripts/run_r8.sh", cmd, "all"], env)
+        assert r.returncode == 0, r.stdout + r.stderr
+        dry = [ln for ln in r.stdout.splitlines() if ln.startswith("DRY gpu")]
+        assert len(dry) == (3 if cmd == "start" else len([n for n in NAMES if n in REC]))
+        assert any(ln.endswith("r8_fe_mini.yaml") for ln in dry)
+
+
 def _registry():
     """The launcher's registered names, read from scripts/run_r8.sh (LD_P1..LD_P4, LD_FULL)."""
     txt = (REPO / "scripts/run_r8.sh").read_text(encoding="utf-8")
@@ -136,6 +166,39 @@ def test_arm_b_waits_for_gate0_and_wave2_for_stage2(tmp_path):
     assert js["ld_b_s0"]["status"] == "PENDING"
 
 
+def test_unvalidated_arm_override_is_persistent_and_scoped(tmp_path):
+    q = _queue(tmp_path, status="pending_board", provisional=True)
+    original = q.gate0_path.read_bytes()
+    q.allow_unvalidated_arm("arm_b")
+    q = LQ.Queue(REPO, tmp_path / "runs", NAMES, gate0=q.gate0_path)
+    rows = {j["name"]: j for j in q.runnable("all")}
+    for n in ("ld_b_s0", "ld_b_s1", "ld_b_nhat_s0", "ld_b_nhat_s1"):
+        assert rows[n]["status"] == "PENDING"
+        assert rows[n]["unvalidated"] and "unvalidated" in rows[n]["why"]
+    assert rows["ld_a_s0"]["status"] == "BLOCKED"
+    assert rows["r8_ld_fe_mini_armb"]["status"] == "BLOCKED"
+    assert not q.gate0_ready()[0]
+    assert q.gate0_path.read_bytes() == original
+    assert all(j["arm"] in ("arm_b", "arm_b_nhat") for j in q.streams("pilots").values())
+    q.decide("stage1", "arm_b")
+    q.decide("stage1", "arm_a")
+    assert "r8_ld_fe_mini_armb" not in {j["name"] for j in q.runnable("all")}
+
+
+def test_unvalidated_override_rejects_other_arms(tmp_path):
+    with pytest.raises(LQ.QueueError, match="arm_b"):
+        _queue(tmp_path).allow_unvalidated_arm("arm_a")
+
+
+def test_preflight_records_training_only_override(tmp_path):
+    q = _queue(tmp_path, status="pending_board", provisional=True)
+    q.allow_unvalidated_arm("arm_b")
+    rep = P.Report()
+    P.check_low_delay(REPO, rep, str(q.gate0_path), set(QUICK), runs_dir=q.runs)
+    assert not _fails(rep, "gate0")
+    assert any(r["status"] == "WARN" and "arm_b" in r["detail"] for r in rep.rows)
+
+
 def test_claims_follow_priority_and_are_exclusive(tmp_path):
     q = _queue(tmp_path)
     got = []
@@ -246,6 +309,19 @@ def test_launcher_refuses_before_gate0_and_plans_blocked(tmp_path):
     p = _bash(["scripts/run_r8.sh", "ld-plan", "all"], env)
     rows = [ln.split("\t") for ln in p.stdout.splitlines() if ln.startswith("gpu")]
     assert rows and all(x[3] == "BLOCKED" for x in rows), p.stdout
+
+
+def test_launcher_override_dry_run_starts_only_arm_b(tmp_path):
+    env = dict(RUNS_DIR=str(tmp_path / "runs"), G1_JSON=str(_g1(tmp_path)),
+               GATE0_JSON=str(_gate0(tmp_path, status="pending_board", provisional=True)), LD_GPUS="1")
+    r = _bash(["scripts/run_r8.sh", "ld-allow-unvalidated-arm", "arm_b"], env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    r = _bash(["scripts/run_r8.sh", "ld-start", "pilots"], dict(env, DRY_RUN="1"))
+    assert r.returncode == 0, r.stdout + r.stderr
+    dry = [ln for ln in r.stdout.splitlines() if ln.startswith("DRY gpu")]
+    assert {ln.rsplit("/", 1)[1][:-5] for ln in dry} == {"ld_b_s0", "ld_b_s1", "ld_b_nhat_s0", "ld_b_nhat_s1"}
+    scorer = next(ln for ln in r.stdout.splitlines() if ln.startswith("DRY scorer"))
+    assert "r8_ld_a_s0" not in scorer and "r8_ld_b_s0" in scorer
 
 
 @pytest.mark.timeout(900)
@@ -406,6 +482,7 @@ def test_preflight_fails_missing_bench_evidence(tmp_path, monkeypatch):
 def test_preflight_cli_writes_the_readiness_evidence_the_queue_reads(tmp_path, monkeypatch):
     out = tmp_path / "ready.json"
     monkeypatch.setenv("LD_READY_JSON", str(out))
+    monkeypatch.setenv("RUNS_DIR", str(tmp_path / "runs"))
     skip = "manifests,banks,val,heldout,init,imports,cuda,disk,g1,ld_gen,evidence"
     rc = P.main(["--low-delay", "--skip", skip, "--gate0", str(_gate0(tmp_path))])
     j = json.loads(out.read_text())

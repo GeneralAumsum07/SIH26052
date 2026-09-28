@@ -253,13 +253,32 @@ bash scripts/run_r8.sh ld-start full                     # needs the release and
 bash scripts/run_r8.sh ld-status
 ```
 
-- **Gate 0a first.** `ld-start` refuses, before creating any session, until `results_r2/r8_ld/gate0/eligibility.json`
+- **Training policy (owner decision, 2026-09-28).** Both queues train all generated configurations by default.
+  Pi/Gate 0a measurements, Arm B eligibility, G1, preflight freshness, full-run release markers, and the legacy
+  pilot deadline do not block launch. Box tests, G1, benchmarks and preflight still report failures but do not
+  prevent launch. Set `REQUIRE_TRAINING_VALIDATION=1` only to restore the previous strict policy described below.
+  Configurations and datasets must still exist for training to execute; completed jobs and explicit stop decisions
+  remain respected. Confirmation jobs without generated configurations show `NOT_GENERATED`; generate the chosen
+  recipe with `gen_r8_configs.py --low-delay --promote <recipe>` before they can run.
+  Launch the low-delay queue with `bash scripts/run_r8.sh ld-start all`, or C0 alone with
+  `bash scripts/run_r8.sh start all`. These defaults are committed and apply on a fresh box without a local override.
+- **Gate 0a in strict mode only.** `ld-start` refuses, before creating any session, until `results_r2/r8_ld/gate0/eligibility.json`
   is `complete` with a non-provisional selection. The committed record is `pending_board`: the board measurements
   (cyclictest, the 1 ms period test, the ARM step timings) are the owner's. Its provisional selection is L = 8 ms,
   because the period test is unverified. Arm B is not piloted. With the Section 4 converter upper estimate of 0.5 ms,
   L = 10 ms totals 13.007 ms and is not eligible, so L = 9 ms is the longest eligible support even with verified 1 ms
   periods. Only a Gate 0b converter measurement can make L = 10 ms (and Arm B) eligible. After the record is
   complete, regenerate with `--low-delay` and commit the result.
+- **Arm B override in strict mode (owner requested 2026-09-28).** On the training machine, run
+  `bash scripts/run_r8.sh ld-allow-unvalidated-arm arm_b` (Windows equivalent:
+  `.venv/Scripts/python.exe scripts/r8_ld_queue.py allow-unvalidated-arm arm_b`). This saves
+  `$RUNS_DIR/r8_queue/training_overrides.json`; it is local queue state and must be enabled separately on the box.
+  It releases `ld_b_s0/s1`, `ld_b_nhat_s0/s1`, and the Arm B full run from Pi measurement gating. Other arms still
+  require Gate 0a. Queue plans mark these jobs unvalidated, preflight records a warning, and stage-1 decisions
+  record the override. The measured Gate 0a record and deployment eligibility remain unchanged.
+  Run `python scripts/r8_preflight.py --low-delay` and `bash scripts/run_r8.sh ld-plan pilots`, then
+  `bash scripts/run_r8.sh ld-start pilots` on the prepared Linux box. G1 and the full-run authorization/readiness
+  checks still apply in strict mode. To revoke the override, remove only `training_overrides.json` while the queue is stopped.
 - **Resolution.** Each registered name (`LD_P1..LD_P4`, `LD_FULL` in run_r8.sh) resolves to exactly one file. C0
   seeds 0/1 come from `r8_ablations/`, C0 seeds 2-4 and the low-delay arms from `r8_ld_ablations/`, and the full runs
   from this directory. A missing or ambiguous file fails the queue, and nothing substitutes for it. C0 runs share

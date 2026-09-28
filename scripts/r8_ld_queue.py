@@ -11,7 +11,12 @@ low-delay one. Marker directories are keyed by the queued name ($RUNS_DIR/<name>
 them) and training writes $RUNS_DIR/<config name>, so C0 seeds 0/1 share both with the legacy queue and neither
 queue trains them twice.
 
-Eligibility: Arm B runs (arms.json needs_gate0_arm_b) only when the Gate 0a record pilots it. Waves: wave 2 (the
+Training is ungated by default (owner decision 2026-09-28). REQUIRE_TRAINING_VALIDATION=1 restores the previous
+validation policy described below. Missing confirmation configurations cannot run until generated; generated jobs
+need no measurement, promotion or full-run release. Explicit stop decisions still apply.
+
+Strict eligibility: Arm B runs (arms.json needs_gate0_arm_b) when Gate 0a pilots it or the owner enables the persistent
+training-only allow-unvalidated-arm override. The override does not change measured Pi eligibility. Waves: wave 2 (the
 promoted recipe's confirmation seeds and full run) waits for the Stage-2 decision. Decisions (run_r8.sh ld-decide)
 stop every run whose recipe they rule out (arms.json stop_if). Full runs need the guarded release: an explicit
 authorization file and readiness evidence (a passing preflight JSON younger than LD_READY_MAX_H hours).
@@ -38,6 +43,7 @@ GATE0 = "results_r2/r8_ld/gate0/eligibility.json"
 WAVE2 = tuple(f"ld_conf_s{s}" for s in range(5)) + ("r8_ld_fe_mini_conf",)
 DECISIONS = "decisions.json"
 FULL_GO = "ld_full_go"
+OVERRIDES = "training_overrides.json"
 READY_MAX_H = float(os.environ.get("LD_READY_MAX_H", "24"))
 # CPU priority classes (Section 3.10), highest first: loader-worker share and nice level per class
 CLASS_SHARE = {1: 2.0, 2: 1.0, 3: 1.0, 4: 0.5}
@@ -49,6 +55,17 @@ STREAM_KEYS = ("seed", "batch_size", "data", "dsp", "controller_on", "model_cfg.
 
 class QueueError(RuntimeError):
     pass
+
+
+def unvalidated_arms(runs_dir):
+    """Read training permission separately from measured deployment eligibility."""
+    p = Path(runs_dir) / "r8_queue" / OVERRIDES
+    if not p.exists():
+        return []
+    arms = json.loads(p.read_text(encoding="utf-8")).get("allow_unvalidated_arms", [])
+    if not isinstance(arms, list) or any(a != "arm_b" for a in arms):
+        raise QueueError(f"{p}: only arm_b supports unvalidated training")
+    return arms
 
 
 def _get(cfg, dotted):
@@ -82,6 +99,8 @@ class Queue:
         self.runs = Path(runs_dir)
         self.q = self.runs / "r8_queue"
         self.names = list(names)
+        # Owner policy: validation is diagnostic by default, including on a fresh training box.
+        self.require_validation = os.environ.get("REQUIRE_TRAINING_VALIDATION", "0") == "1"
         if len(set(self.names)) != len(self.names):
             dup = sorted({n for n in self.names if self.names.count(n) > 1})
             raise QueueError(f"names registered twice: {dup}")
@@ -94,14 +113,32 @@ class Queue:
         self.rec = {Path(a["config"]).stem: a for a in self.man["arms"]}
         self.g0 = self._gate0()
         self.decisions = self._decisions()
+        self.unvalidated = unvalidated_arms(self.runs)
+
+    def allow_unvalidated_arm(self, arm):
+        if arm != "arm_b":
+            raise QueueError("only arm_b supports unvalidated training")
+        self.q.mkdir(parents=True, exist_ok=True)
+        self.unvalidated = [arm]
+        (self.q / OVERRIDES).write_text(json.dumps(dict(
+            allow_unvalidated_arms=self.unvalidated, training_only=True,
+            written=time.strftime("%Y-%m-%dT%H:%M:%S"),
+            reason="Owner authorized training before Pi validation"), indent=2) + "\n", encoding="utf-8")
+
+    def arm_b_allowed(self):
+        return (not self.require_validation or
+                bool(((self.g0.get("selection") or {}).get("arm_b") or {}).get("piloted")) or "arm_b" in self.unvalidated)
 
     # ---- inputs ----------------------------------------------------------------------------------------------
     def _gate0(self):
         if not self.gate0_path.exists():
+            if not self.require_validation:
+                return dict(status="missing", selection=dict(provisional=True,
+                            support_contract=self.man["gate0"]["support_contract"]))
             raise QueueError(f"Gate 0a record {self.gate0_path} missing: no low-delay compute before Gate 0a")
         g0 = json.loads(self.gate0_path.read_text(encoding="utf-8"))
         sel = g0.get("selection") or {}
-        if sel.get("support_contract") != self.man["gate0"]["support_contract"]:
+        if self.require_validation and sel.get("support_contract") != self.man["gate0"]["support_contract"]:
             raise QueueError(f"Gate 0a selects {sel.get('support_contract')}, the configs were generated for "
                              f"{self.man['gate0']['support_contract']}: regenerate (gen_r8_configs.py --low-delay)")
         return g0
@@ -120,6 +157,8 @@ class Queue:
 
     def readiness(self):
         """Full-run release: explicit authorization and fresh readiness evidence (a passing preflight JSON)."""
+        if not self.require_validation:
+            return True, "training gates disabled; validation is diagnostic"
         if not (self.q / FULL_GO).exists():
             return False, f"not authorized: run 'bash scripts/run_r8.sh ld-go-full' ({self.q / FULL_GO} missing)"
         if not self.ready_path.exists():
@@ -183,7 +222,11 @@ class Queue:
         out = []
         promoted = self.decisions.get("stage2")
         for i, n in enumerate(self.names):
-            if n in WAVE2:
+            if n in WAVE2 and not self.require_validation and n not in self.rec:
+                out.append(dict(name=n, order=i, status="NOT_GENERATED",
+                                why="no configuration: generate a confirmation recipe with gen_r8_configs.py --low-delay --promote"))
+                continue
+            if n in WAVE2 and self.require_validation:
                 if promoted is None:
                     out.append(dict(name=n, order=i, status="WAITING", why="wave 2: waits for the Stage-2 decision"))
                     continue
@@ -213,14 +256,19 @@ class Queue:
                      network=network_of(cfg), contract=rec["audio_contract"], arm=rec["arm"], stage=rec["stage"],
                      priority=int(rec["priority"]), wave=int(rec["wave"]), full=full,
                      speculative=bool(rec.get("speculative")), stream=stream_key(cfg), epochs=cfg["epochs"])
+            # Both B's main runs and its n_hat ablation share the owner's training override.
+            j["unvalidated"] = (not self.require_validation and (not self.gate0_ready()[0] or
+                                bool(rec.get("needs_gate0_arm_b") and not
+                                     ((self.g0.get("selection") or {}).get("arm_b") or {}).get("piloted")))) or bool(
+                                rec.get("needs_gate0_arm_b") and "arm_b" in self.unvalidated)
             st = self.state(n)
             why = self._stop_reason(rec)
-            if rec.get("needs_gate0_arm_b") and not ((self.g0.get("selection") or {}).get("arm_b") or {}).get("piloted"):
+            if rec.get("needs_gate0_arm_b") and not self.arm_b_allowed():
                 j.update(status="NOT_ELIGIBLE", why="Arm B runs only when Gate 0a selects L = 10 ms and pilots it")
             elif why and st != "DONE":
                 j.update(status="STOPPED" if st != "RUNNING" else "RUNNING", why=why, stop=True)
             else:
-                j.update(status=st, why="")
+                j.update(status=st, why=f"unvalidated {rec['arm']}: training only; Pi eligibility unverified" if j["unvalidated"] else "")
             out.append(j)
         seen = {}
         for j in out:
@@ -238,7 +286,7 @@ class Queue:
         for j in sorted(self.jobs(phase), key=lambda j: (j.get("wave", 9), j.get("priority", 9), j["order"])):
             if j["status"] not in ("PENDING", "FAILED"):
                 continue
-            if not ok_g0:
+            if self.require_validation and not ok_g0 and not j["unvalidated"]:
                 j = dict(j, status="BLOCKED", why=why_g0)
             elif j["full"] and not rel:
                 j = dict(j, status="BLOCKED", why=why_rel)
@@ -296,9 +344,11 @@ class Queue:
         if what == "stage1":
             if value not in ("arm_a", "arm_b"):
                 raise QueueError("stage1 is arm_a or arm_b (Arm R is never selected)")
-            if value == "arm_b" and not ((self.g0.get("selection") or {}).get("arm_b") or {}).get("piloted"):
+            if value == "arm_b" and not self.arm_b_allowed():
                 raise QueueError("Arm B was not piloted at this support")
             self.decisions["stage1"] = value
+            self.decisions["stage1_unvalidated"] = not self.gate0_ready()[0] or (value == "arm_b" and
+                ("arm_b" in self.unvalidated or not ((self.g0.get("selection") or {}).get("arm_b") or {}).get("piloted")))
         elif what == "stage2":
             v = [] if value == "none" else sorted(x for x in value.split(",") if x)
             bad = [x for x in v if not x.startswith("ld_s2_")]
@@ -314,7 +364,9 @@ class Queue:
     def streams(self, phase):
         """One configuration per rendered stream: the member with the most epochs (the server serves every epoch)."""
         best = {}
-        for j in self.jobs(phase):
+        for j in self.runnable(phase):
+            if j["status"] == "BLOCKED":
+                continue
             if "stream" not in j or j["status"] in ("DONE", "STOPPED", "NOT_ELIGIBLE", "NOT_NEEDED"):
                 continue
             b = best.get(j["stream"])
@@ -324,8 +376,12 @@ class Queue:
 
 
 def main(argv=None):
+    # Bash consumes tab/newline records; Windows CRLF otherwise becomes part of job names and paths.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(newline="\n")
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("cmd", choices=["plan", "next", "status", "decide", "streams", "resolve"])
+    ap.add_argument("cmd", choices=["plan", "next", "status", "decide", "streams", "resolve",
+                                    "allow-unvalidated-arm", "check-start"])
     ap.add_argument("args", nargs="*")
     ap.add_argument("--root", default=str(ROOT))
     ap.add_argument("--runs-dir", default=os.environ.get("RUNS_DIR", "runs"))
@@ -344,6 +400,15 @@ def main(argv=None):
               screen=int(os.environ.get("VAANI_SCREEN_WORKERS", "8")), reserve=int(os.environ.get("RESERVE_CPUS", "4")))
     try:
         q = Queue(a.root, a.runs_dir, names, a.gate0, a.ready)
+        if a.cmd == "allow-unvalidated-arm":
+            if len(a.args) != 1:
+                ap.error("allow-unvalidated-arm arm_b")
+            q.allow_unvalidated_arm(a.args[0])
+            print(f"Enabled unvalidated arm_b training: {q.q / OVERRIDES}; Pi validation remains pending")
+            return 0
+        if a.cmd == "check-start":
+            # The shell must use the same per-job decision as the claimant, not parse a gate's prose.
+            return 0 if any(j["status"] in ("PENDING", "FAILED") for j in q.runnable(a.phase)) else 1
         if a.cmd == "resolve":
             for n in a.args or names:
                 c, cfg, rec = q.resolve(n)
@@ -355,11 +420,15 @@ def main(argv=None):
                 print(f"gpu{r['gpu']}.{r['slot']}\tP{r['priority']}\tw{r['wave']}\t{r['status']}\t{r['name']}\t"
                       f"{r['config']}\t{r['network']}\t{r['contract']}\t{r['train_dir']}\tworkers={r['workers']}"
                       + (f"\t{r['why']}" if r.get("why") else ""))
-            skipped = [j for j in q.jobs(a.phase) if j["status"] in ("WAITING", "NOT_ELIGIBLE", "NOT_NEEDED", "STOPPED")]
+            skipped = [j for j in q.jobs(a.phase) if j["status"] in ("WAITING", "NOT_ELIGIBLE", "NOT_NEEDED", "STOPPED", "NOT_GENERATED")]
             for j in skipped:
                 print(f"-\t-\t-\t{j['status']}\t{j['name']}\t{j['why']}")
             ok, why = q.gate0_ready()
             print(f"# {why}")
+            if not q.require_validation:
+                print("# Training gates disabled for all arms; validation is diagnostic")
+            if q.unvalidated:
+                print(f"# Unvalidated training override: {','.join(q.unvalidated)} (training only)")
             if a.json:
                 Path(a.json).write_text(json.dumps(dict(rows=rows, skipped=skipped, gate0=why), indent=2))
             return 0

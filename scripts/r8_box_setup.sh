@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Bootstrap the rented 2-GPU box for r8 (configs/retraining/R8_RUNBOOK.md) and, with --launch, start the queues the
-# moment every input is present and the G1 gate has passed here. Run from the repo checkout, inside tmux:
+# moment every input is present. Validation reports are diagnostic by default. Run inside tmux:
 #   bash scripts/r8_box_setup.sh --env-check      # which credentials are missing; nothing else (seconds)
 #   bash scripts/r8_box_setup.sh --dry-run        # env check + every stage it would run; downloads/installs nothing
 #   bash scripts/r8_box_setup.sh [--launch]       # the bootstrap; --launch ends with `scripts/run_r8.sh start all`
@@ -12,6 +12,7 @@
 # directly comparable), G1_ITEMS (200), SKIP_TESTS=1, SKIP_PACK=1, SKIP_BENCH=1, PREFLIGHT_SMOKE=N (N train steps
 # per config in preflight), ALLOW_MISSING_ENV=1 (continue past missing credentials), PY (python for the env check).
 set -euo pipefail
+export REQUIRE_TRAINING_VALIDATION="${REQUIRE_TRAINING_VALIDATION:-0}"
 cd "$(dirname "$0")/.."
 MODE=run; LAUNCH=0
 for a in "$@"; do case "$a" in
@@ -33,6 +34,17 @@ stage() {
   if done_ "$n"; then say "skip $n (done $(cat "$S/$n.ok"))"; return 0; fi
   if [ "$MODE" = dry ]; then say "DRY $n: $*"; return 0; fi
   say "stage $n"; "$@"; mark "$n"
+}
+# Keep real diagnostic failures and their reports without turning them into launch prerequisites.
+# A separate subshell preserves errexit inside multi-command bench functions; only successful stages are marked.
+diagnostic_stage() {
+  if [ "$REQUIRE_TRAINING_VALIDATION" = 1 ]; then stage "$@"; return; fi
+  local n=$1 pid; shift
+  done_ "$n" && { say "skip $n (done)"; return 0; }
+  if [ "$MODE" = dry ]; then say "DRY $n (diagnostic): $*"; return 0; fi
+  say "diagnostic $n"
+  ( "$@" ) & pid=$!
+  if wait "$pid"; then mark "$n"; else say "WARNING: $n failed; training remains enabled"; fi
 }
 # background stage: bg <name> <function>; joined later with join_bg <name>
 bg() {
@@ -188,19 +200,19 @@ stage heldout heldout
 tests() { VAANI_R8_BOX=1 "$PY" -m pytest -q -p no:cacheprovider tests/test_r8_box.py tests/test_losses.py tests/test_pack.py \
   tests/test_mixer_v2.py tests/test_data_gates.py tests/test_golden_vectors.py tests/test_heldout_disjoint.py \
   tests/test_heldout_freesound.py tests/test_r8_configs.py tests/test_scenes_r8.py tests/test_dropout_parity.py; }
-[ "${SKIP_TESTS:-0}" = 1 ] || stage tests tests
+[ "${SKIP_TESTS:-0}" = 1 ] || diagnostic_stage tests tests
 pack() { "$PY" scripts/pack_corpus.py --manifests 'data/manifests/*.parquet' --out data/pack; }
 [ "${SKIP_PACK:-0}" = 1 ] || stage pack pack
 
-# --- 9. G1 on this box, on the full configs' own mix.v2 block and bank: no full run starts without it ------------------
+# --- 9. G1 diagnostic on this box, on the full configs' own mix.v2 block and bank -------------------------------------
 g1() {
   local cmd; cmd=$(PY="$PY" "$PY" scripts/r8_preflight.py --g1-cmd --g1-seed "$G1_SEED" --g1-items "$G1_ITEMS" --g1 "$G1_JSON")
   echo "$cmd" > "$S/g1_cmd.txt"; say "G1: $cmd"
   eval "$cmd"
   "$PY" -c "import json,sys; j=json.load(open('$G1_JSON')); print({k: (j[k] or {}).get('auc_ild') for k in ('param','room')}, 'gate_pass', j['gate_pass']); sys.exit(0 if j['gate_pass'] is True else 1)" \
-    || die "G1 FAILED on this box ($G1_JSON): the full runs will refuse to start. Do not override; report it."
+    || { say "G1 FAILED on this box ($G1_JSON)"; return 1; }
 }
-stage g1 g1
+diagnostic_stage g1 g1
 
 # --- 10. loader/step bench (sizes VAANI_WORKERS), then preflight ------------------------------------------------------
 kids() {  # every descendant pid of $1 (breadth first)
@@ -247,16 +259,19 @@ ld_bench() {
   "$PY" scripts/r8_preflight.py --mem-summary "$S/bench_mem_ld_loader.log" "$S/bench_mem_ld_step.log" \
     --mem-out results_r2/r8_ld/loader_mem_box.json
 }
-[ "${SKIP_BENCH:-0}" = 1 ] || stage bench bench
-[ "${SKIP_BENCH:-0}" = 1 ] || stage ld_bench ld_bench
+[ "${SKIP_BENCH:-0}" = 1 ] || diagnostic_stage bench bench
+[ "${SKIP_BENCH:-0}" = 1 ] || diagnostic_stage ld_bench ld_bench
 PF=("$PY" scripts/r8_preflight.py --sample 50 --gpus "$GPUS" --g1 "$G1_JSON")
 [ -n "${PREFLIGHT_SMOKE:-}" ] && PF+=(--smoke "$PREFLIGHT_SMOKE")
-if [ "$MODE" = dry ]; then say "DRY preflight: ${PF[*]}"; else "${PF[@]}" || die "preflight FAILED (runs/preflight.json)"; fi
-# low-delay readiness evidence (runs/r8_queue/preflight_ld.json): its failure does not block the legacy C0 queue, and
-# the low-delay queue refuses without a fresh pass (Gate 0a pending is a FAIL here until the board record is complete)
+if [ "$MODE" = dry ]; then say "DRY preflight: ${PF[*]}"
+elif ! "${PF[@]}"; then
+  [ "$REQUIRE_TRAINING_VALIDATION" != 1 ] || die "preflight FAILED (runs/preflight.json)"
+  say "WARNING: preflight FAILED (runs/preflight.json); training remains enabled"
+fi
+# Preserve low-delay readiness evidence even when validation does not gate training.
 PFLD=("$PY" scripts/r8_preflight.py --low-delay --sample 50 --gpus "$GPUS" --g1 "$G1_JSON")
 if [ "$MODE" = dry ]; then say "DRY preflight-ld: ${PFLD[*]}"
-elif ! "${PFLD[@]}"; then say "WARNING: low-delay preflight FAILED (runs/r8_queue/preflight_ld.json): no low-delay full runs until it passes"; fi
+elif ! "${PFLD[@]}"; then say "WARNING: low-delay preflight FAILED (runs/r8_queue/preflight_ld.json); REQUIRE_TRAINING_VALIDATION=$REQUIRE_TRAINING_VALIDATION"; fi
 
 # --- 11. launch ----------------------------------------------------------------------------------------------------
 if [ $LAUNCH = 1 ]; then

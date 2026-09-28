@@ -12,9 +12,11 @@
 #   bash scripts/run_r8.sh ld-status                    DONE / RUNNING / PENDING / WAITING / NOT_ELIGIBLE / STOPPED ...
 #   bash scripts/run_r8.sh ld-decide stage1 arm_a|arm_b | stage2 none|<ld_s2 stems>   record, stop ruled-out runs
 #   bash scripts/run_r8.sh ld-go-full                   authorize the full runs (readiness evidence still required)
+#   bash scripts/run_r8.sh ld-allow-unvalidated-arm arm_b   persist training-only permission before Pi validation
 #   bash scripts/run_r8.sh _ld_lane <gpu> <slot> <phase>
 # Resumable: a run with runs/<name>/DONE is skipped; any other run is relaunched with the same command, and
 # train.py resumes it from runs/<name>/last.pt (resume: true). Rerun "start" after a reboot; nothing is lost.
+# Training is ungated by default. REQUIRE_TRAINING_VALIDATION=1 opts back into the historical policy below:
 # Full runs refuse to start unless the G1 result ($G1_JSON) has gate_pass true; pilots too, unless
 # ALLOW_PILOTS_WITHOUT_G1=1. "all" runs the pilots, then waits for "go-full" (plan: the winning pilot settings are
 # copied into the full configs first); FULL_GO=1 skips that wait.
@@ -23,6 +25,7 @@
 # queues' loaders and screens fit in MemAvailable at VAANI_WORKER_RSS_GB per process; MEMINFO for tests),
 # VAANI_SCREEN_WORKERS (8), MAX_TRIES (3), TRAIN_CMD, RUNS_DIR (runs), G1_JSON, NO_TMUX=1 (background, no tmux).
 set -uo pipefail
+export REQUIRE_TRAINING_VALIDATION="${REQUIRE_TRAINING_VALIDATION:-0}"
 cd "$(dirname "$0")/.."
 
 RUNS_DIR="${RUNS_DIR:-runs}"; Q="$RUNS_DIR/r8_queue"
@@ -46,7 +49,7 @@ PILOTS_0=(ab1_fe_mini_s0 ab1_fe_mini_s1)
 PILOTS_1=()
 FULL_0=(r8_fe_mini); FULL_1=()
 # ---- low-delay registry (Section 3.10 priorities; arms.json holds each name's class, wave and stop rules) ----------
-LD_P1=(ab1_fe_mini_s0 ab1_fe_mini_s1 ld_a_s0 ld_a_s1 ld_b_s0 ld_b_s1)              # Arm B: only when Gate 0a pilots it
+LD_P1=(ab1_fe_mini_s0 ab1_fe_mini_s1 ld_a_s0 ld_a_s1 ld_b_s0 ld_b_s1)              # all generated arms train by default
 LD_P2=(ld_s2_overparam ld_s2_gru_default ld_s2_mrstft05 ld_s2_warmup480 ld_s2_native)   # Stage 2 on Arm A, seed 0
 LD_P3=(ab1_fe_mini_s2 ab1_fe_mini_s3 ab1_fe_mini_s4 ld_a_s2 ld_a_s3 ld_a_s4
        ld_conf_s0 ld_conf_s1 ld_conf_s2 ld_conf_s3 ld_conf_s4)                     # ld_conf_*: wave 2 (Stage-2 decision)
@@ -126,9 +129,11 @@ run_queue() {  # $1 gpu, $2 phase
   local g1ok=0; g1_pass >/dev/null && g1ok=1   # once per queue for the pilots; each full run re-reads it
   for n in $(queue_of "$g" "$ph"); do
     c=$(cfg_of "$n"); [ "$(state_of "$n")" = DONE ] && continue
-    [ "$(state_of "$n")" = DROPPED ] && continue
+    [ "$REQUIRE_TRAINING_VALIDATION" = 1 ] && [ "$(state_of "$n")" = DROPPED ] && continue
     [ -f "$c" ] || { log "$g" "$n: $c missing, skipped"; continue; }
-    if is_full "$n"; then
+    if [ "$REQUIRE_TRAINING_VALIDATION" != 1 ]; then
+      : # Validation records and pilot deadlines do not hold training under the default owner policy.
+    elif is_full "$n"; then
       if [ "$ph" = all ] && [ "${FULL_GO:-0}" != 1 ]; then   # the pilots' winners go into the full configs first
         until [ -f "$Q/full_go" ] || [ "${DRY_RUN:-0}" = 1 ]; do
           log "$g" "pilots done; waiting for 'run_r8.sh go-full' before $n"; sleep 600; done
@@ -198,8 +203,8 @@ ld_start() {  # $1 phase
   local ph=$1 g sl key c name n lane prio wave st net con td rest dirs=() pr=()
   LDQ plan --phase "$ph" > "$Q/ld_plan.txt" || { cat "$Q/ld_plan.txt"; return 3; }   # a missing config fails here
   cat "$Q/ld_plan.txt"
-  if [ "${DRY_RUN:-0}" != 1 ] && ! grep -q '^# Gate 0a complete' "$Q/ld_plan.txt"; then
-    echo "REFUSED: the Gate 0a record is not complete ($GATE0_JSON): no low-delay compute before Gate 0a"; return 1; fi
+  if [ "${DRY_RUN:-0}" != 1 ] && ! LDQ check-start --phase "$ph"; then
+    echo "REFUSED: no runnable low-delay jobs (Gate 0a / release / queue state); inspect ld-plan $ph"; return 1; fi
   mkdir -p "$Q/claims"
   for n in $(ls "$Q/claims"); do   # a claim without a live run is stale (reboot, or a dry run)
     if ! { [ -f "$Q/running.$n" ] && kill -0 "$(cat "$Q/running.$n")" 2>/dev/null; }; then rmdir "$Q/claims/$n"; fi
@@ -213,6 +218,8 @@ ld_start() {  # $1 phase
   fi
   if [ "$LD_SCORER" = async ]; then     # one scorer per box; its queue order follows the priority classes
     while IFS=$'\t' read -r lane prio wave st n c net con td rest; do
+      # A partial training override leaves other arms blocked in the plan; do not score those runs.
+      case "$st" in PENDING|FAILED) ;; *) continue;; esac
       case "$lane" in gpu*) dirs+=("$td"); pr+=("$td=${prio#P}");; esac
     done < "$Q/ld_plan.txt"
     if [ "${#dirs[@]}" -gt 0 ]; then
@@ -232,11 +239,11 @@ mkdir -p "$Q"
 case "$cmd" in
   ld-start)
     ph="${1:-all}"; case "$ph" in all|pilots|full) ;; *) echo "phase must be all|pilots|full"; exit 2;; esac
-    if [ "$ph" != pilots ] || [ "${ALLOW_PILOTS_WITHOUT_G1:-0}" != 1 ]; then
+    if [ "$REQUIRE_TRAINING_VALIDATION" = 1 ] && { [ "$ph" != pilots ] || [ "${ALLOW_PILOTS_WITHOUT_G1:-0}" != 1 ]; }; then
       g1_pass || { echo "REFUSED: run the G1 gate on this box first (scripts/r8_box_setup.sh does)"; exit 1; }; fi
     if [ "${DRY_RUN:-0}" != 1 ]; then   # refuse before any session exists (ld_start re-checks on its own plan)
-      LDQ plan --phase "$ph" 2>&1 | grep -q '^# Gate 0a complete' || {
-        echo "REFUSED: the Gate 0a record is not complete ($GATE0_JSON): no low-delay compute before Gate 0a"; exit 1; }
+      LDQ check-start --phase "$ph" || {
+        echo "REFUSED: no runnable low-delay jobs (Gate 0a / release / queue state); inspect ld-plan $ph"; exit 1; }
       command -v tmux >/dev/null || { echo "tmux missing (apt-get install -y tmux)"; exit 1; }
       tmux has-session -t r8ld 2>/dev/null && { echo "tmux session r8ld already exists: tmux attach -t r8ld"; exit 1; }
       tmux new-session -d -s r8ld -n ctl "bash scripts/run_r8.sh ld-status; exec bash"
@@ -247,7 +254,8 @@ case "$cmd" in
   _ld_lane) ld_lane "$1" "$2" "$3";;
   ld-plan) LDQ plan --phase "${1:-all}";;
   ld-status) LDQ status;;
-  ld-go-full) touch "$Q/ld_full_go"; echo "low-delay full runs authorized (readiness evidence still required: $LD_READY_JSON)";;
+  ld-allow-unvalidated-arm) LDQ allow-unvalidated-arm "${1:-}";;
+  ld-go-full) touch "$Q/ld_full_go"; echo "low-delay full runs authorized (only required with REQUIRE_TRAINING_VALIDATION=1)";;
   ld-decide)
     stop=$(LDQ decide "$1" "$2") || exit $?
     for n in $stop; do
@@ -258,7 +266,7 @@ case "$cmd" in
     done;;
   start)
     ph="${1:-all}"; case "$ph" in all|pilots|full) ;; *) echo "phase must be all|pilots|full"; exit 2;; esac
-    if [ "$ph" = full ] || [ "${ALLOW_PILOTS_WITHOUT_G1:-0}" != 1 ]; then
+    if [ "$REQUIRE_TRAINING_VALIDATION" = 1 ] && { [ "$ph" = full ] || [ "${ALLOW_PILOTS_WITHOUT_G1:-0}" != 1 ]; }; then
       g1_pass || { echo "REFUSED: run the G1 gate on this box first (scripts/r8_box_setup.sh does)"; exit 1; }; fi
     if [ "${DRY_RUN:-0}" = 1 ]; then
       for g in 0 1; do echo "gpu$g workers $(workers $g): $(queue_of $g "$ph")"; run_queue $g "$ph"; done; exit 0; fi

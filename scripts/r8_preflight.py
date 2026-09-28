@@ -274,7 +274,7 @@ def _version(dist):
     return None
 
 
-def check_low_delay(root, rep, gate0=LD_GATE0, skip=()):
+def check_low_delay(root, rep, gate0=LD_GATE0, skip=(), runs_dir=None):
     """The low-delay additions (module doc). Every check reads committed files or this box; none trains."""
     def want(name):
         return name not in skip
@@ -296,6 +296,10 @@ def check_low_delay(root, rep, gate0=LD_GATE0, skip=()):
     if want("queued") and len(present) == len(queued):
         rep.add("queued", "ok", f"{len(queued)} queued arms", "every configuration present")
     sel = None
+    from r8_ld_queue import unvalidated_arms
+    overrides = unvalidated_arms(runs_dir) if runs_dir is not None else []
+    if overrides:
+        rep.add("gate0", "WARN", "training override", "Unvalidated arm_b training only; Pi eligibility remains unverified")
     if want("gate0"):
         g = root / gate0
         if not g.exists():
@@ -304,14 +308,15 @@ def check_low_delay(root, rep, gate0=LD_GATE0, skip=()):
             j = json.loads(g.read_text(encoding="utf-8")); s = j.get("selection") or {}
             sel = s.get("support_contract")
             probs = []
-            if j.get("status") != "complete" or s.get("provisional"):
+            if (j.get("status") != "complete" or s.get("provisional")) and not overrides:
                 probs.append(f"status {j.get('status')}{' (provisional selection)' if s.get('provisional') else ''}")
             if s.get("mini_p18_fails_8ms"):
                 probs.append("Mini-P18 fails at 8 ms: returned to the owner")
             if (meta.get("gate0") or {}).get("support_contract") != sel:
                 probs.append(f"arms.json generated for {(meta.get('gate0') or {}).get('support_contract')}, "
                              f"Gate 0a selects {sel}: regenerate")
-            rep.add("gate0", "FAIL" if probs else "ok", gate0, "; ".join(probs) or f"complete: {sel}")
+            rep.add("gate0", "FAIL" if probs else "ok", gate0, "; ".join(probs) or
+                    (f"training override arm_b; recorded support: {sel}" if overrides else f"complete: {sel}"))
     if want("contract"):
         from vaani import audio_contract as ac
         for n, (r, c) in sorted(present.items()):
@@ -553,9 +558,10 @@ def main(argv=None):
     ap.add_argument("--mem-out", default="results_r2/r8/loader_mem_box.json")
     ap.add_argument("--low-delay", action="store_true", help="the low-delay queue's configs and checks (module doc)")
     ap.add_argument("--gate0", default=LD_GATE0, help="Gate 0a record (--low-delay)")
+    ap.add_argument("--runs-dir", default=os.environ.get("RUNS_DIR", "runs"), help="queue state and training overrides")
     a = ap.parse_args(argv)
     if a.low_delay and a.json == "runs/preflight.json":
-        a.json = os.environ.get("LD_READY_JSON") or LD_READY
+        a.json = os.environ.get("LD_READY_JSON") or str(Path(a.runs_dir) / "r8_queue/preflight_ld.json")
     root = Path(a.root).resolve()
     if a.mem_summary:
         s = {Path(p).stem: mem_summary(p) for p in a.mem_summary}
@@ -608,7 +614,7 @@ def main(argv=None):
         if name not in skip:
             fn()
     if a.low_delay:
-        check_low_delay(root, rep, a.gate0, skip)
+        check_low_delay(root, rep, a.gate0, skip, runs_dir=root / a.runs_dir)
     if a.smoke and not rep.failed():   # no GPU steps on a box whose inputs already failed
         smoke(root, cfgs, rep, a.smoke)
     try:
