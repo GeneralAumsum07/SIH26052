@@ -127,6 +127,10 @@ def fp32_island(enabled=True, device_type="cuda"):
     if not enabled:
         yield
         return
+    if torch.compiler.is_compiling():  # compile runs with TF32 off globally (runtime.tune_backends tf32=False)
+        with torch.autocast(device_type, enabled=False):
+            yield
+        return
     prev = (torch.backends.cuda.matmul.allow_tf32, torch.backends.cudnn.allow_tf32)
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False

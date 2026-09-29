@@ -260,6 +260,12 @@ ld_bench() {
     --out results_r2/r8_ld/step_time_box.json --label "rental box GPU0" --configs "${LD_BENCH_CFGS[@]}"
   "$PY" scripts/r8_preflight.py --mem-summary "$S/bench_mem_ld_loader.log" "$S/bench_mem_ld_step.log" \
     --mem-out results_r2/r8_ld/loader_mem_box.json
+  # perf_parity: the launch numerics (CUDA graph + torch.compile + fused GRU) against eager cuDNN, in fp32 so bf16
+  # rounding cannot mask or fake a mismatch; writes the gru_parity.json the preflight requires for gru_kernel fused
+  CUDA_VISIBLE_DEVICES=0 "$PY" scripts/bench_r8_training.py --no-amp --variants graph-compile-fused --thread-counts 4 \
+    --configs configs/retraining/r8_fe_mini.yaml configs/retraining/r8_ld_fe_mini.yaml configs/retraining/r8_ld_fe_mini_overparam.yaml \
+    --steps 5 --repeats 1 --warmup 2 --out results_r2/r8_ld/perf/launch_bench_fp32.json \
+    --parity-out results_r2/r8_ld/perf/gru_parity.json
 }
 [ "${SKIP_BENCH:-0}" = 1 ] || diagnostic_stage bench bench
 [ "${SKIP_BENCH:-0}" = 1 ] || diagnostic_stage ld_bench ld_bench

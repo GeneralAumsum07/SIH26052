@@ -27,7 +27,8 @@ def _check(fn, rnn, t, b=6, device="cpu"):
         x1 = x.clone().requires_grad_(True); x2 = x.clone().requires_grad_(True)
         ref = rnn(x1)[0]
         got = fn(rnn, x2)
-        assert ((got - ref).abs().max() / ref.abs().max()).item() <= 1e-6
+        # 1e-5: triton-windows on sm_120 measured a flat ~7e-6 for T=1..1001 (rounding, not recurrence drift)
+        assert ((got - ref).abs().max() / ref.abs().max()).item() <= 1e-5
         g = torch.randn_like(ref)
         params = [p for p in rnn.parameters() if p.requires_grad]
         r1 = torch.autograd.grad(ref, [x1, *params], g, allow_unused=True)
@@ -69,6 +70,19 @@ def test_fused_refuses_without_cuda():
         pytest.skip("CUDA and triton present")
     with pytest.raises(RuntimeError, match="gru_kernel: cudnn"):
         G.gru_fused(torch.nn.GRU(24, 24, batch_first=True), torch.randn(2, 3, 24))
+
+
+def test_fused_route_ema_copy_uses_its_own_weights():
+    from vaani.train import EMA
+    torch.manual_seed(0)
+    m = V.build("mini", audio_contract=ac.ARM_A_IDS[0], **V.MINI_P["p18"])
+    G.use_fused_gru(m, "reference")
+    shadow = EMA(m, .999).model
+    x = torch.randn(2, 5, m.blocks[0].rnn.input_size)
+    before = shadow.blocks[0].rnn(x)[0].clone()
+    with torch.no_grad():
+        m.blocks[0].rnn.weight_ih_l0.add_(1.)
+    assert torch.equal(shadow.blocks[0].rnn(x)[0], before), "EMA forward must not close over the live GRU"
 
 
 @pytest.mark.skipif(not (torch.cuda.is_available() and G.triton is not None), reason="needs CUDA and triton")

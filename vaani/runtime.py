@@ -70,13 +70,14 @@ def loader_kwargs(num_workers: int, device, prefetch_factor: int = 4) -> dict:
     return kw
 
 
-def tune_backends(device):
+def tune_backends(device, tf32=True):
     """TF32 and cudnn autotuning. Shapes are fixed here (batch x 257 x frames), so benchmark mode
-    picks kernels once and reuses them; it would be the wrong choice under varying shapes."""
+    picks kernels once and reuses them; it would be the wrong choice under varying shapes.
+    tf32=False under torch.compile: Dynamo cannot trace the fp32 islands' flag toggling, so TF32 stays off."""
     if getattr(device, "type", str(device)) != "cuda":
         return
-    torch.backends.cuda.matmul.allow_tf32 = True
-    torch.backends.cudnn.allow_tf32 = True
+    torch.backends.cuda.matmul.allow_tf32 = tf32
+    torch.backends.cudnn.allow_tf32 = tf32
     torch.backends.cudnn.benchmark = True
 
 

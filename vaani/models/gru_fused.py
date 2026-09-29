@@ -17,8 +17,11 @@ run uses cuDNN.
 """
 from __future__ import annotations
 
+import contextlib
+
 import torch
 import torch.nn as nn
+from types import MethodType
 
 try:
     import triton
@@ -178,18 +181,28 @@ def _launch_cfg(b, hdim):
     return hp, 16, (triton.cdiv(b, 16),)
 
 
+@contextlib.contextmanager
+def _no_tf32():
+    # Under torch.compile TF32 is already off globally (runtime.tune_backends tf32=False); Dynamo cannot read the flag
+    if torch.compiler.is_compiling():
+        yield
+        return
+    prev = torch.backends.cuda.matmul.allow_tf32
+    torch.backends.cuda.matmul.allow_tf32 = False
+    try:
+        yield
+    finally:
+        torch.backends.cuda.matmul.allow_tf32 = prev
+
+
 class _GRUFused(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, w_ih, w_hh, b_ih, b_hh):
         b, t, _ = x.shape
         hdim = w_hh.shape[1]
         x, w_ih, w_hh, b_ih, b_hh = (v.contiguous().float() for v in (x, w_ih, w_hh, b_ih, b_hh))
-        prev = torch.backends.cuda.matmul.allow_tf32
-        torch.backends.cuda.matmul.allow_tf32 = False
-        try:
+        with _no_tf32():
             gi = torch.addmm(b_ih, x.reshape(b * t, -1), w_ih.t()).reshape(b, t, 3 * hdim).contiguous()
-        finally:
-            torch.backends.cuda.matmul.allow_tf32 = prev
         out = torch.empty(b, t, hdim, device=x.device, dtype=torch.float32)
         gates = torch.empty(b, t, 4 * hdim, device=x.device, dtype=torch.float32)
         hp, bb, grid = _launch_cfg(b, hdim)
@@ -205,15 +218,11 @@ class _GRUFused(torch.autograd.Function):
         dgh = torch.empty_like(dgi)
         hp, bb, grid = _launch_cfg(b, hdim)
         _gru_bwd_kernel[grid](dout.contiguous().float(), out, gates, w_hh, dgi, dgh, b, t, H=hdim, HP=hp, BLOCK_B=bb)
-        prev = torch.backends.cuda.matmul.allow_tf32
-        torch.backends.cuda.matmul.allow_tf32 = False
-        try:
+        with _no_tf32():
             h_prev = torch.cat([out.new_zeros(b, 1, hdim), out[:, :-1]], 1).reshape(b * t, hdim)
             dw_hh = dgh.reshape(b * t, -1).t() @ h_prev
             dw_ih = dgi.reshape(b * t, -1).t() @ x.reshape(b * t, -1)
             dx = (dgi.reshape(b * t, -1) @ w_ih).reshape(x.shape)
-        finally:
-            torch.backends.cuda.matmul.allow_tf32 = prev
         return dx, dw_ih, dw_hh, dgi.sum((0, 1)), dgh.sum((0, 1))
 
 
@@ -221,24 +230,33 @@ def fused_available(device) -> bool:
     return triton is not None and torch.device(device).type == "cuda"
 
 
+# Opaque to torch.compile: traced, the Function's matmuls drifted ~7e-4 from eager; eager-inside is bit-identical
+@torch.compiler.disable
 def gru_fused(rnn: nn.GRU, x: torch.Tensor) -> torch.Tensor:
     if not fused_available(x.device):
         raise RuntimeError("the fused GRU kernel needs CUDA and triton; set perf.numerics.gru_kernel: cudnn")
     return _GRUFused.apply(x, *_weights(rnn))
 
 
+def _routed_forward(rnn, x, hx=None):
+    if hx is not None:
+        raise ValueError("the fused GRU starts from a zero state")
+    fn = {"fused": gru_fused, "reference": gru_reference}[rnn._vaani_gru_impl]
+    return fn(rnn, x), None
+
+
 def use_fused_gru(model, impl: str = "fused"):
     """Route every VaaniFE Block's training GRU through the fused kernel (impl "fused") or its plain-torch reference
     ("reference"). Parameters, state dicts and the step graph are untouched."""
-    fn = {"fused": gru_fused, "reference": gru_reference}[impl]
+    if impl not in ("fused", "reference"):
+        raise ValueError("GRU implementation must be fused or reference")
     for blk in model.blocks:
         rnn = blk.rnn
         if rnn.num_layers != 1 or rnn.bidirectional or not rnn.batch_first:
             raise ValueError("the fused GRU supports one batch-first unidirectional layer")
 
-        def forward(x, hx=None, _rnn=rnn):
-            if hx is not None:
-                raise ValueError("the fused GRU starts from a zero state")
-            return fn(_rnn, x), None
-        rnn.forward = forward
+        # Closures survive deepcopy and make EMA read live weights. Bound methods
+        # rebind to the copied module, preserving the shadow's own parameters.
+        rnn._vaani_gru_impl = impl
+        rnn.forward = MethodType(_routed_forward, rnn)
     return model

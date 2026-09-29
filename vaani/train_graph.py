@@ -48,14 +48,18 @@ class GraphedStep:
         return None if x is None else x.detach().clone()
 
     def _copy_in(self, inputs, target, is_clean):
+        if len(inputs) != len(self.static_in):
+            raise RuntimeError("graphed step: input count changed after capture")
+        for name, src, dst in (("target", target, self.static_target), ("is_clean", is_clean, self.static_clean)):
+            if src.shape != dst.shape or src.dtype != dst.dtype or src.device != dst.device:
+                raise RuntimeError(f"graphed step: {name} shape, dtype or device changed after capture")
         for dst, src in zip(self.static_in, inputs):
             if dst is None:
                 if src is not None:
                     raise RuntimeError("graphed step: an input that was None at capture is now set")
                 continue
-            if src.shape != dst.shape:
-                raise RuntimeError(f"graphed step: input shape {tuple(src.shape)} differs from the captured "
-                                   f"{tuple(dst.shape)} (fixed batch and crop are required)")
+            if src is None or src.shape != dst.shape or src.dtype != dst.dtype or src.device != dst.device:
+                raise RuntimeError("graphed step: input shape, dtype or device changed (fixed batch and crop required)")
             dst.copy_(src, non_blocking=True)
         self.static_target.copy_(target, non_blocking=True)
         self.static_clean.copy_(is_clean, non_blocking=True)
@@ -76,9 +80,10 @@ class GraphedStep:
                 # change. Let the GRU operation pack its weights inside the graph.
                 r.flatten_parameters = lambda: None
         model.zero_grad(set_to_none=True)
-        side = torch.cuda.Stream()
-        side.wait_stream(torch.cuda.current_stream())
         bn_state = {k: v.detach().clone() for k, v in model.state_dict().items() if "running" in k or "num_batches" in k}
+        side = torch.cuda.Stream()
+        # Include the buffer snapshots in the dependency before warmup mutates BN.
+        side.wait_stream(torch.cuda.current_stream())
         with torch.cuda.stream(side):
             for _ in range(WARMUP_ITERS):            # fixes cuDNN's algorithm choice; gradients are zeroed afterwards
                 self._compute(self.static_in, self.static_target, self.static_clean)

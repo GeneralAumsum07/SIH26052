@@ -71,9 +71,9 @@ optim:
   warmup: 2000
 perf:
   numerics:
-    compile: false
-    cuda_graph: false
-    gru_kernel: cudnn
+    compile: true
+    cuda_graph: true
+    gru_kernel: fused
     render: cpu
   ops:
     priority: 2

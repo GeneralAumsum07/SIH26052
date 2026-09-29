@@ -30,13 +30,7 @@ from vaani import train  # noqa: E402
 def build_dataset(cfg):
     """The train dataset with train.main's keyword wiring (kept in step with it)."""
     d = cfg["data"]
-    dsk = dict(with_dsp=train.needs_dsp(cfg), controller_on=cfg["controller_on"], dsp_cfg=cfg.get("dsp"),
-               pack_root=d.get("pack", "data/pack"), ref_corrupt=d.get("ref_corrupt"))
-    if cfg["model"] == "vaani_fe":
-        dsk["fe_inputs"] = True
-    for k in ("exclude_groups_file", "scene_weights"):
-        if k in d:
-            dsk[k] = str(train._abs(d[k])) if k == "exclude_groups_file" and d[k] else d[k]
+    dsk = train.dataset_kwargs(cfg)  # includes the low-delay frontend contract
     return DynamicMixDataset(d["manifests"], "train", d.get("bank"), MixConfig(**d.get("mix", {})), d.get("crop_s", 4.0),
                              d.get("epoch_len", 20000), cfg["seed"], **dsk)
 

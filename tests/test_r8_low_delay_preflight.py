@@ -367,7 +367,15 @@ def _fails(rep, check=None):
     return [r for r in rep.failed() if check is None or r["check"] == check]
 
 
-def test_preflight_passes_the_committed_low_delay_queue(tmp_path):
+def _gru_parity(tmp, monkeypatch):
+    # the committed queue trains the fused GRU: the box's ld_bench stage writes this record before preflight
+    (tmp / "perf").mkdir(exist_ok=True)
+    (tmp / "perf" / "gru_parity.json").write_text(json.dumps({"pass": True}))
+    monkeypatch.setattr(P, "LD_PERF", str(tmp / "perf"))
+
+
+def test_preflight_passes_the_committed_low_delay_queue(tmp_path, monkeypatch):
+    _gru_parity(tmp_path, monkeypatch)
     rep = _pf(tmp_path)
     assert not rep.failed(), rep.failed()
     checks = {r["check"] for r in rep.rows}
@@ -429,7 +437,7 @@ def test_preflight_fails_mismatched_numerics_and_unrecorded_gpu_paths(tmp_path, 
     def mixed(cfg):
         p = real(cfg)
         if cfg["name"] == "r8_ld_s2_native":
-            p["numerics"] = dict(p["numerics"], cuda_graph=True)
+            p["numerics"] = dict(p["numerics"], cuda_graph=not p["numerics"]["cuda_graph"])
         return p
     monkeypatch.setattr(P, "train_perf", mixed)
     assert "differs" in _fails(_pf(tmp_path), "numerics")[0]["what"]
@@ -481,6 +489,7 @@ def test_preflight_fails_missing_bench_evidence(tmp_path, monkeypatch):
 
 def test_preflight_cli_writes_the_readiness_evidence_the_queue_reads(tmp_path, monkeypatch):
     out = tmp_path / "ready.json"
+    _gru_parity(tmp_path, monkeypatch)
     monkeypatch.setenv("LD_READY_JSON", str(out))
     monkeypatch.setenv("RUNS_DIR", str(tmp_path / "runs"))
     skip = "manifests,banks,val,heldout,init,imports,cuda,disk,g1,ld_gen,evidence"

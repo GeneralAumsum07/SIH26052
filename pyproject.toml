@@ -21,6 +21,8 @@ dependencies = [
   "tqdm>=4.66",
   "requests>=2.32",
   "einops>=0.8.2",
+  # torch.compile and the fused GRU need Triton; Linux torch wheels bring their own, Windows needs this port
+  "triton-windows>=3.7,<3.8; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]

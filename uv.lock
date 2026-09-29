@@ -1156,6 +1156,14 @@ wheels = [
 ]
 
 [[package]]
+name = "triton-windows"
+version = "3.7.1.post27"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/76/30/325b420efd0047e119679c646a9a410db216069800ec009fae3da26c69a3/triton_windows-3.7.1.post27-cp312-cp312-win_amd64.whl", hash = "sha256:f5406230d7dbf6965bc4051fcad27b81c39ba4a4bfde06f494dd7ff4eb325a9e", size = 49683004, upload-time = "2026-06-21T16:48:14.02Z" },
+]
+
+[[package]]
 name = "typeguard"
 version = "2.13.3"
 source = { registry = "https://pypi.org/simple" }
@@ -1214,6 +1222,7 @@ dependencies = [
     { name = "torch" },
     { name = "torchaudio" },
     { name = "tqdm" },
+    { name = "triton-windows", marker = "sys_platform == 'win32'" },
 ]
 
 [package.optional-dependencies]
@@ -1256,6 +1265,7 @@ requires-dist = [
     { name = "torch-pesq", marker = "extra == 'train'", specifier = ">=0.1" },
     { name = "torchaudio", specifier = ">=2.7", index = "https://download.pytorch.org/whl/cu128" },
     { name = "tqdm", specifier = ">=4.66" },
+    { name = "triton-windows", marker = "sys_platform == 'win32'", specifier = ">=3.7,<3.8" },
 ]
 provides-extras = ["asr", "dev", "fast", "train"]
 

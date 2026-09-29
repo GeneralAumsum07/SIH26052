@@ -401,6 +401,9 @@ def perf_settings(cfg):
         raise ValueError("perf.ops: scorer inline|async, stream local|shared")
     if ops["scorer"] == "async" and (cfg.get("early_stopping") or {}).get("patience") is not None:
         raise ValueError("perf.ops.scorer async needs early_stopping.patience null (selection must not feed back)")
+    if num["cuda_graph"] and "data" in cfg:
+        if cfg["data"].get("epoch_len", 20000) % cfg["batch_size"]:
+            raise ValueError("cuda_graph requires epoch_len divisible by batch_size (fixed shapes)")
     return num, ops
 
 
@@ -431,6 +434,7 @@ def build_val_loader(cfg, device, num_workers=None):
 
 def main(config_path):
     cfg = yaml.safe_load(open(config_path))
+    perf_num, perf_ops = perf_settings(cfg)  # reject invalid execution settings before opening datasets/workers
     verify_checkpoint_hash(_abs(cfg.get("init_from")), cfg.get("init_sha256"))
     torch.manual_seed(cfg["seed"]); np.random.seed(cfg["seed"])
     device = torch.device(cfg.get("device", "cuda"))
@@ -465,7 +469,7 @@ def main(config_path):
                             cfg.get("val", {}).get("dynamic_items", 200), cfg["seed"] + 1, **dsk)
     # "auto" sizes from the box's core count; $VAANI_WORKERS overrides without editing configs
     nw = runtime.resolve_workers(cfg.get("num_workers", "auto"), share=cfg.get("concurrent_runs", 1))
-    runtime.tune_backends(device)
+    runtime.tune_backends(device, tf32=not (perf_num or {}).get("compile"))
     lk = runtime.loader_kwargs(nw, device)
     # Windows spawns workers: persistent_workers avoids re-importing numba/JIT every epoch;
     # the epoch therefore travels in the sampler's indices, not in dataset attributes
@@ -473,7 +477,6 @@ def main(config_path):
     dl = DataLoader(ds, cfg["batch_size"], sampler=sampler, collate_fn=collate, **lk)
     vdl = DataLoader(vds, cfg["batch_size"], collate_fn=collate, **lk)
     print(f"runtime: {runtime.describe()} num_workers={nw}", flush=True)
-    perf_num, perf_ops = perf_settings(cfg)
     steps_per_epoch = len(dl)
 
     model = build_model(cfg["model"], cfg.get("init_from"), cfg.get("model_cfg")).to(device)
