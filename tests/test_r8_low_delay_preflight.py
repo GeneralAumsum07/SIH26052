@@ -320,7 +320,7 @@ def test_launcher_override_dry_run_starts_only_arm_b(tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     dry = [ln for ln in r.stdout.splitlines() if ln.startswith("DRY gpu")]
     assert {ln.rsplit("/", 1)[1][:-5] for ln in dry} == {"ld_b_s0", "ld_b_s1", "ld_b_nhat_s0", "ld_b_nhat_s1"}
-    scorer = next(ln for ln in r.stdout.splitlines() if ln.startswith("DRY scorer"))
+    scorer = "\n".join(ln for ln in r.stdout.splitlines() if ln.startswith("DRY scorer"))   # one per run
     assert "r8_ld_a_s0" not in scorer and "r8_ld_b_s0" in scorer
 
 

@@ -12,12 +12,29 @@ import torch
 ENV_WORKERS = "VAANI_WORKERS"
 
 
-def cpu_count() -> int:
-    """Cores this process may actually use - cgroup-aware, so a container quota is respected."""
+def cpu_quota(root="/sys/fs/cgroup"):
+    """The container's CFS CPU quota in cores (cgroup v2 cpu.max, else v1 cfs_quota/period); None if unlimited."""
     try:
-        return max(1, len(os.sched_getaffinity(0)))
+        q, p = open(f"{root}/cpu.max").read().split()[:2]
+        return None if q == "max" else int(q) / int(p)
+    except (OSError, ValueError):
+        pass
+    try:
+        q = int(open(f"{root}/cpu/cpu.cfs_quota_us").read()); p = int(open(f"{root}/cpu/cpu.cfs_period_us").read())
+        return None if q <= 0 else q / p
+    except (OSError, ValueError):
+        return None
+
+
+def cpu_count() -> int:
+    """Cores this process may actually use: affinity, capped by the CFS quota (a vast.ai box shows 512 in
+    nproc but may be allowed ~246; sizing workers from nproc oversubscribes it 2x)."""
+    try:
+        n = len(os.sched_getaffinity(0))
     except AttributeError:                       # Windows
-        return max(1, os.cpu_count() or 1)
+        n = os.cpu_count() or 1
+    q = cpu_quota()
+    return max(1, min(n, int(q)) if q else n)
 
 
 def resolve_workers(spec="auto", share: int = 1, reserve: int = 2) -> int:

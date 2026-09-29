@@ -244,8 +244,8 @@ def _workers(tmp_path, meminfo=None, **env):
     (None, {}, 46, False),                                                     # no meminfo: the core rule, (96 - 4) / 2
     ("MemTotal: 1 kB\n", {}, 46, False),                                        # no MemAvailable line: no cap
     ("MemAvailable: 9000000000 kB\n", {}, 46, False),                           # plenty: never above the core rule
-    ("MemAvailable: 250000000 kB\n", {}, 17, True),                             # 256 GB / 2 queues / 3 GB - 8 screens, / 2 loaders
-    ("MemAvailable: 250000000 kB\n", {"VAANI_WORKER_RSS_GB": "1"}, 46, False),  # a measured 1 GB lifts the cap
+    ("MemAvailable: 250000000 kB\n", {"VAANI_WORKER_RSS_GB": "3"}, 17, True),   # 256 GB / 2 queues / 3 GB - 8 screens, / 2 loaders
+    ("MemAvailable: 250000000 kB\n", {}, 46, False),                            # the measured 1 GB default: no cap
     ("MemAvailable: 10000000 kB\n", {}, 1, True),                               # tiny box: floor of 1
 ])
 def test_run_r8_workers_capped_by_memavailable(tmp_path, meminfo, env, want, capped):
@@ -258,8 +258,8 @@ def test_run_r8_workers_capped_by_memavailable(tmp_path, meminfo, env, want, cap
 @pytest.mark.parametrize("rss", ["0", "abc", "-2"])
 def test_run_r8_bad_worker_rss_keeps_the_default_cap(tmp_path, rss):
     got, err = _workers(tmp_path, "MemAvailable: 250000000 kB\n", VAANI_WORKER_RSS_GB=rss)
-    assert got == {"gpu0": 17, "gpu1": 17} and "is not a positive number; using 3" in err, (got, err)
-    assert "capped 46 -> 17 by memory" in err and "awk" not in err and "integer expression" not in err, err
+    assert got == {"gpu0": 46, "gpu1": 46} and "is not a positive number; using 1" in err, (got, err)
+    assert "capped" not in err and "awk" not in err and "integer expression" not in err, err
 
 
 @pytest.mark.timeout(900)
@@ -283,7 +283,7 @@ def test_run_r8_never_queues_the_bank_arm_or_dropped_pilots_under_d4(tmp_path):
 
 @pytest.mark.timeout(900)
 def test_run_r8_explicit_workers_skip_the_memory_cap(tmp_path):
-    got, err = _workers(tmp_path, "MemAvailable: 250000000 kB\n", WORKERS_GPU0="60")
+    got, err = _workers(tmp_path, "MemAvailable: 250000000 kB\n", WORKERS_GPU0="60", VAANI_WORKER_RSS_GB="3")
     assert got == {"gpu0": 60, "gpu1": 17} and "workers gpu0" not in err, (got, err)
 
 

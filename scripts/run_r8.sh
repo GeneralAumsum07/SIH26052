@@ -27,6 +27,9 @@
 set -uo pipefail
 export REQUIRE_TRAINING_VALIDATION="${REQUIRE_TRAINING_VALIDATION:-0}"
 cd "$(dirname "$0")/.."
+# tmux windows inherit the tmux server's 1024 fds, not the caller's: a 58-worker loader dies "Too many open files"
+ulimit -n "$(ulimit -Hn)" 2>/dev/null || true
+FDS='ulimit -n "$(ulimit -Hn)" 2>/dev/null;'   # the same, for commands tmux runs directly
 
 RUNS_DIR="${RUNS_DIR:-runs}"; Q="$RUNS_DIR/r8_queue"
 G1_JSON="${G1_JSON:-results_r2/r8/data_gates/box_g1/v2.json}"
@@ -37,10 +40,23 @@ if [ -z "${TRAIN_CMD:-}" ]; then
 fi
 PILOT_HOURS="${PILOT_HOURS:-12}"; MAX_TRIES="${MAX_TRIES:-3}"; RESERVE_CPUS="${RESERVE_CPUS:-4}"
 MEMINFO="${MEMINFO:-/proc/meminfo}"   # no MemAvailable there = no memory cap
-# INTERIM per-worker memory (GB) until results_r2/r8/loader_rss/ measures it: a private copy of what one v2 worker loads,
-# bank_r8 sidecars 0.640 speech + 1.920 noise (memmapped, counted as private) + dataset 0.019 (laptop pickle) = 2.58 -> 3
-WORKER_RSS_GB_DEFAULT=3
+# per-worker memory (GB): measured on the 2026-09-29 box, an r8_ld_fe_mini worker is 1.2 RSS / 0.6 PSS / 0.2 private
+# (bank sidecars and the pack are shared memmaps); 1 keeps a margin over PSS. The interim 3 capped workers 5x too low
+WORKER_RSS_GB_DEFAULT=1
+export VAANI_WORKER_RSS_GB="${VAANI_WORKER_RSS_GB:-$WORKER_RSS_GB_DEFAULT}"   # r8_ld_queue.py reads it too
+ncpus() {  # the CFS quota, not nproc: a vast.ai box shows 512 in nproc but may be allowed ~246
+  local n q p; n=$(nproc 2>/dev/null || echo 8)
+  if read -r q p < /sys/fs/cgroup/cpu.max 2>/dev/null && [ "$q" != max ] && [ "$((q / p))" -lt "$n" ]; then n=$((q / p)); fi
+  echo "$n"
+}
 export VAANI_SCREEN_WORKERS="${VAANI_SCREEN_WORKERS:-8}"   # two runs' composite screens must not starve the loaders
+# OpenMP/BLAS/numba pools size to nproc (512), not the quota: ~514 threads per worker hit the 62k pids.max on 2026-09-29
+caps() { local k; for k in OMP MKL OPENBLAS NUMBA NUMEXPR; do printf '%s_NUM_THREADS=%s ' "$k" "$1"; done; }
+SERVER_THREADS="${SERVER_THREADS:-1}"   # batch servers: parallelism comes from their workers
+TRAIN_THREADS="${TRAIN_THREADS:-4}"     # trainers: the GPU does the work; fallback workers inherit the cap
+SCORER_THREADS="${SCORER_THREADS:-32}"  # per scorer: 8 only broke even with 4 runs; uncapped one took ~98 cores
+SCORER_SCREEN_WORKERS="${SCORER_SCREEN_WORKERS:-16}"   # the composite screen pool of each per-run scorer
+LD_SCORER_MODE="${LD_SCORER_MODE:-run}"  # run: one CPU scorer per run (keeps up, frees GPU0); box: one GPU scorer
 A=configs/retraining/r8_ablations
 # D4 (low-delay plan): the r8 product is the low-delay Mini, so the legacy queue keeps only C0 (ab1_fe_mini_s0/s1 and
 # the full r8_fe_mini). The refvalid arms, the 32 ms ab2-ab6 pilots and the opt-in ab7_bank_r3 leave the queue; their
@@ -99,7 +115,7 @@ EOF
 workers() {  # per-queue loader workers: two concurrent runs split the cores, and all their processes must fit in RAM
   local g=$1 v; v=$(eval echo "\${WORKERS_GPU$g:-}")
   [ -n "$v" ] && { echo "$v"; return; }
-  local n; n=$(nproc 2>/dev/null || echo 8); v=$(( (n - RESERVE_CPUS) / 2 )); [ "$v" -lt 2 ] && v=2
+  local n; n=$(ncpus); v=$(( (n - RESERVE_CPUS) / 2 )); [ "$v" -lt 2 ] && v=2
   # each queue holds 2 persistent loaders of v workers (train + val, runtime.loader_kwargs) + the screen pool
   local ma m r="${VAANI_WORKER_RSS_GB:-$WORKER_RSS_GB_DEFAULT}"
   if ! awk -v r="$r" 'BEGIN { exit !(r ~ /^[0-9]*\.?[0-9]+$/ && r + 0 > 0) }'; then   # 0 or junk must not lift the cap
@@ -167,8 +183,12 @@ run_queue() {  # $1 gpu, $2 phase
 # ---- low-delay queue ------------------------------------------------------------------------------------------
 LDQ() { LD_NAMES="${LD_P1[*]} ${LD_P2[*]} ${LD_P3[*]} ${LD_P4[*]} ${LD_FULL[*]}" RUNS_DIR="$RUNS_DIR" \
         "$PY" scripts/r8_ld_queue.py "$@" --gpus "$LD_GPUS" --slots "$LD_SLOTS"; }
+stream_workers() {  # a batch server feeds one lane's run (two, if seeds share the stream): one lane's share of the cores
+  local w; w=$(( ($(ncpus) - RESERVE_CPUS - VAANI_SCREEN_WORKERS) / (LD_GPUS * LD_SLOTS) )); [ "$w" -lt 2 ] && w=2
+  echo "${STREAM_WORKERS:-$w}"
+}
 ld_lane() {  # $1 gpu, $2 slot, $3 phase: claim the highest-priority runnable job, run it, repeat
-  local g=$1 sl=$2 ph=$3 line n c cn prio w ni full spec tries rc ops env
+  local g=$1 sl=$2 ph=$3 line n c cn prio w ni full spec tries rc ops env sp
   mkdir -p "$Q/logs"
   while true; do
     line=$(LDQ next --phase "$ph" --gpu "$g" 2>>"$Q/ld_lane$g.$sl.err") || {
@@ -177,16 +197,36 @@ ld_lane() {  # $1 gpu, $2 slot, $3 phase: claim the highest-priority runnable jo
     IFS=$'\t' read -r n c cn prio w ni full spec <<< "$line"
     ops="{\"scorer\":\"$LD_SCORER\",\"stream\":\"$LD_STREAM\",\"priority\":$prio}"
     env="CUDA_VISIBLE_DEVICES=$g VAANI_WORKERS=$w VAANI_SCREEN_WORKERS=$VAANI_SCREEN_WORKERS"
-    env="$env PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True"
+    env="$env PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True $(caps "$TRAIN_THREADS")"
     [ -n "$LD_MPS_PCT" ] && [ "$full" != True ] && env="$env CUDA_MPS_ACTIVE_THREAD_PERCENTAGE=$LD_MPS_PCT"
     if [ "${DRY_RUN:-0}" = 1 ]; then
+      [ "$LD_STREAM" = shared ] && echo "DRY stream $n: $PY -m vaani.data.stream_server --config $c"
+      [ "$LD_SCORER" = async ] && [ "$LD_SCORER_MODE" = run ] && \
+        echo "DRY scorer $n: $PY scripts/r8_scorer.py --runs $RUNS_DIR/$cn --device cpu --until-done"
       echo "DRY gpu$g.$sl P$prio: $env VAANI_PERF_OPS='$ops' nice -n $ni $TRAIN_CMD $c"; continue; fi
+    if [ "$LD_SCORER" = async ] && [ "$LD_SCORER_MODE" = run ] && \
+       ! { [ -f "$Q/scorer.$n" ] && kill -0 "$(cat "$Q/scorer.$n")" 2>/dev/null; }; then
+      # the run's own CPU scorer: outlives the trainer to score the last snapshots, exits once run.json is merged
+      # shellcheck disable=SC2086
+      setsid env $(caps "$SCORER_THREADS") VAANI_SCREEN_WORKERS="$SCORER_SCREEN_WORKERS" "$PY" scripts/r8_scorer.py --runs "$RUNS_DIR/$cn" --device cpu --until-done \
+        >> "$Q/logs/$n.scorer.log" 2>&1 < /dev/null &
+      echo $! > "$Q/scorer.$n"
+    fi
     tries=0; rc=1
     while [ $tries -lt "$MAX_TRIES" ]; do
       tries=$((tries + 1)); log "$g" "start $n (lane $sl, P$prio, try $tries/$MAX_TRIES, speculative $spec): $c"
+      sp=""
+      if [ "$LD_STREAM" = shared ]; then   # the run's own batch server, for this try only (shared rings drift apart)
+        rm -f /dev/shm/vaani_ring_*_"$n"   # a killed server's ring: the trainer must not attach to it first
+        # shellcheck disable=SC2086
+        env $(caps "$SERVER_THREADS") VAANI_STREAM_ID="$n" "$PY" -m vaani.data.stream_server --config "$c" \
+          --workers "$(stream_workers)" >> "$Q/logs/$n.stream.log" 2>&1 &
+        sp=$!
+      fi
       # shellcheck disable=SC2086
-      ( echo "$BASHPID" > "$Q/running.$n"; exec env $env VAANI_PERF_OPS="$ops" nice -n "$ni" $TRAIN_CMD "$c" ) \
+      ( echo "$BASHPID" > "$Q/running.$n"; exec env $env VAANI_STREAM_ID="$n" VAANI_PERF_OPS="$ops" nice -n "$ni" $TRAIN_CMD "$c" ) \
         >> "$Q/logs/$n.log" 2>&1; rc=$?
+      [ -n "$sp" ] && { kill "$sp" 2>/dev/null; wait "$sp" 2>/dev/null; }
       rm -f -- "${Q:?}/running.${n:?}"
       [ -f "$RUNS_DIR/$n/STOPPED" ] && { log "$g" "STOPPED $n (a decision ruled it out)"; break; }
       if [ $rc = 0 ] && grep -q '"end": ' "$RUNS_DIR/$cn/run.json" 2>/dev/null; then
@@ -209,14 +249,7 @@ ld_start() {  # $1 phase
   for n in $(ls "$Q/claims"); do   # a claim without a live run is stale (reboot, or a dry run)
     if ! { [ -f "$Q/running.$n" ] && kill -0 "$(cat "$Q/running.$n")" 2>/dev/null; }; then rmdir "$Q/claims/$n"; fi
   done
-  if [ "$LD_STREAM" = shared ]; then   # one batch server per rendered stream
-    while IFS=$'\t' read -r key c name; do
-      [ -n "$key" ] || continue
-      if [ "${DRY_RUN:-0}" = 1 ]; then echo "DRY stream $key: $PY -m vaani.data.stream_server --config $c"
-      else tmux new-window -t r8ld -n "s$key" "$PY -m vaani.data.stream_server --config $c; exec bash"; fi
-    done < <(LDQ streams --phase "$ph")
-  fi
-  if [ "$LD_SCORER" = async ]; then     # one scorer per box; its queue order follows the priority classes
+  if [ "$LD_SCORER" = async ] && [ "$LD_SCORER_MODE" = box ]; then   # one scorer per box, in priority order
     while IFS=$'\t' read -r lane prio wave st n c net con td rest; do
       # A partial training override leaves other arms blocked in the plan; do not score those runs.
       case "$st" in PENDING|FAILED) ;; *) continue;; esac
@@ -224,12 +257,12 @@ ld_start() {  # $1 phase
     done < "$Q/ld_plan.txt"
     if [ "${#dirs[@]}" -gt 0 ]; then
       if [ "${DRY_RUN:-0}" = 1 ]; then echo "DRY scorer: $PY scripts/r8_scorer.py --runs ${dirs[*]} --priority ${pr[*]}"
-      else tmux new-window -t r8ld -n scorer "$PY scripts/r8_scorer.py --runs ${dirs[*]} --priority ${pr[*]}; exec bash"; fi
+      else tmux new-window -t r8ld -n scorer "$FDS env $(caps "$SCORER_THREADS")$PY scripts/r8_scorer.py --runs ${dirs[*]} --priority ${pr[*]}; exec bash"; fi
     fi
   fi
   for sl in $(seq 0 $((LD_SLOTS - 1))); do for g in $(seq 0 $((LD_GPUS - 1))); do
     if [ "${DRY_RUN:-0}" = 1 ]; then ld_lane "$g" "$sl" "$ph"
-    else tmux new-window -t r8ld -n "g$g.$sl" "bash scripts/run_r8.sh _ld_lane $g $sl $ph; exec bash"; fi
+    else tmux new-window -t r8ld -n "g$g.$sl" "LD_GPUS=$LD_GPUS LD_SLOTS=$LD_SLOTS bash scripts/run_r8.sh _ld_lane $g $sl $ph; exec bash"; fi
   done; done
   if [ "${DRY_RUN:-0}" = 1 ]; then for n in $(ls "$Q/claims"); do rmdir "$Q/claims/$n"; done; fi
 }

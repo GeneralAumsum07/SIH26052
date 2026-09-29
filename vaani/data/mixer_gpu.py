@@ -272,16 +272,13 @@ _HPF: dict = {}
 
 
 def hpf_t(x, hz=calib.HPF_HZ):
-    """calib.hpf (2nd-order Butterworth high-pass, sosfilt) as a batched biquad on the device."""
-    from torchaudio.functional import lfilter
-    k = (float(hz), str(x.device))
+    """calib.hpf (2nd-order Butterworth high-pass) run as the reference sosfilt on the host, in float64.
+    An IIR is sequential in time: on the GPU it ran one thread per channel and took ~93% of the render."""
+    from scipy.signal import butter, sosfilt
+    k = float(hz)
     if k not in _HPF:
-        from scipy.signal import butter
-        sos = butter(2, hz, "highpass", fs=SR, output="sos")[0]
-        _HPF[k] = (torch.as_tensor(sos[:3], dtype=F64, device=x.device), torch.as_tensor(sos[3:], dtype=F64, device=x.device))
-    b, a = _HPF[k]
-    shp = x.shape
-    return lfilter(x.reshape(-1, shp[-1]), a, b, clamp=False).reshape(shp)
+        _HPF[k] = butter(2, hz, "highpass", fs=SR, output="sos")
+    return torch.from_numpy(sosfilt(_HPF[k], x.detach().cpu().numpy(), axis=-1)).to(x.device)
 
 
 def _softsat_t(x, knee):

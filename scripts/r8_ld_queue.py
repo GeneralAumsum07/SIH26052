@@ -293,9 +293,12 @@ class Queue:
             js.append(j)
         return js
 
-    def workers(self, prio, lanes, ncpu=None, reserve=4, meminfo="/proc/meminfo", rss_gb=3.0, screen=8):
+    def workers(self, prio, lanes, ncpu=None, reserve=4, meminfo="/proc/meminfo", rss_gb=1.0, screen=8):
         """Loader workers of one run by its priority class: a class-weighted share of the cores, capped by memory."""
-        ncpu = ncpu or os.cpu_count() or 8
+        if not ncpu:   # lazy: vaani.runtime pulls in torch, too slow for every queue call
+            sys.path.insert(0, str(ROOT))
+            from vaani import runtime
+            ncpu = runtime.cpu_count()   # the CFS quota, not nproc
         base = max(1.0, (ncpu - reserve) / max(1, lanes))
         w = max(1, int(base * CLASS_SHARE[prio]))
         try:
@@ -396,7 +399,7 @@ def main(argv=None):
     a = ap.parse_args(argv)
     names = a.names if a.names is not None else os.environ.get("LD_NAMES", "").split()
     wk = dict(meminfo=os.environ.get("MEMINFO", "/proc/meminfo"),
-              rss_gb=float(os.environ.get("VAANI_WORKER_RSS_GB", "3") or 3),
+              rss_gb=float(os.environ.get("VAANI_WORKER_RSS_GB", "1") or 1),
               screen=int(os.environ.get("VAANI_SCREEN_WORKERS", "8")), reserve=int(os.environ.get("RESERVE_CPUS", "4")))
     try:
         q = Queue(a.root, a.runs_dir, names, a.gate0, a.ready)
