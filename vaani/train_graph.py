@@ -23,6 +23,10 @@ class GraphedStep:
     def __init__(self, fwd, loss_fn, device, use_amp, low_delay, scored=None):
         if torch.device(device).type != "cuda" or not torch.cuda.is_available():
             raise RuntimeError("perf.numerics.cuda_graph needs a CUDA device; set cuda_graph: false")
+        fe = getattr(loss_fn, "fe", loss_fn)
+        if getattr(fe, "w", {}).get("pesq") and not getattr(fe, "pesq_fft", False):
+            # torchaudio's lfilter replays wrong inside a CUDA graph (the PESQ term comes out ~0): silent, so refuse
+            raise RuntimeError("perf.numerics.cuda_graph needs loss_cfg.pesq_filters: fft (lfilter is not capturable)")
         self.fwd, self.loss_fn, self.device = fwd, loss_fn, torch.device(device)
         self.use_amp, self.low_delay, self.scored = use_amp, low_delay, scored
         self.graph = None

@@ -52,14 +52,34 @@ class Selector:
     def point(self, row: dict, cands: dict, vdl, n_points: int, final: bool) -> float:
         """row: the history row (epoch, step, training fields); cands: {"raw": model[, "ema": model]}.
         n_points: this point's 1-based index in the history. Returns the raw val_stoi."""
-        from vaani.train import CompositeScreen, _save, validate
-        from vaani.training_controls import composite_key
-        cfg, device, step = self.cfg, self.device, row["step"]
-        v = validate(cands["raw"], vdl, cfg, device); self._scalar("val/stoi", v, step)
+        self.measure(row, cands, vdl, n_points, final)
+        return self.choose(row, cands)
+
+    def measure(self, row: dict, cands: dict, vdl, n_points: int, final: bool):
+        """The point's validation numbers into row; no selection state or files, so any process may run it."""
+        from vaani.train import CompositeScreen, validate
+        cfg, device = self.cfg, self.device
+        v = validate(cands["raw"], vdl, cfg, device)
         row.update(val_stoi=v, val_metrics=getattr(vdl, "_last_val_metrics", {"stoi": v}))
         if "ema" in cands:
-            ve = validate(cands["ema"], vdl, cfg, device); self._scalar("val/stoi_ema", ve, step)
+            ve = validate(cands["ema"], vdl, cfg, device)
             row.update(val_stoi_ema=ve, val_metrics_ema=getattr(vdl, "_last_val_metrics", {"stoi": ve}))
+        if self.select == "composite" and (n_points % self.every == 0 or final):
+            if self.screen is None:
+                t0 = time.time(); self.screen = CompositeScreen(cfg, self.run_dir)
+                print(f"composite screen: {len(self.screen.items)} clip-conditions, baseline dSNR "
+                      f"{self.screen.base_d_snr}, built in {time.time() - t0:.1f}s", flush=True)
+            for name, m in cands.items():
+                row[f"composite_{name}"] = self.screen.score(m, device)
+
+    def choose(self, row: dict, cands: dict) -> float:
+        """The unchanged selection rule on a measured row (writes best.pt); runs in history order."""
+        from vaani.train import _save
+        from vaani.training_controls import composite_key
+        cfg, step, v = self.cfg, row["step"], row["val_stoi"]
+        self._scalar("val/stoi", v, step)
+        if "ema" in cands:
+            self._scalar("val/stoi_ema", row["val_stoi_ema"], step)
         rd = self.run_dir
         if self.plain_best:
             if v > self.best:
@@ -72,13 +92,9 @@ class Selector:
                 self.best = scores[pick]
                 _save({"model": cands[pick].state_dict(), "config": cfg, "step": step, "weights": pick,
                        "selection": "stoi"}, rd / "best.pt")
-        elif n_points % self.every == 0 or final:
-            if self.screen is None:
-                t0 = time.time(); self.screen = CompositeScreen(cfg, rd)
-                print(f"composite screen: {len(self.screen.items)} clip-conditions, baseline dSNR "
-                      f"{self.screen.base_d_snr}, built in {time.time() - t0:.1f}s", flush=True)
+        elif "composite_raw" in row:   # measured at every `every`-th point and the final one
             for name, m in cands.items():
-                s = self.screen.score(m, device); row[f"composite_{name}"] = s; key = composite_key(s)
+                s = row[f"composite_{name}"]; key = composite_key(s)
                 self._scalar(f"val/pass_rate_{name}", s["pass_rate"], step)
                 if self.best_key is None or key > self.best_key:
                     self.best_key, self.best = key, s["pass_rate"]
@@ -163,15 +179,69 @@ class RunScorer:
         m.load_state_dict(state)
         return m.to(self.device).eval()
 
+    # ---- parallel measuring: measure workers fill meas_*.json ahead; score() applies selection in order ----
+    def _meas(self, idx):
+        return self.run_dir / SNAP_DIR / f"meas_{idx:05d}.json"
+
+    def _claim(self, idx) -> bool:
+        """Take snapshot idx for measuring (one process per snapshot); a dead claimant's claim is taken over."""
+        c = self.run_dir / SNAP_DIR / f"meas_{idx:05d}.claim"
+        for _ in range(2):
+            try:
+                fd = os.open(c, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.write(fd, str(os.getpid()).encode()); os.close(fd)
+                return True
+            except FileExistsError:
+                try:
+                    pid = int(c.read_text() or 0)
+                    os.kill(pid, 0)
+                    return pid == os.getpid()
+                except (ProcessLookupError, ValueError, FileNotFoundError):
+                    c.unlink(missing_ok=True)   # stale claim (or mid-write): retry once
+                except PermissionError:
+                    return False
+        return False
+
+    def _measure_snapshot(self, idx, path):
+        snap = torch.load(path, map_location="cpu", weights_only=True)
+        cands = {k: self._model(s, snap["folded"]) for k, s in snap["models"].items()}
+        row = dict(snap["row"])
+        self.sel.measure(row, cands, self.vdl, snap["index"], snap["final"])
+        return snap, cands, row
+
+    def measure_ahead(self) -> bool:
+        """Worker: measure one pending snapshot nobody has claimed. False when there is none."""
+        st = self._load_state()
+        done = {int(k) for k in st.get("rows", {})}
+        for idx, p in self.pending():
+            if idx in done or self._meas(idx).exists() or not self._claim(idx):
+                continue
+            try:
+                snap, _, row = self._measure_snapshot(idx, p)
+            except FileNotFoundError:   # scored and cleaned up meanwhile
+                continue
+            _atomic_json(self._meas(idx), {k: v for k, v in row.items() if k not in snap["row"]})
+            return True
+        return False
+
     def score(self, idx, path):
+        """Selection for the next snapshot in history order, from its measure file when a worker wrote one.
+        None: a live worker is still measuring it."""
         snap = torch.load(path, map_location="cpu", weights_only=True)
         if snap["index"] != len(self.scored) + 1:
             raise RuntimeError(f"{path}: snapshot {snap['index']} out of order (scored {len(self.scored)})")
-        cands = {k: self._model(s, snap["folded"]) for k, s in snap["models"].items()}
-        row = dict(snap["row"])
-        self.sel.point(row, cands, self.vdl, snap["index"], snap["final"])
+        mp = self._meas(idx)
+        if mp.exists():
+            cands = {k: self._model(s, snap["folded"]) for k, s in snap["models"].items()}
+            row = dict(snap["row"]); row.update(json.loads(mp.read_text()))
+        elif self._claim(idx):
+            _, cands, row = self._measure_snapshot(idx, path)
+        else:
+            return None
+        self.sel.choose(row, cands)
         self.scored[idx] = {k: v for k, v in row.items() if k not in snap["row"]}
         self._save_state()
+        mp.unlink(missing_ok=True); mp.with_suffix(".claim").unlink(missing_ok=True)
         return row
 
     def finalize(self) -> bool:
@@ -191,8 +261,9 @@ class RunScorer:
         info["scoring"] = "async"
         _atomic_json(self.run_dir / "run.json", info)
         _atomic_json(self.run_dir / SCORED_DONE, {"n_points": n, "time": time.time()})
-        for p in (self.run_dir / SNAP_DIR).glob("snap_*.pt"):
-            p.unlink()
+        for pat in ("snap_*.pt", "meas_*.json", "meas_*.claim"):
+            for p in (self.run_dir / SNAP_DIR).glob(pat):
+                p.unlink(missing_ok=True)
         return True
 
 
@@ -244,9 +315,14 @@ class Scorer:
         _, _, idx, key, p = q[0]
         rs = self.runs[key]
         nxt = min(i for i, _ in rs.pending())
-        rs.score(nxt, rs.run_dir / SNAP_DIR / f"snap_{nxt:05d}.pt")
+        if rs.score(nxt, rs.run_dir / SNAP_DIR / f"snap_{nxt:05d}.pt") is None:
+            return False   # a measure worker holds it: wait a poll
         rs.finalize()
         return True
+
+    def measure_step(self) -> bool:
+        """Measure worker: measure one snapshot ahead of the scorer. False when there is nothing to take."""
+        return any(rs.measure_ahead() for rs in self.runs.values() if not (rs.run_dir / SCORED_DONE).exists())
 
     def run(self, poll_s=10.0, until_done=False, max_idle=None):
         idle = 0

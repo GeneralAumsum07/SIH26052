@@ -53,6 +53,7 @@ loss: fe
 loss_cfg:
   kappa: 3.0
   loss_domain: native
+  pesq_filters: fft
   pesq_required: true
   w_consistency: 0.3
   w_mrstft: 0.0

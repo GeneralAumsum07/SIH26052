@@ -54,8 +54,9 @@ export VAANI_SCREEN_WORKERS="${VAANI_SCREEN_WORKERS:-8}"   # two runs' composite
 caps() { local k; for k in OMP MKL OPENBLAS NUMBA NUMEXPR; do printf '%s_NUM_THREADS=%s ' "$k" "$1"; done; }
 SERVER_THREADS="${SERVER_THREADS:-1}"   # batch servers: parallelism comes from their workers
 TRAIN_THREADS="${TRAIN_THREADS:-4}"     # trainers: the GPU does the work; fallback workers inherit the cap
-SCORER_THREADS="${SCORER_THREADS:-32}"  # per scorer: 8 only broke even with 4 runs; uncapped one took ~98 cores
-SCORER_SCREEN_WORKERS="${SCORER_SCREEN_WORKERS:-16}"   # the composite screen pool of each per-run scorer
+SCORER_THREADS="${SCORER_THREADS:-8}"   # per scoring process: 32 -> 56 threads scored no faster (serial parts)
+SCORER_PROCS="${SCORER_PROCS:-4}"       # per run: the scorer + SCORER_PROCS-1 measure workers on later snapshots
+SCORER_SCREEN_WORKERS="${SCORER_SCREEN_WORKERS:-4}"    # the composite screen pool of each scoring process
 LD_SCORER_MODE="${LD_SCORER_MODE:-run}"  # run: one CPU scorer per run (keeps up, frees GPU0); box: one GPU scorer
 A=configs/retraining/r8_ablations
 # D4 (low-delay plan): the r8 product is the low-delay Mini, so the legacy queue keeps only C0 (ab1_fe_mini_s0/s1 and
@@ -202,7 +203,7 @@ ld_lane() {  # $1 gpu, $2 slot, $3 phase: claim the highest-priority runnable jo
     if [ "${DRY_RUN:-0}" = 1 ]; then
       [ "$LD_STREAM" = shared ] && echo "DRY stream $n: $PY -m vaani.data.stream_server --config $c"
       [ "$LD_SCORER" = async ] && [ "$LD_SCORER_MODE" = run ] && \
-        echo "DRY scorer $n: $PY scripts/r8_scorer.py --runs $RUNS_DIR/$cn --device cpu --until-done"
+        echo "DRY scorer $n: $PY scripts/r8_scorer.py --runs $RUNS_DIR/$cn --device cpu --until-done (+$((SCORER_PROCS - 1)) --measure-only)"
       echo "DRY gpu$g.$sl P$prio: $env VAANI_PERF_OPS='$ops' nice -n $ni $TRAIN_CMD $c"; continue; fi
     if [ "$LD_SCORER" = async ] && [ "$LD_SCORER_MODE" = run ] && \
        ! { [ -f "$Q/scorer.$n" ] && kill -0 "$(cat "$Q/scorer.$n")" 2>/dev/null; }; then
@@ -212,6 +213,13 @@ ld_lane() {  # $1 gpu, $2 slot, $3 phase: claim the highest-priority runnable jo
         >> "$Q/logs/$n.scorer.log" 2>&1 < /dev/null &
       echo $! > "$Q/scorer.$n"
     fi
+    for k in $(seq 1 $((SCORER_PROCS - 1))); do   # measure workers: parallel over snapshots, selection stays in order
+      [ "$LD_SCORER" = async ] && [ "$LD_SCORER_MODE" = run ] || break
+      { [ -f "$Q/scorer.$n.m$k" ] && kill -0 "$(cat "$Q/scorer.$n.m$k")" 2>/dev/null; } && continue
+      # shellcheck disable=SC2086
+      setsid env $(caps "$SCORER_THREADS") VAANI_SCREEN_WORKERS="$SCORER_SCREEN_WORKERS" "$PY" scripts/r8_scorer.py --runs "$RUNS_DIR/$cn" --device cpu --measure-only         >> "$Q/logs/$n.scorer.log" 2>&1 < /dev/null &
+      echo $! > "$Q/scorer.$n.m$k"
+    done
     tries=0; rc=1
     while [ $tries -lt "$MAX_TRIES" ]; do
       tries=$((tries + 1)); log "$g" "start $n (lane $sl, P$prio, try $tries/$MAX_TRIES, speculative $spec): $c"

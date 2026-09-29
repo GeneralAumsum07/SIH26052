@@ -70,8 +70,13 @@ def synthesize(z, lengths, contract):
     """(B, 257, T, 2) spectra, per-item lengths -> (aligned waveforms (B, max(lengths)), valid-sample mask).
     Samples past an item's length are zeroed and masked out. Differentiable."""
     c = get_audio_contract(contract)
-    lengths = torch.as_tensor(lengths, device=z.device).reshape(-1)
-    n = int(lengths.max())
+    if torch.is_tensor(lengths):
+        lengths = lengths.to(z.device).reshape(-1)
+        n = int(lengths.max())
+    else:   # host lengths: no copy or sync when all are equal (training crops), so the step stays graph-capturable
+        lens = [int(v) for v in lengths]
+        n = max(lens)
+        lengths = None if min(lens) == n else torch.tensor(lens, device=z.device)
     if c.is_legacy:
         from vaani.dsp import stft
         y = stft.istft(z, length=n)
@@ -85,7 +90,10 @@ def synthesize(z, lengths, contract):
         if start + n > total:
             raise ValueError(f"{t} frames cannot cover {n} samples under {c.audio_contract_id}")
         y = y[:, start:start + n]
-    mask = torch.arange(n, device=z.device)[None, :] < lengths[:, None]
+    if lengths is None:
+        mask = torch.ones(z.shape[0], n, dtype=torch.bool, device=z.device)
+    else:
+        mask = torch.arange(n, device=z.device)[None, :] < lengths[:, None]
     return y * mask, mask
 
 

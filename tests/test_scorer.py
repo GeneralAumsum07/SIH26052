@@ -22,8 +22,9 @@ def _strip(h):
     return [{k: v for k, v in r.items()} for r in h]
 
 
+@pytest.mark.parametrize("workers", [False, True])
 @pytest.mark.parametrize("ema", [None, {"decay": 0.9}])
-def test_async_history_and_best_equal_sync(tmp_path, ema):
+def test_async_history_and_best_equal_sync(tmp_path, ema, workers):
     m = _tiny(tmp_path)
     base = _cfg(tmp_path, m, name="sync", epochs=3, max_steps=6, ema=ema)
     base["data"]["epoch_len"] = 4
@@ -32,9 +33,14 @@ def test_async_history_and_best_equal_sync(tmp_path, ema):
     a["perf"] = dict(a["perf"], ops={"scorer": "async", "priority": 1})
     ra = _run(tmp_path, a)
     assert (ra / "train_done.json").exists() and not (ra / "scored_done.json").exists()
+    if workers:   # a measure worker takes every snapshot first; the scorer then only applies the selection rule
+        w = scorer.Scorer([ra], "cpu")
+        while w.measure_step():
+            pass
+        assert len(list((ra / "snapshots").glob("meas_*.json"))) == 3
     sc = scorer.Scorer([ra], "cpu")
     sc.run(0.0, until_done=True, max_idle=2)
-    assert (ra / "scored_done.json").exists() and not list((ra / "snapshots").glob("*.pt"))
+    assert (ra / "scored_done.json").exists() and not list((ra / "snapshots").glob("*"))
     hs, ha = json.loads((rs / "run.json").read_text()), json.loads((ra / "run.json").read_text())
     assert _strip(hs["history"]) == _strip(ha["history"])
     assert hs["best_val_stoi"] == ha["best_val_stoi"]
@@ -53,12 +59,12 @@ def test_scorer_restart_resumes_without_rescoring(tmp_path, monkeypatch):
     sc = scorer.Scorer([ra], "cpu")
     assert sc.step()                       # scores snapshot 1 only, then "crashes"
     calls = []
-    orig = scorer.Selector.point
+    orig = scorer.Selector.measure
 
     def counting(self, row, cands, vdl, n_points, final):
         calls.append(n_points)
         return orig(self, row, cands, vdl, n_points, final)
-    monkeypatch.setattr(scorer.Selector, "point", counting)
+    monkeypatch.setattr(scorer.Selector, "measure", counting)
     sc2 = scorer.Scorer([ra], "cpu")        # a fresh scorer process
     sc2.run(0.0, until_done=True, max_idle=2)
     assert calls == [2, 3]                 # neither re-scored nor skipped
