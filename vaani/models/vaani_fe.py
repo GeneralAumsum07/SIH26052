@@ -539,7 +539,7 @@ class RepConv3(nn.Module):
         c = self.c3.out_channels
         k3, b3 = self._fuse(self.c3.weight.double(), _bn64(self.b3))
         k1, b1 = self._fuse(F.pad(self.c1.weight.double(), (1, 1)), _bn64(self.b1))
-        eye = torch.zeros(c, c, 3, dtype=torch.float64)
+        eye = torch.zeros(c, c, 3, dtype=torch.float64, device=self.c3.weight.device)   # a CUDA model folds too
         eye[torch.arange(c), torch.arange(c), 1] = 1.0
         ki, bi = self._fuse(eye, _bn64(self.bid))
         out = _cbr(c, c, 3, "bn", padding=1)

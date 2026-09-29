@@ -175,6 +175,12 @@ def _save(state, path):
     torch.save(state, tmp); os.replace(tmp, path)
 
 
+def _write_run_json(run_dir, run_info):
+    # atomic: the async scorer polls run.json and must never see it truncated mid-write
+    tmp = run_dir / "run.json.tmp"
+    tmp.write_text(json.dumps(run_info, indent=2)); os.replace(tmp, run_dir / "run.json")
+
+
 @torch.no_grad()
 def validate(model, dl, cfg, device):
     if cfg.get("val", {}).get("eval_root"):
@@ -210,7 +216,20 @@ class EMA:
     Scored at every val point next to the raw weights; cheaper than r7's warm restart."""
 
     def __init__(self, model, decay, warmup=True):
-        self.model = copy.deepcopy(model).eval(); self.decay, self.warmup = float(decay), bool(warmup)
+        # overparam GRUs cache non-leaf factor products in _flat_weights (deepcopy refuses them); forward rebuilds it
+        rnns = [m for m in model.modules() if isinstance(m, torch.nn.RNNBase)]
+        saved = [r._flat_weights for r in rnns]
+        for r in rnns:
+            r._flat_weights = [None] * len(r._flat_weights)
+        try:
+            self.model = copy.deepcopy(model).eval()
+        finally:
+            for r, fw in zip(rnns, saved):
+                r._flat_weights = fw
+        for r in self.model.modules():
+            if isinstance(r, torch.nn.RNNBase):
+                r._init_flat_weights()
+        self.decay, self.warmup = float(decay), bool(warmup)
         for p in self.model.parameters():
             p.requires_grad_(False)
 
@@ -533,7 +552,7 @@ def main(config_path):
                     audio_contract=contract.audio_contract_id if contract is not None else None,
                     perf=cfg.get("perf"), perf_ops=perf_ops)
     run_info.update(schedule=schedule, history=history)
-    json.dump(run_info, open(run_dir / "run.json", "w"), indent=2)
+    _write_run_json(run_dir, run_info)
 
     from vaani.scorer import Selector, mark_train_done, write_snapshot
     sel = Selector(cfg, run_dir, device, best, best_key, tb)
@@ -652,19 +671,19 @@ def main(config_path):
         run_info.update(history=history, best_val_stoi=best, steps=step, rejected_steps=skipped, clipped_steps=clipped_total)
         if best_key is not None:
             run_info["best_key"] = list(best_key)
-        json.dump(run_info, open(run_dir / "run.json", "w"), indent=2)
+        _write_run_json(run_dir, run_info)
         print(f"epoch {epoch} step {step} val_stoi {v:.4f} best {best:.4f} skipped {skipped}")
         if cfg.get("max_steps") and step >= cfg["max_steps"]:
             break
     # tap-weight norm: a null df result must be diagnosable (untrained taps) rather than believed
     df_norm = float(sum(p.detach().norm() ** 2 for n, p in model.named_parameters() if n.startswith("df.")) ** 0.5)
     run_info.update(end=time.time(), wall_s=time.time() - t_start, best_val_stoi=best, steps=step, skipped_steps=skipped, df_norm=df_norm)
-    json.dump(run_info, open(run_dir / "run.json", "w"), indent=2)
+    _write_run_json(run_dir, run_info)
     if async_scorer:   # DONE only once the scorer has scored the last snapshot and merged run.json
         mark_train_done(run_dir, len(history))
     if reader is not None:
         run_info.update(stream_hits=reader.hits, stream_misses=reader.misses)
-        json.dump(run_info, open(run_dir / "run.json", "w"), indent=2)
+        _write_run_json(run_dir, run_info)
         reader.detach()
     tb.close()
 

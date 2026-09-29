@@ -209,7 +209,10 @@ class Scorer:
     def add(self, run_dir):
         rd = Path(run_dir)
         if str(rd) not in self.runs and (rd / "run.json").exists():
-            self.runs[str(rd)] = RunScorer(rd, self.device)
+            try:
+                self.runs[str(rd)] = RunScorer(rd, self.device)
+            except json.JSONDecodeError:   # run.json being written by the trainer: take it next poll
+                pass
 
     def queue(self):
         items = []
