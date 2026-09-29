@@ -54,9 +54,10 @@ export VAANI_SCREEN_WORKERS="${VAANI_SCREEN_WORKERS:-8}"   # two runs' composite
 caps() { local k; for k in OMP MKL OPENBLAS NUMBA NUMEXPR; do printf '%s_NUM_THREADS=%s ' "$k" "$1"; done; }
 SERVER_THREADS="${SERVER_THREADS:-1}"   # batch servers: parallelism comes from their workers
 TRAIN_THREADS="${TRAIN_THREADS:-4}"     # trainers: the GPU does the work; fallback workers inherit the cap
-SCORER_THREADS="${SCORER_THREADS:-8}"   # per scoring process: 32 -> 56 threads scored no faster (serial parts)
-SCORER_PROCS="${SCORER_PROCS:-4}"       # per run: the scorer + SCORER_PROCS-1 measure workers on later snapshots
-SCORER_SCREEN_WORKERS="${SCORER_SCREEN_WORKERS:-4}"    # the composite screen pool of each scoring process
+SCORER_THREADS="${SCORER_THREADS:-4}"   # per scoring process: 32 -> 56 threads scored no faster (serial parts)
+SCORER_PROCS="${SCORER_PROCS:-2}"       # per run: the scorer + SCORER_PROCS-1 measure workers on later snapshots
+SCORER_SCREEN_WORKERS="${SCORER_SCREEN_WORKERS:-2}"    # the composite screen pool of each scoring process
+# these defaults are r8_resources.py's budget: per-run scorers come out of the loader cores (ld_budget), not on top
 LD_SCORER_MODE="${LD_SCORER_MODE:-run}"  # run: one CPU scorer per run (keeps up, frees GPU0); box: one GPU scorer
 A=configs/retraining/r8_ablations
 # D4 (low-delay plan): the r8 product is the low-delay Mini, so the legacy queue keeps only C0 (ab1_fe_mini_s0/s1 and
@@ -184,14 +185,25 @@ run_queue() {  # $1 gpu, $2 phase
 # ---- low-delay queue ------------------------------------------------------------------------------------------
 LDQ() { LD_NAMES="${LD_P1[*]} ${LD_P2[*]} ${LD_P3[*]} ${LD_P4[*]} ${LD_FULL[*]}" RUNS_DIR="$RUNS_DIR" \
         "$PY" scripts/r8_ld_queue.py "$@" --gpus "$LD_GPUS" --slots "$LD_SLOTS"; }
+ld_budget() {  # per-lane loader workers after trainer, batch server and per-run scorers; fails if they do not fit
+  [ "$LD_SCORER" = async ] && [ "$LD_SCORER_MODE" = run ] || return 0   # no per-run scorers: the plain split below
+  STREAM_WORKERS=$(RESERVE_CPUS=$((RESERVE_CPUS + VAANI_SCREEN_WORKERS)) TRAIN_THREADS="$TRAIN_THREADS"     SCORER_PROCS="$SCORER_PROCS" SCORER_THREADS="$SCORER_THREADS" SCORER_SCREEN_WORKERS="$SCORER_SCREEN_WORKERS"     "$PY" scripts/r8_resources.py --lanes $((LD_GPUS * LD_SLOTS)) ${STREAM_WORKERS:+--workers "$STREAM_WORKERS"}) || return 1
+  export STREAM_WORKERS; echo "cpu budget: $STREAM_WORKERS loader workers per lane, $SCORER_PROCS x $SCORER_THREADS scorer threads per run"
+}
+wait_scorers() {  # $1 run name: block until that run's scorer and measure workers have exited
+  local p; for p in "$Q/scorer.$1" "$Q/scorer.$1".m*; do
+    [ -f "$p" ] || continue; while kill -0 "$(cat "$p")" 2>/dev/null; do sleep 20; done; done
+}
 stream_workers() {  # a batch server feeds one lane's run (two, if seeds share the stream): one lane's share of the cores
   local w; w=$(( ($(ncpus) - RESERVE_CPUS - VAANI_SCREEN_WORKERS) / (LD_GPUS * LD_SLOTS) )); [ "$w" -lt 2 ] && w=2
   echo "${STREAM_WORKERS:-$w}"
 }
 ld_lane() {  # $1 gpu, $2 slot, $3 phase: claim the highest-priority runnable job, run it, repeat
-  local g=$1 sl=$2 ph=$3 line n c cn prio w ni full spec tries rc ops env sp
+  local g=$1 sl=$2 ph=$3 line n c cn prio w ni full spec tries rc ops env sp prev1="" prev2=""
   mkdir -p "$Q/logs"
   while true; do
+    # at most two runs' scorers per lane: the budget covers one, the other is only finishing its last snapshots
+    [ -n "$prev2" ] && [ "${DRY_RUN:-0}" != 1 ] && wait_scorers "$prev2"
     line=$(LDQ next --phase "$ph" --gpu "$g" 2>>"$Q/ld_lane$g.$sl.err") || {
       log "$g" "LD QUEUE ERROR: $(tail -1 "$Q/ld_lane$g.$sl.err")"; return 3; }
     [ -n "$line" ] || break
@@ -244,6 +256,7 @@ ld_lane() {  # $1 gpu, $2 slot, $3 phase: claim the highest-priority runnable jo
     if [ ! -f "$RUNS_DIR/$n/DONE" ] && [ ! -f "$RUNS_DIR/$n/STOPPED" ]; then
       mkdir -p "$RUNS_DIR/$n"; echo "rc=$rc after $tries tries" > "$RUNS_DIR/$n/FAILED"; log "$g" "FAILED $n"; fi
     rmdir "$Q/claims/$n" 2>/dev/null
+    prev2=$prev1; prev1=$n
   done
   log "$g" "ld lane $sl ($ph) finished"
 }
@@ -253,6 +266,8 @@ ld_start() {  # $1 phase
   cat "$Q/ld_plan.txt"
   if [ "${DRY_RUN:-0}" != 1 ] && ! LDQ check-start --phase "$ph"; then
     echo "REFUSED: no runnable low-delay jobs (Gate 0a / release / queue state); inspect ld-plan $ph"; return 1; fi
+  if [ "${DRY_RUN:-0}" != 1 ] && ! ld_budget; then
+    echo "REFUSED: CPU/memory budget does not fit (scripts/r8_resources.py); lower LD_SLOTS or SCORER_PROCS"; return 1; fi
   mkdir -p "$Q/claims"
   for n in $(ls "$Q/claims"); do   # a claim without a live run is stale (reboot, or a dry run)
     if ! { [ -f "$Q/running.$n" ] && kill -0 "$(cat "$Q/running.$n")" 2>/dev/null; }; then rmdir "$Q/claims/$n"; fi
