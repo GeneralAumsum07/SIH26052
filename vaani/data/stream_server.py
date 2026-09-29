@@ -132,6 +132,24 @@ class _Ring:
 
 
 def _alive(pid: int) -> bool:
+    if os.name == "nt":
+        # On Windows os.kill(pid, 0) calls TerminateProcess. Query a process
+        # handle instead; access denied conservatively means it may be alive.
+        import ctypes
+        from ctypes import wintypes
+        k = ctypes.WinDLL("kernel32", use_last_error=True)
+        k.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        k.OpenProcess.restype = wintypes.HANDLE
+        k.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        k.WaitForSingleObject.restype = wintypes.DWORD
+        k.CloseHandle.argtypes = [wintypes.HANDLE]
+        handle = k.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE only
+        if not handle:
+            return ctypes.get_last_error() != 87  # ERROR_INVALID_PARAMETER: no such PID
+        try:
+            return k.WaitForSingleObject(handle, 0) != 0
+        finally:
+            k.CloseHandle(handle)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -255,7 +273,8 @@ class RingReader:
             try:
                 shm = shared_memory.SharedMemory(name=shm_name(sig))
                 # py3.12 registers attaches too: a reader's exit would unlink the server's ring
-                resource_tracker.unregister(shm._name, "shared_memory")
+                if os.name != "nt":  # Windows lifetime is managed by handles, with no POSIX resource tracker
+                    resource_tracker.unregister(shm._name, "shared_memory")
                 ring = _Ring(shm)
                 break
             except FileNotFoundError:

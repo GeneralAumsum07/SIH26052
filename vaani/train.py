@@ -196,6 +196,7 @@ def validate(model, dl, cfg, device):
             values[2] = np.nanmean(arr[:, 2]) if n_nan < len(arr) else np.nan
         dl._last_val_metrics = dict(zip(("snr_out", "stoi", "pesq_wb"), map(float, values)), pesq_nan=n_nan)
         return float(values[1])
+    was_training = model.training
     model.eval(); scores = []
     contract = contract_of(cfg.get("model_cfg")) if cfg["model"] == "vaani_fe" else None
     for batch in dl:
@@ -208,7 +209,7 @@ def validate(model, dl, cfg, device):
             y = stft.istft(pred, length=n).cpu().numpy()
         for b in range(y.shape[0]):
             scores.append(stoi(batch["clean"][b].numpy(), y[b], SR, extended=False))
-    model.train(); return float(np.mean(scores))
+    model.train(was_training); return float(np.mean(scores))
 
 
 class EMA:
@@ -679,12 +680,12 @@ def main(config_path):
     df_norm = float(sum(p.detach().norm() ** 2 for n, p in model.named_parameters() if n.startswith("df.")) ** 0.5)
     run_info.update(end=time.time(), wall_s=time.time() - t_start, best_val_stoi=best, steps=step, skipped_steps=skipped, df_norm=df_norm)
     _write_run_json(run_dir, run_info)
-    if async_scorer:   # DONE only once the scorer has scored the last snapshot and merged run.json
-        mark_train_done(run_dir, len(history))
     if reader is not None:
         run_info.update(stream_hits=reader.hits, stream_misses=reader.misses)
         _write_run_json(run_dir, run_info)
         reader.detach()
+    if async_scorer:   # Publish only after the trainer's LAST write; the scorer now owns run.json.
+        mark_train_done(run_dir, len(history))
     tb.close()
 
 

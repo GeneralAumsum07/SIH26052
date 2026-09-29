@@ -184,23 +184,39 @@ class RunScorer:
         return self.run_dir / SNAP_DIR / f"meas_{idx:05d}.json"
 
     def _claim(self, idx) -> bool:
-        """Take snapshot idx for measuring (one process per snapshot); a dead claimant's claim is taken over."""
-        c = self.run_dir / SNAP_DIR / f"meas_{idx:05d}.claim"
-        for _ in range(2):
-            try:
-                fd = os.open(c, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-                os.write(fd, str(os.getpid()).encode()); os.close(fd)
-                return True
-            except FileExistsError:
-                try:
-                    pid = int(c.read_text() or 0)
-                    os.kill(pid, 0)
-                    return pid == os.getpid()
-                except (ProcessLookupError, ValueError, FileNotFoundError):
-                    c.unlink(missing_ok=True)   # stale claim (or mid-write): retry once
-                except PermissionError:
-                    return False
-        return False
+        """OS-owned lock: exclusive until released, automatically released on process death.
+
+        PID files have a create/write race and PID-reuse ambiguity. Worse, probing
+        os.kill(pid, 0) terminates the target on Windows. Keep lock files outside
+        snapshots and never unlink them: unlinking a locked inode permits a second
+        owner on POSIX. A stale, unlocked file is harmless on either platform.
+        """
+        if not hasattr(self, "_claims"):
+            self._claims = {}
+        if idx in self._claims:
+            return True
+        d = self.run_dir / ".scorer_locks"
+        d.mkdir(exist_ok=True)
+        f = open(d / f"{idx}.lock", "a+b")
+        try:
+            if os.name == "nt":
+                import msvcrt
+                f.seek(0)
+                msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            f.close()
+            return False
+        self._claims[idx] = f
+        return True
+
+    def _release(self, idx):
+        f = getattr(self, "_claims", {}).pop(idx, None)
+        if f is not None:
+            # Closing the descriptor releases its OS lock, including on exceptions.
+            f.close()
 
     def _measure_snapshot(self, idx, path):
         snap = torch.load(path, map_location="cpu", weights_only=True)
@@ -217,16 +233,43 @@ class RunScorer:
             if idx in done or self._meas(idx).exists() or not self._claim(idx):
                 continue
             try:
+                # Recheck under the lock: selection may have finished while this
+                # worker was acquiring it. Never recreate a consumed measurement.
+                if str(idx) in self._load_state().get("rows", {}) or self._meas(idx).exists():
+                    continue
                 snap, _, row = self._measure_snapshot(idx, p)
+                _atomic_json(self._meas(idx), {k: v for k, v in row.items() if k not in snap["row"]})
             except FileNotFoundError:   # scored and cleaned up meanwhile
                 continue
-            _atomic_json(self._meas(idx), {k: v for k, v in row.items() if k not in snap["row"]})
+            finally:
+                self._release(idx)
             return True
         return False
 
     def score(self, idx, path):
         """Selection for the next snapshot in history order, from its measure file when a worker wrote one.
         None: a live worker is still measuring it."""
+        # Only one selector may update best.pt/state, even if a launcher starts a
+        # duplicate scorer. Measurement workers hold only their snapshot lock.
+        if not self._claim("selection"):
+            return None
+        try:
+            st = self._load_state()
+            self.scored = {int(k): v for k, v in st.get("rows", {}).items()}
+            self.sel.best = st.get("best", -1.0)
+            self.sel.best_key = tuple(st["best_key"]) if st.get("best_key") is not None else None
+            if idx in self.scored:
+                return self.scored[idx]
+            if not self._claim(idx):
+                return None
+            try:
+                return self._score_owned(idx, path)
+            finally:
+                self._release(idx)
+        finally:
+            self._release("selection")
+
+    def _score_owned(self, idx, path):
         snap = torch.load(path, map_location="cpu", weights_only=True)
         if snap["index"] != len(self.scored) + 1:
             raise RuntimeError(f"{path}: snapshot {snap['index']} out of order (scored {len(self.scored)})")
@@ -234,18 +277,28 @@ class RunScorer:
         if mp.exists():
             cands = {k: self._model(s, snap["folded"]) for k, s in snap["models"].items()}
             row = dict(snap["row"]); row.update(json.loads(mp.read_text()))
-        elif self._claim(idx):
-            _, cands, row = self._measure_snapshot(idx, path)
         else:
-            return None
+            _, cands, row = self._measure_snapshot(idx, path)
         self.sel.choose(row, cands)
         self.scored[idx] = {k: v for k, v in row.items() if k not in snap["row"]}
         self._save_state()
-        mp.unlink(missing_ok=True); mp.with_suffix(".claim").unlink(missing_ok=True)
+        mp.unlink(missing_ok=True)
         return row
 
     def finalize(self) -> bool:
         """Merge the validation fields into run.json once training is done and every snapshot is scored."""
+        if not self._claim("selection"):
+            return False
+        try:
+            st = self._load_state()
+            self.scored = {int(k): v for k, v in st.get("rows", {}).items()}
+            self.sel.best = st.get("best", -1.0)
+            self.sel.best_key = tuple(st["best_key"]) if st.get("best_key") is not None else None
+            return self._finalize_owned()
+        finally:
+            self._release("selection")
+
+    def _finalize_owned(self) -> bool:
         done = self.run_dir / TRAIN_DONE
         if not done.exists() or (self.run_dir / SCORED_DONE).exists():
             return (self.run_dir / SCORED_DONE).exists()
@@ -312,13 +365,17 @@ class Scorer:
             rs.finalize()
         if not q:
             return False
-        _, _, idx, key, p = q[0]
-        rs = self.runs[key]
-        nxt = min(i for i, _ in rs.pending())
-        if rs.score(nxt, rs.run_dir / SNAP_DIR / f"snap_{nxt:05d}.pt") is None:
-            return False   # a measure worker holds it: wait a poll
-        rs.finalize()
-        return True
+        for _, _, idx, key, p in q:
+            rs = self.runs[key]
+            pending = rs.pending()
+            if not pending:
+                continue
+            nxt = min(i for i, _ in pending)
+            if rs.score(nxt, rs.run_dir / SNAP_DIR / f"snap_{nxt:05d}.pt") is None:
+                continue  # a worker holds this run; another run can still make progress
+            rs.finalize()
+            return True
+        return False
 
     def measure_step(self) -> bool:
         """Measure worker: measure one snapshot ahead of the scorer. False when there is nothing to take."""

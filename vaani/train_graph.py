@@ -63,9 +63,19 @@ class GraphedStep:
     def capture(self, model, inputs, target, is_clean):
         self.static_in = [self._clone(x) for x in inputs]
         self.static_target, self.static_clean = self._clone(target), self._clone(is_clean)
-        for p in model.parameters():                 # static gradient buffers
-            if p.requires_grad and p.grad is None:
-                p.grad = torch.zeros_like(p)
+        # Parametrized GRUs retain factor products (and their AccumulateGrad nodes)
+        # in _flat_weights, including products built on the default stream at init.
+        # Release them before warmup so backward never waits on the legacy stream
+        # during capture. Warmup allocates gradients only for USED parameters;
+        # unused parametrization originals must keep grad=None (AdamW semantics).
+        for r in model.modules():
+            if isinstance(r, torch.nn.RNNBase) and torch.nn.utils.parametrize.is_parametrized(r):
+                r._flat_weights = [None] * len(r._flat_weights)
+                # cuDNN's explicit flatten repoints product tensor storage on the
+                # host. Replay cannot repeat that pointer mutation when factors
+                # change. Let the GRU operation pack its weights inside the graph.
+                r.flatten_parameters = lambda: None
+        model.zero_grad(set_to_none=True)
         side = torch.cuda.Stream()
         side.wait_stream(torch.cuda.current_stream())
         bn_state = {k: v.detach().clone() for k, v in model.state_dict().items() if "running" in k or "num_batches" in k}
@@ -82,7 +92,9 @@ class GraphedStep:
                     p.grad.zero_()
         self.graph = torch.cuda.CUDAGraph()
         try:
-            with torch.cuda.graph(self.graph):
+            # Use the warmup stream: parametrized RNN caches can keep its autograd
+            # nodes alive, and changing streams here invalidates capture.
+            with torch.cuda.graph(self.graph, stream=side):
                 self.static_loss = self._compute(self.static_in, self.static_target, self.static_clean)
         except Exception as e:
             raise RuntimeError(f"CUDA graph capture of the training step failed ({e!r}); fix the op or set "

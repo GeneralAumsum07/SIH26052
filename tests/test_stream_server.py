@@ -36,12 +36,21 @@ def _same(a, b):
 
 
 def _start(cfg, **kw):
-    ctx = mp.get_context("fork")
+    ctx = mp.get_context("spawn")
     ready = ctx.Event()
     p = ctx.Process(target=ss.serve, args=(cfg,), kwargs=dict(workers=0, ready=ready, **kw), daemon=True)
     p.start()
     assert ready.wait(60)
     return p
+
+
+@pytest.mark.skipif(__import__("os").name != "nt", reason="Windows process probe")
+def test_windows_liveness_probe_never_sends_a_signal(monkeypatch):
+    import os
+    def forbidden(*args):
+        raise AssertionError("os.kill(pid, 0) is not a Windows liveness probe")
+    monkeypatch.setattr(os, "kill", forbidden)
+    assert ss._alive(os.getpid())
 
 
 def test_ring_batches_equal_local_render(tmp_path):

@@ -99,12 +99,13 @@ def test_graphed_step_refuses_without_cuda():
         GraphedStep(lambda *a: None, None, "cpu", False, True)
 
 
-def _ld_setup(seed=0):
+def _ld_setup(seed=0, overparam=False):
     from vaani import audio_contract as ac
     from vaani.enhance_low_delay import build_fe_loss, ld_model_inputs
     from vaani.models import vaani_fe as V
     torch.manual_seed(seed)
-    mc = dict(audio_contract=ac.ARM_A_IDS[0], fp32_islands=True, gru_init="tc_matched", **V.MINI_P["p18"])
+    mc = dict(audio_contract=ac.ARM_A_IDS[0], fp32_islands=True, gru_init="tc_matched",
+              overparam=overparam, **V.MINI_P["p18"])
     m = V.build("mini", **mc).cuda()
     lf = build_fe_loss(dict(w_mag=0.3, w_complex=0.2, w_consistency=0.3, w_wave=0.2, w_pesq=0.001, w_snr=0.002,
                             pesq_filters="fft"), {"audio_contract": ac.ARM_A_IDS[0]})
@@ -157,3 +158,35 @@ def test_step_is_sync_free_under_sync_debug_mode():
         lf(pred.float(), mix[:, 0], None, ic).backward()
     finally:
         torch.cuda.set_sync_debug_mode("default")
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+def test_overparam_graph_tracks_updated_factors():
+    """Products must be recomputed on every replay, including after an optimizer update."""
+    from vaani.train_graph import GraphedStep
+    m1, lf1, mk = _ld_setup(overparam=True)
+    m2, lf2, _ = _ld_setup(overparam=True)
+    gs = GraphedStep(m2, lf2, "cuda", True, True)
+    opts = [torch.optim.AdamW(m.parameters(), lr=1e-3) for m in (m1, m2)]
+    for step in range(50):
+        mix = torch.randn(2, 2, 16000, device="cuda") * 0.05
+        inputs = mk(mix, torch.ones(2, 16000, device="cuda"), m1.contract)
+        target, clean = mix[:, 0] * 0.8, torch.zeros(2, dtype=torch.bool, device="cuda")
+        opts[0].zero_grad(set_to_none=True)
+        with torch.autocast("cuda", dtype=torch.bfloat16):
+            pred = m1(*inputs)
+        eager = lf1(pred.float(), target, None, clean)
+        eager.backward()
+        opts[1].zero_grad(set_to_none=False)
+        got = gs.step(m2, inputs, target, clean)
+        torch.testing.assert_close(got, eager, rtol=1e-6, atol=1e-7, msg=f"step {step}: {float(got.detach())} vs {float(eager.detach())}")
+        for (name, p), q in zip(m1.named_parameters(), m2.parameters()):
+            assert (p.grad is None) == (q.grad is None), name
+            if p.grad is not None:
+                torch.testing.assert_close(q.grad, p.grad, rtol=1e-5, atol=1e-7, msg=name)
+        for opt in opts:
+            opt.step()
+        for (name, p), q in zip(m1.named_parameters(), m2.parameters()):
+            torch.testing.assert_close(q, p, rtol=1e-6, atol=1e-8, msg=f"weight after {step}: {name}")
+    for (name, p), q in zip(m1.named_buffers(), m2.buffers()):
+        torch.testing.assert_close(q, p, rtol=1e-6, atol=1e-7, msg=name)
