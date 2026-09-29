@@ -14,6 +14,8 @@
 set -euo pipefail
 export REQUIRE_TRAINING_VALIDATION="${REQUIRE_TRAINING_VALIDATION:-0}"
 cd "$(dirname "$0")/.."
+# spawn pools sized to nproc (512 on big boxes) exhaust the default 1024 fd soft limit
+ulimit -n "$(ulimit -Hn)" 2>/dev/null || true
 MODE=run; LAUNCH=0
 for a in "$@"; do case "$a" in
   --env-check) MODE=env;; --dry-run) MODE=dry;; --launch) LAUNCH=1;;

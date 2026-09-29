@@ -379,6 +379,19 @@ def test_kaggle_fallback_links_and_mirror_manifest(tmp_path, server, monkeypatch
     assert _run(reg, root, "verify") == 1   # once installed, its paths must resolve
 
 
+def test_mad_contamination_audit_has_no_audio_paths(tmp_path):
+    import pandas as pd
+    audit = tmp_path / "mad_speech_contamination.parquet"
+    pd.DataFrame([dict(source_id="mad:vehicle/7_0", group_id="mad-7", youtube_id="7",
+                       video_has_comm=False, duration_s=4.0, speech_s=0.0,
+                       speech_frac=0.0, flagged=False)]).to_parquet(audit)
+    assert R._paths_ok(audit) == (1, [])
+    # A malformed audit must fail explicitly rather than bypassing validation.
+    pd.DataFrame([dict(source_id="bad")]).to_parquet(audit)
+    with pytest.raises(R.DatasetError, match="audit.*columns"):
+        R._paths_ok(audit)
+
+
 def test_hf_snapshot_into_cache(tmp_path, monkeypatch):
     cache = tmp_path / "hfcache/snapshots/rev123"; cache.mkdir(parents=True)
     model = b"model-bytes" * 100

@@ -12,6 +12,15 @@ from vaani.data.pack import BLOB_NAME, INDEX_NAME, PackedCorpus, open_pack
 SR = 16000
 
 
+def test_manifest_glob_excludes_mad_audit(tmp_path):
+    from scripts.pack_corpus import _paths
+    audio = tmp_path / "mad_v2.parquet"
+    audit = tmp_path / "mad_speech_contamination.parquet"
+    audio.touch()
+    audit.touch()
+    assert _paths([str(tmp_path / "*.parquet")]) == [str(audio)]
+
+
 def _write_corpus(tmp_path, n_files=6, seed=0):
     rng = np.random.default_rng(seed)
     paths = []

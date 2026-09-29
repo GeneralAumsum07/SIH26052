@@ -714,6 +714,17 @@ def scan_dataset(ctx, name, v, pool=None):
 
 def _paths_ok(mp):
     from vaani.data import manifests
+    # The mirror also carries the VAD audit, keyed by source ID rather than
+    # audio path. Validate its known schema without weakening audio checks.
+    if Path(mp).name == "mad_speech_contamination.parquet":
+        import pandas as pd
+        df = pd.read_parquet(mp)
+        required = {"source_id", "group_id", "youtube_id", "video_has_comm",
+                    "duration_s", "speech_s", "speech_frac", "flagged"}
+        missing = required - set(df.columns)
+        if missing or df.empty:
+            raise DatasetError(f"{mp}: invalid MAD audit: missing columns {sorted(missing)}, {len(df)} rows")
+        return len(df), []
     df = manifests.read(mp)
     missing = [p for p in df.path if not Path(p).exists()]
     return len(df), missing

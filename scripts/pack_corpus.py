@@ -22,10 +22,14 @@ from vaani.data import manifests                                   # noqa: E402
 from vaani.data.pack import BLOB_NAME, INDEX_NAME, SCALE, SR, _key  # noqa: E402
 
 
+# tables that share data/manifests/ but carry no audio path column
+NON_AUDIO = {"mad_speech_contamination.parquet"}
+
+
 def _paths(patterns):
     out = []
     for pat in patterns:
-        out.extend(sorted(glob.glob(pat)))
+        out.extend(p for p in sorted(glob.glob(pat)) if Path(p).name not in NON_AUDIO)
     if not out:
         raise SystemExit(f"no manifest matches {patterns}")
     return out
