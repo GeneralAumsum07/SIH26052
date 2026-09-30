@@ -3,16 +3,18 @@
 Runs with the same seed and crop see identical data (items are a pure function of (seed, epoch, index)), so every run
 of a stream can read one rendering. The server builds batches with the standard DynamicMixDataset semantics (one
 EpochBatchSampler over all epochs), and publishes them to a shared-memory ring. Each training process reads batch
-(epoch, i) from the ring; a batch outside the ring's window (for example after a resume) is rendered locally, which
-yields the same batch. Back-pressure: the server never overwrites a slot an attached reader has not consumed, so a
-batch is never reordered or dropped.
+(epoch, i) from the ring. A reader whose batch is no longer in the ring (a resume behind the others) rewinds the
+server to it, and readers ahead wait, so the runs of a stream never drift apart. Back-pressure: the server never
+overwrites a slot an attached reader has not consumed, so a batch is never reordered or dropped. A reader renders
+locally (the same batch) only when the server has closed or stopped beating.
 
 The stream signature covers every data-defining key (seed, crop, epoch length, batch size, manifests and their
 content hash, bank, pack, mix, ref_corrupt, exclude_groups_file, scene_weights, the model's inputs, dsp, the audio
 contract's frontend policy and perf.numerics.render). A reader whose signature differs refuses to attach.
 
 Layout of the shared memory `vaani_ring_<sig16>`:
-  header  int64[HDR]: magic, n_slots, slot_bytes, max_readers, batches_per_epoch, closed, 64-byte signature
+  header  int64[HDR]: magic, n_slots, slot_bytes, max_readers, batches_per_epoch, closed, 64-byte signature,
+          cursor (next sequence the server writes), heartbeat (ms, monotonic)
   slots   int64[n_slots] sequence number held by each slot (-1 = empty)
   readers int64[max_readers] next sequence each reader needs (-1 = free), pid
   data    n_slots x slot_bytes: [int64 nbytes][pickle bytes]
@@ -36,6 +38,7 @@ import numpy as np
 MAGIC = 0x56414E49524E4731   # "VANIRNG1"
 HDR = 16
 SIG_BYTES = 64
+CURSOR, BEAT = 14, 15   # header words after the signature: next batch the server writes, its heartbeat (ms)
 
 
 def stream_signature(cfg: dict) -> str:
@@ -174,9 +177,28 @@ def _live_min(ring, floor):
     return lo
 
 
+def _live(ring):
+    """Positions of the live readers; frees rows of dead ones."""
+    _live_min(ring, None)
+    return [int(p) for p in ring.readers[:, 0] if p >= 0]
+
+
+def _beat(ring, seq):
+    ring.hdr[CURSOR] = seq
+    ring.hdr[BEAT] = time.monotonic_ns() // 1_000_000
+
+
 def serve(cfg: dict, start_epoch: int = 0, n_slots: int = 64, max_readers: int = 32, workers: int = 4,
-          poll_s: float = 0.002, ready=None, stop_after: int | None = None, render_device=None, idle_s: float = 300.0):
-    """Render every batch of the stream in order into the ring (blocks). stop_after: batches (tests)."""
+          poll_s: float = 0.002, ready=None, stop_after: int | None = None, render_device=None, idle_s: float = 300.0,
+          start_seq: int | None = None, per_reader: bool = False, max_workers: int | None = None,
+          open_ended: bool = False, exit_idle_s: float | None = None):
+    """Render the stream into the ring (blocks). stop_after: batches (tests).
+
+    Shared by every run of the stream: the lowest live reader sets the pace (back-pressure), and a reader whose batch
+    is no longer in the ring (a resume behind the others) rewinds the server to it while readers ahead wait. Readers
+    never drift apart, so runs of one stream can share a ring. per_reader: `workers` per live reader, capped at
+    max_workers (the launcher budgets workers per lane, and each reader is a lane). open_ended: serve past cfg's
+    epochs, for streams whose runs differ in length. exit_idle_s: exit after that long without a reader."""
     import torch
     from torch.utils.data import DataLoader
     from vaani import runtime, train
@@ -185,15 +207,16 @@ def serve(cfg: dict, start_epoch: int = 0, n_slots: int = 64, max_readers: int =
     d = cfg["data"]
     ds = DynamicMixDataset(d["manifests"], "train", d.get("bank"), MixConfig(**d.get("mix", {})), d.get("crop_s", 4.0),
                            d.get("epoch_len", 20000), cfg["seed"], **train.dataset_kwargs(cfg))
-    batch_size, epochs = cfg["batch_size"], cfg["epochs"]
+    batch_size = cfg["batch_size"]
+    epochs = 10 ** 6 if open_ended else cfg["epochs"]
     bpe = EpochBatchSampler(len(ds), batch_size, 0, 1).batches_per_epoch
     end = epochs * bpe
     render = ((cfg.get("perf") or {}).get("numerics") or {}).get("render", "cpu")
     dev = torch.device(render_device or ("cuda" if torch.cuda.is_available() else "cpu"))
 
-    def loader(epoch0, nw=workers):
-        """Batches from epoch0 on. Workers exist only while a reader is served (they are the box's CPU budget)."""
-        bs = EpochBatchSampler(len(ds), batch_size, epoch0, epochs)
+    def loader(seq0, nw):
+        """Batches from global batch seq0 on. Workers exist only while a reader is served (the box's CPU budget)."""
+        bs = EpochBatchSampler(len(ds), batch_size, seq0 // bpe, epochs, seq0 % bpe)
         kw = runtime.loader_kwargs(nw, torch.device("cpu"))
         if render == "gpu":   # CPU workers emit recipes (every draw and read); the server renders them on its GPU
             from vaani.data import mixer_gpu
@@ -201,12 +224,18 @@ def serve(cfg: dict, start_epoch: int = 0, n_slots: int = 64, max_readers: int =
             return (mixer_gpu.render_and_finish(ds, recs, dev) for recs in rl)
         return iter(DataLoader(ds, batch_sampler=bs, collate_fn=collate, **kw))
 
+    def want(n_readers):
+        if not per_reader:
+            return workers
+        w = workers * max(1, n_readers)
+        return min(w, max_workers) if max_workers else w
+
     sig = stream_signature(cfg)
     ring = shm = None
     try:
         # size the ring from one batch rendered here, so readers can attach before any worker is spawned
-        seq = start_epoch * bpe
-        payload = pickle.dumps(next(loader(start_epoch, 0)), protocol=pickle.HIGHEST_PROTOCOL)
+        seq = start_epoch * bpe if start_seq is None else start_seq
+        payload = pickle.dumps(next(loader(seq, 0)), protocol=pickle.HIGHEST_PROTOCOL)
         slot = int(len(payload) * 1.25) + 4096
         try:
             shared_memory.SharedMemory(name=shm_name(sig)).unlink()   # a stale ring of a dead server
@@ -215,36 +244,46 @@ def serve(cfg: dict, start_epoch: int = 0, n_slots: int = 64, max_readers: int =
         shm = shared_memory.SharedMemory(name=shm_name(sig), create=True, size=_Ring.size(n_slots, slot, max_readers))
         ring = _Ring(shm, True, n_slots, slot, max_readers, bpe, sig)
         ring.write(seq, payload)
+        seq += 1; n = 1
+        _beat(ring, seq)
         if ready is not None:
             ready.set()
-        n = 1
+        dl, nw, idle_since = None, None, time.time()
         while seq < end and (stop_after is None or n < stop_after):
-            lo = _live_min(ring, None)
-            if lo is None:   # nobody to serve: no workers, no CPU
+            pos = _live(ring)
+            _beat(ring, seq)
+            if not pos:   # nobody to serve: release the workers
+                if dl is not None and time.time() - (idle_since or time.time()) > idle_s:
+                    dl = None
+                idle_since = idle_since or time.time()
+                if exit_idle_s is not None and time.time() - idle_since > exit_idle_s:
+                    ring.hdr[5] = 1   # closing; a reader that attached meanwhile reopens it (attach retries)
+                    if not _live(ring):
+                        break
+                    ring.hdr[5] = 0
                 time.sleep(poll_s * 50)
                 continue
-            seq = (lo // bpe) * bpe   # the loader starts at an epoch boundary: restart at the lowest reader's epoch
-            dl, idle_since = loader(seq // bpe), None
-            for batch in dl:
-                payload = pickle.dumps(batch, protocol=pickle.HIGHEST_PROTOCOL)
-                while True:   # back-pressure: the slot's previous occupant must be consumed by every live reader
-                    lo = _live_min(ring, seq - n_slots - 1)   # readers already past the window render locally
-                    if lo is None:
-                        idle_since = idle_since or time.time()
-                    else:
-                        idle_since = None
-                    if lo is None or lo > seq - n_slots:
-                        break
-                    time.sleep(poll_s)
-                ring.write(seq, payload)
-                seq += 1; n += 1
-                if stop_after is not None and n >= stop_after:
-                    break
-                if idle_since is not None and time.time() - idle_since > idle_s:
-                    break   # every reader left: release the workers, wait for the next one
-            del dl
+            idle_since = None
+            lo = min(pos)
+            if lo < seq and int(ring.slots[lo % n_slots]) != lo:
+                seq, dl = lo, None   # a reader behind the ring: rewind to it, the readers ahead wait
+            k = seq % n_slots
+            held = int(ring.slots[k])
+            if held >= 0 and held in pos:   # back-pressure: a live reader still needs the slot's batch
+                time.sleep(poll_s)
+                continue
+            if dl is None or want(len(pos)) != nw:   # (re)start the loader at the exact batch, workers per reader
+                dl = None
+                nw = want(len(pos))
+                dl = loader(seq, nw)
+            batch = next(dl, None)
+            if batch is None:
+                break
+            ring.write(seq, pickle.dumps(batch, protocol=pickle.HIGHEST_PROTOCOL))
+            seq += 1; n += 1
+        dl = None
         ring.hdr[5] = 1   # closed: readers render locally past the end
-        while _live_min(ring, None) is not None and _live_min(ring, None) < seq:
+        while any(p < seq for p in _live(ring)):
             time.sleep(poll_s * 10)
     finally:
         if shm is not None:
@@ -276,7 +315,9 @@ class RingReader:
                 if os.name != "nt":  # Windows lifetime is managed by handles, with no POSIX resource tracker
                     resource_tracker.unregister(shm._name, "shared_memory")
                 ring = _Ring(shm)
-                break
+                if not ring.closed:
+                    break
+                shm.close()   # an idle server exiting: wait for the launcher's next one
             except FileNotFoundError:
                 pass
             except ValueError:   # created but the header not yet written: the server is mid-start
@@ -294,17 +335,21 @@ class RingReader:
         return cls(ring, shm, int(free[0]), start_seq)
 
     def get(self, epoch, i, wait_s=120.0):
+        """Batch (epoch, i), waiting while the server works towards it (behind: it rewinds to us; ahead: the
+        slowest reader sets the pace). None when the server closed or stopped beating for wait_s: render locally."""
         seq = epoch * self.ring.bpe + i
-        t0 = time.time()
+        self.ring.readers[self.id, 0] = seq   # tell the server what we need (a rewind target if it is gone)
+        t0, beat = time.time(), int(self.ring.hdr[BEAT])
         while True:
             data = self.ring.read(seq)
             if data is not None:
                 self.ring.readers[self.id, 0] = seq + 1
                 self.hits += 1
                 return pickle.loads(data)
-            held = int(self.ring.slots[seq % self.ring.n_slots])
-            if held > seq or self.ring.closed or time.time() - t0 > wait_s:
-                # outside the window (overwritten or past the end): render locally, the same batch
+            b = int(self.ring.hdr[BEAT])
+            if b != beat:
+                t0, beat = time.time(), b
+            if self.ring.closed or time.time() - t0 > wait_s:
                 self.ring.readers[self.id, 0] = seq + 1
                 self.misses += 1
                 return None
@@ -332,10 +377,16 @@ def main(argv=None):
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--start-epoch", type=int, default=0)
     ap.add_argument("--idle-s", type=float, default=300.0)
+    ap.add_argument("--start-seq", type=int, default=None, help="first global batch (overrides --start-epoch)")
+    ap.add_argument("--per-reader", action="store_true", help="--workers per live reader (a shared stream)")
+    ap.add_argument("--max-workers", type=int, default=None)
+    ap.add_argument("--open-ended", action="store_true", help="serve past the config's epochs")
+    ap.add_argument("--exit-idle-s", type=float, default=None, help="exit after this long without a reader")
     a = ap.parse_args(argv)
     cfg = yaml.safe_load(open(a.config))
     print(f"stream {stream_signature(cfg)[:16]}: serving {a.config}", flush=True)
-    serve(cfg, a.start_epoch, a.slots, a.readers, a.workers, idle_s=a.idle_s)
+    serve(cfg, a.start_epoch, a.slots, a.readers, a.workers, idle_s=a.idle_s, start_seq=a.start_seq,
+          per_reader=a.per_reader, max_workers=a.max_workers, open_ended=a.open_ended, exit_idle_s=a.exit_idle_s)
 
 
 if __name__ == "__main__":

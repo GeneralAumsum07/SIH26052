@@ -78,6 +78,7 @@ LD_GPUS="${LD_GPUS:-$(nvidia-smi -L 2>/dev/null | grep -c '^GPU' || true)}"; [ "
 LD_SLOTS="${LD_SLOTS:-1}"                  # concurrent runs per GPU: the first hour's concurrency scan sets it
 LD_SCORER="${LD_SCORER:-async}"            # perf.ops, bit-exact: one scorer per box ...
 LD_STREAM="${LD_STREAM:-shared}"           # ... and one batch server per rendered stream (local rendering if absent)
+LD_STREAM_GROUP="${LD_STREAM_GROUP:-1}"    # 1: runs of one signature share its server (scripts/r8_stream.py); 0: one per run
 LD_MPS_PCT="${LD_MPS_PCT:-}"               # CUDA_MPS_ACTIVE_THREAD_PERCENTAGE for pilots (full runs uncapped)
 export GATE0_JSON="${GATE0_JSON:-results_r2/r8_ld/gate0/eligibility.json}"
 export LD_READY_JSON="${LD_READY_JSON:-$RUNS_DIR/r8_queue/preflight_ld.json}"
@@ -235,8 +236,16 @@ ld_lane() {  # $1 gpu, $2 slot, $3 phase: claim the highest-priority runnable jo
     tries=0; rc=1
     while [ $tries -lt "$MAX_TRIES" ]; do
       tries=$((tries + 1)); log "$g" "start $n (lane $sl, P$prio, try $tries/$MAX_TRIES, speculative $spec): $c"
-      sp=""
-      if [ "$LD_STREAM" = shared ]; then   # the run's own batch server, for this try only (shared rings drift apart)
+      sp=""; sid="$n"
+      if [ "$LD_STREAM" = shared ] && [ "$LD_STREAM_GROUP" = 1 ]; then
+        # a group ring g<k> of the stream, shared by every run near its readers (scripts/r8_stream.py); a run with
+        # no group near it and no free group slot gets its name back: a private ring, below
+        # shellcheck disable=SC2086
+        sid=$(env $(caps "$SERVER_THREADS") "$PY" scripts/r8_stream.py ensure --config "$c" --run-dir "$RUNS_DIR/$cn" \
+          --name "$n" --q "$Q" --workers "$(stream_workers)" --max-workers $(( $(stream_workers) * LD_GPUS * LD_SLOTS )) \
+          2>> "$Q/logs/$n.stream.log") || sid="$n"
+      fi
+      if [ "$LD_STREAM" = shared ] && [ "$sid" = "$n" ]; then   # the run's own batch server, for this try only
         rm -f /dev/shm/vaani_ring_*_"$n"   # a killed server's ring: the trainer must not attach to it first
         # shellcheck disable=SC2086
         env $(caps "$SERVER_THREADS") VAANI_STREAM_ID="$n" "$PY" -m vaani.data.stream_server --config "$c" \
@@ -244,7 +253,7 @@ ld_lane() {  # $1 gpu, $2 slot, $3 phase: claim the highest-priority runnable jo
         sp=$!
       fi
       # shellcheck disable=SC2086
-      ( echo "$BASHPID" > "$Q/running.$n"; exec env $env VAANI_STREAM_ID="$n" VAANI_PERF_OPS="$ops" nice -n "$ni" $TRAIN_CMD "$c" ) \
+      ( echo "$BASHPID" > "$Q/running.$n"; exec env $env VAANI_STREAM_ID="$sid" VAANI_PERF_OPS="$ops" nice -n "$ni" $TRAIN_CMD "$c" ) \
         >> "$Q/logs/$n.log" 2>&1; rc=$?
       [ -n "$sp" ] && { kill "$sp" 2>/dev/null; wait "$sp" 2>/dev/null; }
       rm -f -- "${Q:?}/running.${n:?}"

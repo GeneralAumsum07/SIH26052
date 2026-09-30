@@ -123,17 +123,79 @@ def test_back_pressure_never_reorders_or_drops(tmp_path):
         p.join(30); p.kill()
 
 
-def test_reader_outside_window_renders_locally(tmp_path):
+def test_sampler_start_batch_is_a_suffix():
+    from vaani.data.dataset import EpochBatchSampler
+    full = list(EpochBatchSampler(7, 2, 1, 4))
+    for k in range(len(full)):
+        s = EpochBatchSampler(7, 2, 1 + k // 4, 4, k % 4)
+        assert list(s) == full[k:] and len(s) == len(full) - k
+
+
+def test_reader_behind_the_ring_rewinds_the_server(tmp_path):
     m = _tiny(tmp_path)
     cfg = _cfg(m)
-    p = _start(cfg, n_slots=2, stop_after=6)
+    import threading
+    p = _start(cfg, n_slots=2, open_ended=True)
     try:
-        holder = ss.RingReader.attach(cfg, start_seq=4, timeout_s=10)   # a run resumed at batch 4
-        time.sleep(1.0)   # the server ran ahead to batch 5: batches 0..3 were overwritten
-        r = ss.RingReader.attach(cfg, start_seq=0, timeout_s=10)
-        assert r.get(0, 0, wait_s=5) is None and r.misses == 1          # outside the window: render locally
-        _same(ss.local_batch(_local(cfg), 0, 0, 2), ss.local_batch(_local(cfg), 0, 0, 2))
-        assert holder.get(1, 1, wait_s=10) is not None                  # seq 4 is still in the ring
-        r.detach(); holder.detach()
+        ds = _local(cfg)
+        lead = ss.RingReader.attach(cfg, start_seq=4, timeout_s=10)   # a run resumed at batch 4
+        assert lead.get(1, 1, wait_s=30) is not None
+        time.sleep(0.5)   # the server ran ahead: batches 0..3 are gone from the 2-slot ring
+        got = {}
+        def run_lead():   # its own process in production: reads on, waits at the front of the ring
+            got["lead"] = [lead.get(s // 3, s % 3, wait_s=60) for s in range(5, 12)]
+        t = threading.Thread(target=run_lead); t.start()
+        late = ss.RingReader.attach(cfg, start_seq=0, timeout_s=10)
+        for s in range(12):   # the late run gets every batch from the ring, not a local render
+            b = late.get(s // 3, s % 3, wait_s=60)
+            assert b is not None, s
+            _same(b, ss.local_batch(ds, s // 3, s % 3, 2))
+        t.join(60)
+        for s, b in zip(range(5, 12), got["lead"]):   # the leader waited for it: every batch, in order
+            _same(b, ss.local_batch(ds, s // 3, s % 3, 2))
+        assert lead.misses == late.misses == 0
+        lead.detach(); late.detach()
     finally:
         p.join(30); p.kill()
+
+
+def test_per_reader_workers_restart_at_the_exact_batch(tmp_path):
+    m = _tiny(tmp_path)
+    cfg = _cfg(m)
+    ctx = mp.get_context("spawn")
+    ready = ctx.Event()
+    p = ctx.Process(target=ss.serve, args=(cfg,), daemon=False,   # its loader spawns workers
+                    kwargs=dict(workers=1, per_reader=True, max_workers=2, n_slots=2, ready=ready))
+    p.start()
+    assert ready.wait(60)
+    try:
+        ds = _local(cfg)
+        a = ss.RingReader.attach(cfg, timeout_s=10)
+        for s in range(3):
+            _same(a.get(s // 3, s % 3, wait_s=60), ss.local_batch(ds, s // 3, s % 3, 2))
+        b = ss.RingReader.attach(cfg, start_seq=3, timeout_s=10)   # 1 -> 2 readers: the loader restarts mid-stream
+        for s in range(3, 9):
+            ba, bb = a.get(s // 3, s % 3, wait_s=60), b.get(s // 3, s % 3, wait_s=60)
+            _same(ba, ss.local_batch(ds, s // 3, s % 3, 2)); _same(bb, ba)
+        assert a.misses == b.misses == 0
+        a.detach(); b.detach()
+    finally:
+        p.join(30); p.kill()
+
+
+def test_idle_server_exits_and_readers_fall_back_on_a_dead_server(tmp_path):
+    m = _tiny(tmp_path)
+    cfg = _cfg(m)
+    p = _start(cfg, n_slots=2, open_ended=True, exit_idle_s=0.5)
+    p.join(30)
+    assert p.exitcode == 0                                     # no reader ever came: released everything
+    assert ss.RingReader.attach(cfg, timeout_s=1) is None      # nothing to attach to: the run renders locally
+    p = _start(cfg, n_slots=2)
+    try:
+        r = ss.RingReader.attach(cfg, start_seq=0, timeout_s=10)
+        assert r.get(0, 0, wait_s=30) is not None
+        p.kill(); p.join(10)
+        assert r.get(2, 2, wait_s=1.0) is None and r.misses == 1   # never written, server gone: local, not a hang
+        r.detach()
+    finally:
+        p.kill()

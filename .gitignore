@@ -46,3 +46,6 @@ docs/*
 # native low-delay runtime: fetched dependencies and build trees
 native/vaani_ld/_deps/
 native/vaani_ld/build*/
+
+# local copy of r8 box runs (checkpoints, snapshots)
+r8_runs_final/

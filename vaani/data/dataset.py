@@ -418,17 +418,19 @@ class EpochBatchSampler(Sampler):
     EpochSampler epoch by epoch (sequential chunks of batch_size, a short last batch kept, never crossing an epoch),
     so persistent workers never drain at an epoch boundary. Item indices stay epoch * epoch_len + i."""
 
-    def __init__(self, epoch_len: int, batch_size: int, start_epoch: int, epochs: int):
+    def __init__(self, epoch_len: int, batch_size: int, start_epoch: int, epochs: int, start_batch: int = 0):
         self.epoch_len, self.batch_size, self.start_epoch, self.epochs = epoch_len, batch_size, start_epoch, epochs
         self.batches_per_epoch = -(-epoch_len // batch_size)
+        self.start_batch = start_batch   # batches skipped in start_epoch: a batch server resumes mid-epoch
 
     def __len__(self):
-        return max(0, self.epochs - self.start_epoch) * self.batches_per_epoch
+        return max(0, (self.epochs - self.start_epoch) * self.batches_per_epoch - self.start_batch)
 
     def __iter__(self):
         for e in range(self.start_epoch, self.epochs):
             base = e * self.epoch_len
-            for a in range(0, self.epoch_len, self.batch_size):
+            a0 = self.start_batch * self.batch_size if e == self.start_epoch else 0
+            for a in range(a0, self.epoch_len, self.batch_size):
                 yield list(range(base + a, base + min(a + self.batch_size, self.epoch_len)))
 
 

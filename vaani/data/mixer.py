@@ -306,9 +306,37 @@ def _stft(x, nfft, hop):
     return stft(x, nperseg=nfft, noverlap=nfft - hop, boundary="zeros", padded=True)
 
 
+_OLA_NORM: dict = {}
+
+
 def _istft(X, nfft, hop, n):
-    from scipy.signal import istft
-    return istft(X, nperseg=nfft, noverlap=nfft - hop, boundary=True)[1][:n].astype(np.float32)
+    """scipy.signal.istft(X, nperseg=nfft, noverlap=nfft-hop, boundary=True)[1][:n] as float32, bit for bit, without
+    its per-frame Python overlap-add loop (~1/3 of diffuse_pair). Rendered data must not change under resumed runs,
+    so every float operation keeps scipy's order: see tests/test_mixer_fast_istft.py."""
+    from scipy import fft as sp_fft
+    from scipy.signal import get_window
+    if nfft % hop:
+        from scipy.signal import istft
+        return istft(X, nperseg=nfft, noverlap=nfft - hop, boundary=True)[1][:n].astype(np.float32)
+    X = np.asarray(X) + 0j                     # as scipy: also turns -0j into +0j
+    nseg, r = X.shape[-1], nfft // hop
+    win = get_window("hann_periodic", nfft)
+    xs = sp_fft.irfft(X, axis=-2, n=nfft)[:nfft, :]
+    xs *= win.sum()
+    fr = (xs.T * win).reshape(nseg, r, hop)    # frame ii, sub-block j: the same products as xsubs[..., ii] * win
+    xb = np.zeros((nseg + r - 1, hop), xs.dtype)
+    for j in range(r - 1, -1, -1):             # sample block b sums frames b-(r-1) .. b in ascending order, as scipy
+        xb[j:j + nseg] += fr[:, j]
+    x = xb.reshape(-1)
+    k = (nfft, hop, nseg)
+    if k not in _OLA_NORM:                     # data-independent: scipy's own loop, once per shape
+        norm = np.zeros(x.shape[-1], xs.dtype)
+        for ii in range(nseg):
+            norm[ii * hop:ii * hop + nfft] += win ** 2
+        _OLA_NORM[k] = np.where(norm > 1e-10, norm, 1.0)[nfft // 2:-(nfft // 2)]
+    x = x[nfft // 2:-(nfft // 2)]
+    x /= _OLA_NORM[k]
+    return x[:n].astype(np.float32)
 
 
 def diffuse_pair(rng, x: np.ndarray, gamma=None, d: float = 0.12, model: str = "spherical", nfft: int = 512,

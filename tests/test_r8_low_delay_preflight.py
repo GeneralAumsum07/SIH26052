@@ -210,6 +210,34 @@ def test_claims_follow_priority_and_are_exclusive(tmp_path):
     assert {j["name"] for j in got} == {j["name"] for j in q.jobs("pilots") if j.get("status") == "PENDING"}
 
 
+def test_claims_prefer_a_live_stream_within_the_class_only(tmp_path):
+    q = _queue(tmp_path)
+    free = [j for j in q.runnable("pilots") if j["status"] == "PENDING"]
+    top = (free[0]["wave"], free[0]["priority"])
+    streams = {}
+    for j in free:
+        streams.setdefault(j["stream"], []).append(j)
+    # a stream with two members in the first class, whose first member is not the class's first job
+    grp = next(v for v in streams.values() if sum((x["wave"], x["priority"]) == top for x in v) >= 2
+               and v[0]["name"] != free[0]["name"])
+    os.makedirs(q.q / "claims" / grp[0]["name"])   # a lane already trains that stream
+    j = q.claim_next("pilots", 0, 1)
+    assert j["stream"] == grp[0]["stream"] and (j["wave"], j["priority"]) == top
+    while (j := q.claim_next("pilots", 0, 1)) is not None:   # priority order still holds across classes
+        assert (j["wave"], j["priority"]) >= top
+
+
+def test_queue_stream_key_groups_exactly_like_the_server_signature():
+    from vaani.data.stream_server import stream_signature
+    key2sig, sig2key = {}, {}
+    for a in ARMS["arms"]:
+        if a.get("queued") is False or not (REPO / a["config"]).exists():
+            continue
+        cfg = yaml.safe_load((REPO / a["config"]).read_text(encoding="utf-8"))
+        k, s = LQ.stream_key(cfg, a["audio_contract"]), stream_signature(cfg)
+        assert key2sig.setdefault(k, s) == s and sig2key.setdefault(s, k) == k, a["config"]
+
+
 def test_decisions_stop_the_ruled_out_recipes(tmp_path):
     q = _queue(tmp_path)
     with pytest.raises(LQ.QueueError, match="not piloted"):

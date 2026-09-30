@@ -50,7 +50,7 @@ CLASS_SHARE = {1: 2.0, 2: 1.0, 3: 1.0, 4: 0.5}
 CLASS_NICE = {1: 0, 2: 5, 3: 10, 4: 15}
 # data-defining keys of a rendered stream (vaani.data.stream_server's signature covers these and more; a reader with a
 # different signature renders locally, so grouping is an optimisation, never a correctness condition)
-STREAM_KEYS = ("seed", "batch_size", "data", "dsp", "controller_on", "model_cfg.inputs", "perf.numerics.render")
+STREAM_KEYS = ("seed", "batch_size", "data", "dsp", "controller_on", "model", "model_cfg.inputs", "perf.numerics.render")
 
 
 class QueueError(RuntimeError):
@@ -88,8 +88,10 @@ def network_of(cfg):
     return tier
 
 
-def stream_key(cfg):
+def stream_key(cfg, contract=None):
     d = {k: _get(cfg, k) for k in STREAM_KEYS}
+    if contract is not None:   # the frontend contract shapes the rendered input (the signature's frontend key)
+        d["contract"] = contract
     return hashlib.sha256(json.dumps(d, sort_keys=True).encode()).hexdigest()[:12]
 
 
@@ -255,7 +257,7 @@ class Queue:
             j = dict(name=n, order=i, config=c, cfg_name=cfg["name"], train_dir=str(self.runs / cfg["name"]),
                      network=network_of(cfg), contract=rec["audio_contract"], arm=rec["arm"], stage=rec["stage"],
                      priority=int(rec["priority"]), wave=int(rec["wave"]), full=full,
-                     speculative=bool(rec.get("speculative")), stream=stream_key(cfg), epochs=cfg["epochs"])
+                     speculative=bool(rec.get("speculative")), stream=stream_key(cfg, rec["audio_contract"]), epochs=cfg["epochs"])
             # Both B's main runs and its n_hat ablation share the owner's training override.
             j["unvalidated"] = (not self.require_validation and (not self.gate0_ready()[0] or
                                 bool(rec.get("needs_gate0_arm_b") and not
@@ -326,8 +328,9 @@ class Queue:
 
     def claim_next(self, phase, gpu, gpus, **wk):
         """Claim the highest-priority runnable job for a lane on `gpu` (full runs only on their own GPU)."""
-        (self.q / "claims").mkdir(parents=True, exist_ok=True)
-        full_rank = 0
+        claims = self.q / "claims"
+        claims.mkdir(parents=True, exist_ok=True)
+        full_rank, free = 0, []
         for j in self.runnable(phase):
             if j["status"] == "BLOCKED":
                 continue
@@ -335,9 +338,19 @@ class Queue:
                 home = full_rank % gpus; full_rank += 1
                 if home != gpu:
                     continue
+            if not (claims / j["name"]).exists():
+                free.append(j)
+        # a shared stream renders once for every run reading it: within the first runnable (wave, priority) class,
+        # prefer a job whose stream a claimed run already reads (never across classes)
+        live = {j.get("stream") for j in self.jobs(phase) if (claims / j["name"]).exists()} - {None}
+        while free:
+            cls = (free[0].get("wave", 9), free[0].get("priority", 9))
+            same = [j for j in free if (j.get("wave", 9), j.get("priority", 9)) == cls]
+            j = next((x for x in same if x.get("stream") in live), same[0])
             try:
-                os.mkdir(self.q / "claims" / j["name"])
-            except FileExistsError:
+                os.mkdir(claims / j["name"])
+            except FileExistsError:   # another lane took it meanwhile
+                free.remove(j)
                 continue
             return dict(j, gpu=gpu, workers=self.workers(j["priority"], wk.pop("lanes", gpus), **wk),
                         nice=CLASS_NICE[j["priority"]])
