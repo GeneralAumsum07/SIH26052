@@ -47,7 +47,9 @@ This is the system the SIH submission proposes. In config terms it is the **Arm 
 > **Status.** The flagship *as configured* (with `n_hat`) has **not been trained yet**. Every
 > component is built and tested: the NLMS, the front end, the network, export, the Python streaming
 > engine and the evaluation route. The same contract **without** `n_hat` (`inputs: pr`) **is**
-> trained: the Arm B Mini, 200,000 steps. The Arm B tier graphs are timed on a Raspberry Pi 5.
+> trained: the Arm B Mini, 200,000 steps, and it ran live on a Raspberry Pi 5 with two ICS-43434
+> microphones in the [prototype demo](https://www.youtube.com/watch?v=fU0WlnBnaoY). The Arm B tier
+> graphs are timed on the Pi 5.
 > The native C++ runtime does not have an NLMS stage yet. Every result below says which variant
 > it comes from. See [Status](#status-what-is-built-trained-and-measured).
 
@@ -314,7 +316,7 @@ Training uses EMA weights (decay 0.999), and checkpoints are chosen by a composi
 | Native C++ runtime (`native/vaani_ld`) | **built**, golden-vector parity, arm64 cross-build under qemu | `results_r2/r8_ld/native/arm64_build.json`. **No NLMS stage yet** |
 | Pi 5 timing of the Arm B tier graphs | **measured** 2026-10-05 (untrained `pr` graphs, native runtime) | board terminal output, not committed. TBD: commit `pi_results/tiers_armb/*.json` |
 | Gate 0a (latency eligibility) | **pending_board** | `results_r2/r8_ld/gate0/README.md` |
-| Live prototype demo | **demonstrated** 2026-10-05 | [video](https://www.youtube.com/watch?v=fU0WlnBnaoY). TBD (Rachit): which model and contract ran, on which board, with which microphones (one or both) and which output device |
+| Live prototype demo | **demonstrated** 2026-10-05 | [video](https://www.youtube.com/watch?v=fU0WlnBnaoY): the trained Arm B Mini (`inputs: pr`, contract `vaanife_ld_asym512_h128_s160_v1`) on a Raspberry Pi 5, two ICS-43434 microphones, output to a Bluetooth speaker. Qualitative; nothing scored |
 | Acoustic mic-to-speaker delay | **not measured** | procedure in [`docs/acoustic_latency.md`](docs/acoustic_latency.md) |
 | Jetson AGX Orin / TensorRT | **not measured**, no hardware access | — |
 
