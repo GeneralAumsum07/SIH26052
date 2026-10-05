@@ -5,13 +5,13 @@
 
 # 1. finish the box's interrupted pilots (resume from last.pt; steps done of 30,000)
 configs/retraining/r8_ld_ablations/ab1_fe_mini_s4.yaml       # 27,500: completes the C0 5-seed set (D2)
-configs/retraining/r8_ld_ablations/ld_a_s2.yaml              # 25,625
+configs/retraining/r8_ld_ablations/ld_a_s2.yaml              # 25,000
 configs/retraining/r8_ld_ablations/ld_a_s3.yaml              # 22,500
 configs/retraining/r8_ld_ablations/ld_a_s4.yaml              # 21,875
 configs/retraining/r8_ld_ablations/ld_r_s0.yaml              # 21,250
 configs/retraining/r8_ld_ablations/ld_p4_bounded.yaml        # 15,625
-configs/retraining/r8_ld_ablations/ld_p4_kappa1.yaml         # 5,000
-configs/retraining/r8_ld_ablations/ld_p4_kappa2.yaml         # 5,000
+configs/retraining/r8_ld_ablations/ld_p4_kappa1.yaml         # 4,375
+configs/retraining/r8_ld_ablations/ld_p4_kappa2.yaml         # 4,375
 
 # 2. the flagship input ablation: Arm B + decoupled NLMS n_hat vs ld_b_s{0,1} (D5, arm_b_nhat_vs_arm_b)
 configs/retraining/r8_ld_ablations/ld_b_nhat_s0.yaml
