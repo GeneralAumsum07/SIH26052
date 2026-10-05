@@ -15,6 +15,7 @@ graph, including:
   results_r2/runs/r7_e256_wr64_refiner/best.pt   (r7 cascade refiner)
   deploy/r7/cascade.onnx                          (r7 shipping graph)
   deploy/model.onnx, deploy/tier46/, and every other results_r2/runs/*/best.pt
+  r8_runs_final/*/ (every r8 and VAANI-LD checkpoint, snapshot and export/*.onnx; local, not committed)
 
 The weights are derived from the training corpora below, several of which carry non-commercial or
 unresolved redistribution terms. They are provided for research and evaluation only, and any use is
@@ -42,9 +43,12 @@ the r7 refiner inherits the backbone's data). Generated table: docs/licences.md.
 Room impulse responses are simulated in-repo with pyroomacoustics (vaani/data/rirs.py,
 data/rirs/bank_r3.npz); no recorded third-party RIRs enter the r7 recipe.
 
-The r8 retraining recipes (configs/retraining/r8_fe_mini.yaml, r8_refvalid_v2.yaml and
-r8_ablations/) are not shipped. They drop drone and noisex92 (eval-only), read mad_v2.parquet in
-place of mad.parquet, and add, as recorded in configs/data/r8_datasets.yaml:
+The r8 retraining recipes (configs/retraining/r8_*.yaml, r8_ablations/ and r8_ld_ablations/:
+r8_fe_mini, the VAANI-LD r8_ld_fe_* runs, their ablations and the final r8_final_mid /
+r8_final_large_plus) share one manifest list; the exception is r8_mini_refvalid (and its refiner),
+which reads the r7 list above. Their weights are not shipped. They drop drone and noisex92
+(eval-only), read mad_v2.parquet in place of mad.parquet, and add, as recorded in
+configs/data/r8_datasets.yaml:
 
   demand        data/manifests/demand_pairs.parquet  CC BY-SA (sources conflict)  yes, share-alike
   avq_drone     data/manifests/avq_drone.parquet     CC BY 4.0                    yes

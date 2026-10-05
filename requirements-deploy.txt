@@ -11,12 +11,16 @@
 #
 #   bash scripts/pi_setup.sh                 # venv (PEP 668 safe) + this file + alsa-utils check
 #   .venv-board/bin/python scripts/board_timing.py deploy/r7/cascade.onnx --seconds 30 --out deploy/board_timing.json
+#   .venv-board/bin/python scripts/ld_step_timing.py <graph>.folded.onnx --seconds 30 --threads 1   # VAANI-LD graphs
 #   .venv-board/bin/python scripts/capture_loop.py --device hw:0,0 --out-device plughw:1,0
+# The native C++ runtime (native/vaani_ld) is the other board route for VAANI-LD; it links ONNX Runtime's C API and
+# needs none of these Python packages, but it has no NLMS stage yet, so a pr_nhat graph runs only on this venv.
 #
 # Versions are the uv.lock resolution (the tested desktop environment). uv.lock lists cp312
 # manylinux aarch64 wheels for numpy, onnxruntime, numba and llvmlite at these versions, so the board
 # should run Python 3.12 (pi_setup.sh gets one through uv when the system Python differs).
-# Unverified on board: no install or run on a Pi has been recorded yet.
+# Verified on a Raspberry Pi 5 on 2026-10-05: .venv-board ran scripts/ld_step_timing.py on the Arm B tier graphs
+# at 1 and 4 threads (r8_runs_final/pi_bundle/tiers_armb/time_tiers.sh). TBD: commit that run's pi_results/.
 # A Jetson Orin (JetPack 7.2.1, aarch64) can install the same CPU pins (manylinux_2_28 wheels; inferred, not
 # tried); its GPU/TensorRT path needs JetPack's own wheels and is not covered here. Training-only packages
 # (torch, torch-pesq, faster-whisper, tensorrt) never belong in this file. tests/test_r8_box.py checks every pin
