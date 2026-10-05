@@ -245,19 +245,20 @@ Spectra are power-law **compressed**, keeping the phase:
 ```
 
 ```math
-\mathcal{L} \;=\;
-w_m\,\overline{g_\kappa\big(|S|^{p}-|\hat S|^{p}\big)^{2}}
-\;+\; w_c\,\overline{\big|\hat{\tilde S}-\tilde S\big|^{2}}
-\;+\; w_{\text{wave}}\,\overline{|\hat y - y|}
-\;+\; w_{\text{pesq}}\,D_{\text{PESQ}}(\hat y, y)
-\;-\; w_{\text{snr}}\,\overline{\min\!\big(\mathrm{SNR}_{\text{out}},\,30\ \mathrm{dB}\big)}
+\begin{aligned}
+\mathcal{L} \;=\;& w_m\,\mathrm{mean}\Big[g_\kappa\big(|S|^{p}-|\hat S|^{p}\big)^{2}\Big]
+\;+\; w_c\,\mathrm{mean}\Big[\big|\hat{\tilde S}-\tilde S\big|^{2}\Big]
+\;+\; w_{\text{wave}}\,\mathrm{mean}\big|\hat y - y\big| \\
+&+\; w_{\text{pesq}}\,D_{\text{PESQ}}(\hat y, y)
+\;-\; w_{\text{snr}}\,\mathrm{mean}\Big[\min\!\big(\mathrm{SNR}_{\text{out}},\,30\ \mathrm{dB}\big)\Big]
+\end{aligned}
 ```
 
 ```math
 g_\kappa(x) = \begin{cases} \kappa\,x & x > 0\ \text{(output quieter than the target)} \\ x & x \le 0 \end{cases}
 ```
 
-The overline is the mean over items and over bins and frames (or samples); $`\mathrm{SNR}_{\text{out}}`$
+Each mean runs over items and over bins and frames (or samples); $`\mathrm{SNR}_{\text{out}}`$
 is the absolute output SNR defined at the top.
 
 - **Compressed terms.** Compressing by $`|S|^p`$ before the spectral MSE is a perceptual weighting:
