@@ -11,7 +11,7 @@ interrupted pilots resume from their last.pt. Every run trains with perf.ops.sco
 resumed run keeps the box's selection state (best.pt, scorer_state.json); one background scorer
 (scripts/r8_scorer.py, CPU, below-normal priority) scores every run's snapshots in priority order.
 Env: RUNS, LAPTOP_WORKERS (loader workers, default 10), SCREEN_WORKERS (2), TRAIN_THREADS (4), SCORER_THREADS (3),
-SCORER_HELPERS (0: measure-only processes beside the scorer), MAX_TRIES (3).
+SCORER_HELPERS (0: measure-only processes beside the scorer), MAX_TRIES (3), MAX_FAILS (2 consecutive FAILED runs halt).
 """
 import argparse
 import ast
@@ -187,6 +187,7 @@ def cmd_run(a):
     if not a.dry_run:
         ensure_scorer(int(os.environ.get("SCORER_HELPERS", 0)))
     seen = set()
+    fails, max_fails = 0, int(os.environ.get("MAX_FAILS", 2))
     while True:
         todo = [(c, o) for c, o in parse_queue() if run_name(c) not in seen
                 and state(run_name(c)) not in ("DONE", "STOPPED", "FAILED", "RUNNING")]
@@ -197,6 +198,11 @@ def cmd_run(a):
         if not a.dry_run:
             ensure_scorer(int(os.environ.get("SCORER_HELPERS", 0)))
         if not train_one(c, o, a.dry_run):
+            return 1
+        # circuit breaker: consecutive FAILED runs mean a shared fault (data, driver, disk), not a bad config
+        fails = fails + 1 if not a.dry_run and state(run_name(c)) == "FAILED" else 0
+        if fails >= max_fails:
+            log(f"{fails} runs FAILED in a row; queue halted (fix, delete their FAILED flags, rerun 'run')")
             return 1
     log("queue finished; the scorer keeps scoring (status: python scripts/laptop_queue.py status)")
     return 0
