@@ -602,7 +602,8 @@ def main(config_path):
             inputs, target, fw, is_clean = prepare_batch(batch, cfg["model"], device, burst_w, contract=contract)
             log_now = (step + 1) % cfg.get("log_every", 20) == 0
             if fe_loss:
-                getattr(loss_fn, "fe", loss_fn).keep_live_terms = log_now and graphed is None
+                # not under compile: its backward donates buffers, so term_grad_norms' retain_graph pass raises
+                getattr(loss_fn, "fe", loss_fn).keep_live_terms = log_now and graphed is None and fwd is model
             term_gn = None
             opt.zero_grad(set_to_none=graphed is None)
             if graphed is not None:   # forward, loss and backward replayed from one captured graph

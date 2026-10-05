@@ -115,7 +115,7 @@ def trial(a):
         m, lf, fwd, gs, groups, opt, sched, ema = state
         inputs, target, fw, ic = train.prepare_batch(batches[index % len(batches)], cfg["model"], device, contract=contract)
         fe = getattr(lf, "fe", lf)
-        fe.keep_live_terms = diagnostics and gs is None
+        fe.keep_live_terms = diagnostics and gs is None and fwd is m   # as train.py: compile donates backward buffers
         opt.zero_grad(set_to_none=gs is None)
         if gs is not None:
             loss = gs.step(m, inputs, target, ic)
