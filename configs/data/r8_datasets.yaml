@@ -18,7 +18,7 @@
 # Paths are relative to the repo root with --root data (dest data/raw/x -> <root>/raw/x).
 hosts:
   default: {max_files: 4, connections: 8}
-  zenodo.org: {max_files: 2, connections: 1, note: 'polite: 2 files at a time, one connection each, 429 Retry-After honoured'}
+  zenodo.org: {max_files: 4, connections: 8, note: '2 x 1 measured ~0.45-3 MB/s, 16 conn ~14 MB/s; 429 Retry-After honoured'}
   tulane.box.com: {max_files: 2, connections: 1, note: 'Box shared links: GET only, no HEAD'}
   spib.linse.ufsc.br: {max_files: 2, connections: 1, note: small academic server}
   www.kaggle.com: {max_files: 1, connections: 1, note: 302 to a signed URL}
