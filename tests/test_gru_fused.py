@@ -23,7 +23,7 @@ def _check(fn, rnn, t, b=6, device="cpu"):
     torch.backends.cuda.matmul.allow_tf32 = torch.backends.cudnn.allow_tf32 = False
     try:
         rnn = rnn.to(device)
-        x = torch.randn(b, t, 24, device=device, generator=None) * 0.5
+        x = torch.randn(b, t, rnn.input_size, device=device, generator=None) * 0.5
         x1 = x.clone().requires_grad_(True); x2 = x.clone().requires_grad_(True)
         ref = rnn(x1)[0]
         got = fn(rnn, x2)
@@ -90,3 +90,12 @@ def test_fused_route_ema_copy_uses_its_own_weights():
 @pytest.mark.parametrize("composed", [False, True])
 def test_triton_kernel_matches_nn_gru(t, composed):
     _check(G.gru_fused, _pair(t, composed), t, b=512, device="cuda")
+
+
+@pytest.mark.skipif(not (torch.cuda.is_available() and G.triton is not None), reason="needs CUDA and triton")
+@pytest.mark.parametrize("t", (251, 501))
+@pytest.mark.parametrize("h", (40, 64))
+def test_triton_kernel_mid_large_hidden(t, h):
+    # Mid/Large GRU widths pad to HP=64, where the bwd kernel's default pipelining overflowed sm_120 shared memory
+    torch.manual_seed(h)
+    _check(G.gru_fused, torch.nn.GRU(h, h, batch_first=True), t, b=512, device="cuda")

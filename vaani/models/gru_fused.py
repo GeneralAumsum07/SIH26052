@@ -178,7 +178,9 @@ if triton is not None:
 
 def _launch_cfg(b, hdim):
     hp = max(16, triton.next_power_of_2(hdim))
-    return hp, 16, (triton.cdiv(b, 16),)
+    # bwd at HP>=64 with Triton's default 3 load stages needs 110,592 B smem > sm_120's 101,376; 2 stages time the same
+    bwd_stages = 3 if hp <= 32 else 2
+    return hp, 16, (triton.cdiv(b, 16),), bwd_stages
 
 
 @contextlib.contextmanager
@@ -205,7 +207,7 @@ class _GRUFused(torch.autograd.Function):
             gi = torch.addmm(b_ih, x.reshape(b * t, -1), w_ih.t()).reshape(b, t, 3 * hdim).contiguous()
         out = torch.empty(b, t, hdim, device=x.device, dtype=torch.float32)
         gates = torch.empty(b, t, 4 * hdim, device=x.device, dtype=torch.float32)
-        hp, bb, grid = _launch_cfg(b, hdim)
+        hp, bb, grid, _ = _launch_cfg(b, hdim)
         _gru_fwd_kernel[grid](gi, w_hh, b_hh, out, gates, b, t, H=hdim, HP=hp, BLOCK_B=bb)
         ctx.save_for_backward(x, w_ih, w_hh, out, gates)
         return out
@@ -216,8 +218,9 @@ class _GRUFused(torch.autograd.Function):
         b, t, hdim = out.shape
         dgi = torch.empty(b, t, 3 * hdim, device=out.device, dtype=torch.float32)
         dgh = torch.empty_like(dgi)
-        hp, bb, grid = _launch_cfg(b, hdim)
-        _gru_bwd_kernel[grid](dout.contiguous().float(), out, gates, w_hh, dgi, dgh, b, t, H=hdim, HP=hp, BLOCK_B=bb)
+        hp, bb, grid, stages = _launch_cfg(b, hdim)
+        _gru_bwd_kernel[grid](dout.contiguous().float(), out, gates, w_hh, dgi, dgh, b, t, H=hdim, HP=hp, BLOCK_B=bb,
+                              num_stages=stages)
         with _no_tf32():
             h_prev = torch.cat([out.new_zeros(b, 1, hdim), out[:, :-1]], 1).reshape(b * t, hdim)
             dw_hh = dgh.reshape(b * t, -1).t() @ h_prev

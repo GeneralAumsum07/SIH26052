@@ -27,7 +27,9 @@ VARIANTS = {
     "graph": dict(filters="fft", compile=False, cuda_graph=True, gru_kernel="cudnn"),
     "compile": dict(filters="fft", compile=True, cuda_graph=False, gru_kernel="cudnn"),
     "fused": dict(filters="fft", compile=False, cuda_graph=False, gru_kernel="fused"),
+    "graph-fused": dict(filters="fft", compile=False, cuda_graph=True, gru_kernel="fused"),  # fused GRU without compile's AMP reordering
     "compile-fused": dict(filters="fft", compile=True, cuda_graph=False, gru_kernel="fused"),
+    "graph-compile": dict(filters="fft", compile=True, cuda_graph=True, gru_kernel="cudnn"),  # tiers whose GRU exceeds the fused kernel's shared memory
     "graph-compile-fused": dict(filters="fft", compile=True, cuda_graph=True, gru_kernel="fused"),  # the launch combo
 }
 
