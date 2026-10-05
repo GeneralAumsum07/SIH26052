@@ -2950,6 +2950,22 @@
     "esc50:keyboard_typing/4-177243-A-32",
     "esc50:train/4-165933-A-45"
    ]
+  },
+  "freesound_fsd50k": {
+   "manifest": "fsd50k.parquet",
+   "group": "Freesound upload id parsed from source_id (scripts/heldout_freesound.py FS_ID)",
+   "rule": "hold out train/val rows whose Freesound id is one of the 401 ids among data/eval_r8_test_b/test/index.csv noise/impulse sources",
+   "caveat": "inferred: one Freesound id is one recording (DNS chunks _0.._N of an id are consecutive cuts of it)",
+   "generated_by": "python scripts/heldout_freesound.py",
+   "n_rows": 5,
+   "hours": 0.0131,
+   "source_ids": [
+    "fsd50k:Aircraft/154926",
+    "fsd50k:Crowd/177082",
+    "fsd50k:Engine/186940",
+    "fsd50k:Vehicle/275443",
+    "fsd50k:Vehicle/349137"
+   ]
   }
  }
 }
