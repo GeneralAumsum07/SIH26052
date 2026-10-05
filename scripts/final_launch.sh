@@ -20,11 +20,13 @@ say() { echo "$(date '+%F %T') [final] $*" | tee -a "$RUNS/final.log"; }
 
 # OMP/BLAS pools size to nproc, not the CFS quota (pids.max blew up on the 2026-09-29 box): cap them
 caps="OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 NUMBA_NUM_THREADS=4 NUMEXPR_NUM_THREADS=4"
-ncpus() { local n q p; n=$(nproc)
-  if read -r q p 2>/dev/null < /sys/fs/cgroup/cpu.max && [ "$q" != max ] && [ $((q / p)) -lt "$n" ]; then n=$((q / p)); fi; echo "$n"; }
-# loader workers per run: half the quota after trainers + screens, and ~1 GB RSS each must fit in 70 % of MemAvailable
+ncpus() { local n q p; n=$(nproc)   # CFS quota: cgroup v2 cpu.max, else v1 (the 2026-10-05 box is v1)
+  { read -r q p 2>/dev/null < /sys/fs/cgroup/cpu.max; } || { read -r q 2>/dev/null < /sys/fs/cgroup/cpu/cpu.cfs_quota_us && read -r p < /sys/fs/cgroup/cpu/cpu.cfs_period_us; } || q=max
+  if [ "$q" != max ] && [ "$q" -gt 0 ] 2>/dev/null && [ $((q / p)) -lt "$n" ]; then n=$((q / p)); fi; echo "$n"; }
+# loader workers per run: half the quota after trainers + screens; RAM as run_r8.sh: 2 runs, each 2 persistent loaders
+# (train + val) of w workers + its screen pool, 1 GB per process (measured on the 2026-09-29 box)
 workers() { local c m; c=$(( ($(ncpus) - 8 - 2 * VAANI_SCREEN_WORKERS) / 2 ))
-  m=$(awk '/MemAvailable/ {print int($2 / 1048576 * 0.7 / 2)}' /proc/meminfo)
+  m=$(awk -v s="$VAANI_SCREEN_WORKERS" '/MemAvailable/ {print int(($2 / 1048576 / 2 - s) / 2)}' /proc/meminfo)
   [ -n "$m" ] && [ "$m" -lt "$c" ] && c=$m; [ "$c" -lt 2 ] && c=2; echo "$c"; }
 
 # derived config: cfg_out <tier> <out> <python dict updates...>
@@ -90,6 +92,17 @@ print("data ok")
 EOF2
 }
 
+waitdata() {  # r8_box_setup.sh returns once the first dataset group is in; the rest keep arriving in its background stage
+  local S=runs/box_setup
+  until datacheck; do
+    [ -f $S/datasets.failed ] && { say "dataset stage failed: tail -30 $S/datasets.log, fix, rerun r8_box_setup.sh"; return 1; }
+    if ! { [ -f $S/datasets.pid ] && kill -0 "$(cat $S/datasets.pid)" 2>/dev/null; }; then
+      datacheck > /dev/null 2>&1 && return 0   # it finished between the two checks
+      say "inputs missing and no dataset stage running: rerun r8_box_setup.sh"; return 1; fi
+    say "waiting for the remaining datasets (tail -f $S/datasets.log)"; sleep 120
+  done
+}
+
 size() {  # prints "<tier> <max_steps> <epochs> <s_per_step> <val_s_per_epoch> <startup_s>" from the smoke's TB wall times
   "$PY" - "$RUNS" "$TRAIN_END" "${NAMES[@]}" <<'EOF'
 import glob, json, math, sys, time
@@ -121,7 +134,7 @@ EOF
 launch() {
   command -v tmux > /dev/null || { echo "tmux missing (apt-get install -y tmux): the runs live in tmux session final"; exit 2; }
   say "box: $(ncpus) cpus, $(nvidia-smi --query-gpu=index,name --format=csv,noheader | tr '\n' ' '), TRAIN_END ${TRAIN_END:-none, open-ended} (now $(date -u -d @$(( $(date +%s) + 19800 )) '+%F %T') IST)"
-  datacheck || exit 1
+  waitdata || exit 1
   local all=("${NAMES[@]}") t todo=()
   for t in "${all[@]}"; do [ -f "$RUNS/smoke_ok_$t" ] || todo+=("$t"); done
   if [ ${#todo[@]} -gt 0 ]; then NAMES=("${todo[@]}"); smoke; fi
