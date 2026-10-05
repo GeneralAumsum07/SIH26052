@@ -10,7 +10,7 @@ Runs live in $RUNS (r8_runs_final, where the box's runs came back): runs_dir is 
 interrupted pilots resume from their last.pt. Every run trains with perf.ops.scorer async, as on the box, so a
 resumed run keeps the box's selection state (best.pt, scorer_state.json); one background scorer
 (scripts/r8_scorer.py, CPU, below-normal priority) scores every run's snapshots in priority order.
-Env: RUNS, LAPTOP_WORKERS (loader workers, default 10), SCREEN_WORKERS (2), TRAIN_THREADS (4), SCORER_THREADS (3),
+Env: RUNS, LAPTOP_WORKERS (loader workers, default 4), SCREEN_WORKERS (2), TRAIN_THREADS (4), SCORER_THREADS (3),
 SCORER_HELPERS (0: measure-only processes beside the scorer), MAX_TRIES (3), MAX_FAILS (2 consecutive FAILED runs halt).
 """
 import argparse
@@ -145,7 +145,8 @@ def ensure_scorer(helpers):
 def train_one(cfg_path, opts, dry):
     name = run_name(cfg_path)
     out, c = derived(cfg_path, opts)
-    workers = int(opts.get("workers", os.environ.get("LAPTOP_WORKERS", 10)))
+    # 4: each Windows-spawned worker plateaus at ~3.1 GB private; 4 + trainer + scorer is ~44 GB commit on 15 GB RAM
+    workers = int(opts.get("workers", os.environ.get("LAPTOP_WORKERS", 4)))
     ops = {"scorer": "async", "stream": "local", "priority": int(opts.get("priority", 2))}
     env = {**os.environ, **caps(int(os.environ.get("TRAIN_THREADS", 4))), "CUDA_VISIBLE_DEVICES": "0",
            "VAANI_WORKERS": str(workers), "VAANI_SCREEN_WORKERS": os.environ.get("SCREEN_WORKERS", "2"),
