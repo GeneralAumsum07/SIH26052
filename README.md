@@ -238,33 +238,36 @@ window, and the clean target $`y`$ is trimmed to the same samples. Both are then
 512/256 STFT, $`\hat{S} = \mathrm{STFT}(\hat{y})`$ and $`S = \mathrm{STFT}(y)`$, so the loss scores
 the samples the listener hears, not the network's internal spectrum.
 
-Spectra are power-law **compressed**, keeping the phase:
+Spectra are power-law **compressed**, keeping the phase ($`\hat M`$ and $`\hat S_c`$ likewise
+for the estimate):
 
 ```math
-\tilde{S} = |S|^{p}\, e^{j\angle S}
+M = {|S|}^{p}, \qquad S_c = M\, e^{j\angle S}
 ```
 
 ```math
-\begin{aligned}
-\mathcal{L} \;=\;& w_m\,\mathrm{mean}\Big[g_\kappa\big(|S|^{p}-|\hat S|^{p}\big)^{2}\Big]
-\;+\; w_c\,\mathrm{mean}\Big[\big|\hat{\tilde S}-\tilde S\big|^{2}\Big]
-\;+\; w_{\text{wave}}\,\mathrm{mean}\big|\hat y - y\big| \\
-&+\; w_{\text{pesq}}\,D_{\text{PESQ}}(\hat y, y)
-\;-\; w_{\text{snr}}\,\mathrm{mean}\Big[\min\!\big(\mathrm{SNR}_{\text{out}},\,30\ \mathrm{dB}\big)\Big]
-\end{aligned}
+\mathcal{L} = w_m\,\bar{e}_{m} + w_c\,\bar{e}_{c} + w_{\text{wave}}\,\bar{e}_{\text{wave}} + w_{\text{pesq}}\,D_{\text{PESQ}}(\hat y, y) - w_{\text{snr}}\,\bar{e}_{\text{snr}}
+```
+
+A bar is the mean over items and over bins and frames (or samples) of:
+
+```math
+e_m = g_\kappa\big(M - \hat M\big)^{2}, \qquad g_\kappa(x) = \begin{cases} \kappa\,x & x > 0\ \text{(output quieter than the target)} \\ x & x \le 0 \end{cases}
 ```
 
 ```math
-g_\kappa(x) = \begin{cases} \kappa\,x & x > 0\ \text{(output quieter than the target)} \\ x & x \le 0 \end{cases}
+e_c = \big(\mathrm{Re}\,\hat S_c - \mathrm{Re}\,S_c\big)^{2} + \big(\mathrm{Im}\,\hat S_c - \mathrm{Im}\,S_c\big)^{2}
 ```
 
-Each mean runs over items and over bins and frames (or samples); $`\mathrm{SNR}_{\text{out}}`$
-is the absolute output SNR defined at the top.
+```math
+e_{\text{wave}} = {|\hat y - y|}, \qquad e_{\text{snr}} = \min\big(\mathrm{SNR}_{\text{out}},\, 30\ \mathrm{dB}\big)
+```
+
+$`\mathrm{SNR}_{\text{out}}`$ is the absolute output SNR defined at the top, taken per item.
 
 - **Compressed terms.** Compressing by $`|S|^p`$ before the spectral MSE is a perceptual weighting:
   power-law compression approximates the compressive loudness response of hearing. The complex term
-  $`|\hat{\tilde S}-\tilde S|^2`$ is the squared error of the real and imaginary parts, so it also
-  carries phase. p = 0.3 is the upstream default; r7 used 0.5.
+  $`e_c`$ is the squared error of the real and imaginary parts, so it also carries phase. p = 0.3 is the upstream default; r7 used 0.5.
 - **Over-suppression (κ = 3).** $`g_\kappa`$ is VoiceFilter-Lite's asymmetric loss. It scales the
   error by κ **before** squaring, so where the output is quieter than the target (speech removed) an
   error costs κ² = 9 times a same-size error where it is louder (noise left). κ = 1 is plain
@@ -278,7 +281,7 @@ is the absolute output SNR defined at the top.
   an inferred starting point, not a tuned value.
 - **C0 and the consistency term.** The r8 C0 control (`r8_fe_mini`, legacy 512/256 contract) uses
   `FELoss` on its own spectrum and adds an MP-SENet consistency term, weight 0.3: the compressed
-  spectrum of $`\mathrm{STFT}(\mathrm{iSTFT}(\hat S))`$ against $`\hat{\tilde S}`$. After
+  spectrum of $`\mathrm{STFT}(\mathrm{iSTFT}(\hat S))`$ against $`\hat S_c`$. After
   re-synthesis that term is zero up to rounding, so VAANI-LD sets its weight to 0. The `ld_s2_native`
   ablation instead puts the spectral and consistency terms on the low-delay spectra.
 
@@ -638,17 +641,17 @@ scripts/run_optimization.sh                 # INT8 and pruning, measured and rej
 #### r1–r7 loss
 
 `HybridLoss` (`vaani/losses.py`) works on power-law **compressed** spectra. Writing
-$`S = |S|\,e^{j\angle S}`$ for a clean STFT and $`\hat{S}`$ for the estimate:
+$`S = {|S|}\,e^{j\angle S}`$ for a clean STFT and $`\hat{S}`$ for the estimate:
 
 ```math
-\tilde{S} = |S|^{p}\, e^{j\angle S}
+M = {|S|}^{p}, \qquad S_c = M\, e^{j\angle S}
 ```
 
 ```math
 \mathcal{L} \;=\;
-w_c\Big[\mathrm{MSE}\big(\mathrm{Re}\hat{\tilde S},\mathrm{Re}\tilde S\big)
-      + \mathrm{MSE}\big(\mathrm{Im}\hat{\tilde S},\mathrm{Im}\tilde S\big)\Big]
-\;+\; w_m\,\mathrm{MSE}\big(|\hat S|^{p},\,|S|^{p}\big)
+w_c\Big[\mathrm{MSE}\big(\mathrm{Re}\,\hat S_c,\mathrm{Re}\,S_c\big)
+      + \mathrm{MSE}\big(\mathrm{Im}\,\hat S_c,\mathrm{Im}\,S_c\big)\Big]
+\;+\; w_m\,\mathrm{MSE}\big(\hat M,\,M\big)
 \;+\; \mathcal{L}_{\text{SI-SNR}}
 \;-\; w_{\text{snr}}\,\min\!\big(\mathrm{SNR}_{\text{out}},\,30\ \mathrm{dB}\big)
 ```
