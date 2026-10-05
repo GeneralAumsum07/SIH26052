@@ -1,0 +1,31 @@
+# Laptop training queue (scripts/laptop_queue.py): one run at a time on the RTX 5060, top to bottom.
+# Line: <config> [key=value ...]; keys: priority=N (async scorer class, 1 first), workers=N, and dotted config
+# overrides (e.g. max_steps=60000). A run with DONE / STOPPED, or run.json "end", is skipped; any other resumes from
+# last.pt. Order is a proposal pending Rachit's call (2026-10-06); edit freely, the queue rereads it between runs.
+
+# 1. finish the box's interrupted pilots (resume from last.pt; steps done of 30,000)
+configs/retraining/r8_ld_ablations/ab1_fe_mini_s4.yaml       # 27,500: completes the C0 5-seed set (D2)
+configs/retraining/r8_ld_ablations/ld_a_s2.yaml              # 25,625
+configs/retraining/r8_ld_ablations/ld_a_s3.yaml              # 22,500
+configs/retraining/r8_ld_ablations/ld_a_s4.yaml              # 21,875
+configs/retraining/r8_ld_ablations/ld_r_s0.yaml              # 21,250
+configs/retraining/r8_ld_ablations/ld_p4_bounded.yaml        # 15,625
+configs/retraining/r8_ld_ablations/ld_p4_kappa1.yaml         # 5,000
+configs/retraining/r8_ld_ablations/ld_p4_kappa2.yaml         # 5,000
+
+# 2. the flagship input ablation: Arm B + decoupled NLMS n_hat vs ld_b_s{0,1} (D5, arm_b_nhat_vs_arm_b)
+configs/retraining/r8_ld_ablations/ld_b_nhat_s0.yaml
+configs/retraining/r8_ld_ablations/ld_b_nhat_s1.yaml
+
+# 3. pilots never started on the box
+configs/retraining/r8_ld_ablations/ld_s2_native.yaml         # failed capture on the box; fixed 2026-10-06
+configs/retraining/r8_ld_ablations/ld_r_s1.yaml
+configs/retraining/r8_ld_ablations/ld_p4_kappa4.yaml
+configs/retraining/r8_ld_ablations/ld_p4_tail00.yaml
+configs/retraining/r8_ld_ablations/ld_p4_tail10.yaml
+configs/retraining/r8_ld_ablations/ld_p4_refdrop00.yaml
+configs/retraining/r8_ld_ablations/ld_p4_refdrop30.yaml
+
+# 4. final tiers: max_steps is a placeholder (100,000); TBD (Rachit): the laptop step budget for each
+# configs/retraining/r8_final_mid.yaml
+# configs/retraining/r8_final_large_plus.yaml
