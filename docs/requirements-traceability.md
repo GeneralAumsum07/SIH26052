@@ -86,7 +86,7 @@ once, after selection, and **is not scored yet**.
 | 7 | **Operates in the complex domain to preserve phase** | partial | **VaaniFE:** an unbounded complex mask on the compressed primary spectrum, which corrects phase as well as magnitude, plus a 3-tap complex deep filter over the lowest 144 bins (0–4.5 kHz, lags 0, 2, 4), with a complex-part loss term. No phase diagnostic has been run on an r8 model. **r7:** complex ratio mask + 3-frame deep filter; its phase probe on val measures a mean mask phase of 21.73°, and oracle magnitude would add +4.176 dB against +2.164 dB for oracle phase, so magnitude error dominated (`results_r2/r7/diag/README.md`) |
 | 8a | Loss: SI-SNR | partial | **r7:** `HybridLoss` uses SI-SNR plus an absolute-SNR term (`w_snr = 0.2`). **r8:** the FE loss has no SI-SNR term; it uses a clamped **absolute**-SNR term (`w_snr = 0.002`) because the target is absolute SNR and SI-SNR is scale-blind (`vaani/losses.py::FELoss`) |
 | 8b | Loss: L1 / L2 | met | **r8:** waveform L1 (`w_wave = 0.2`) and squared error on compressed magnitude (`w_mag`) and complex parts (`w_complex`), computed after re-synthesis through the real low-delay synthesis window (`vaani/enhance_low_delay.py::ResynthesisFELoss`). **r7:** L2 only (`wmse`) |
-| 8c | **Loss: perceptual** | met | **r8:** a differentiable PESQ term (`torch_pesq`, `w_pesq = 0.001`, `pesq_required: true` so no run trains without it) plus power-law compressed magnitude (p = 0.3) and an asymmetric over-suppression weight (κ = 3) that charges removing speech three times more than leaving noise. **r7:** compressed magnitude at p = 0.5 only. See §3.3 |
+| 8c | **Loss: perceptual** | met | **r8:** a differentiable PESQ term (`torch_pesq`, `w_pesq = 0.001`, `pesq_required: true` so no run trains without it) plus power-law compressed magnitude (p = 0.3) and an asymmetric over-suppression weight (κ = 3, applied before squaring, so removing speech costs κ² = 9 times a same-size error of leaving noise). **r7:** compressed magnitude at p = 0.5 only. See §3.3 |
 | 9 | Metrics: SNR, STOI, PESQ | met | Plus SI-SDR, DNSMOS P.835, bootstrap confidence intervals, post-transient recovery time and, for r8, a composite val pass rate used for checkpoint selection. WER exists only for earlier-render systems (`results_r2/matrix_prerelabel.md`); no r7 or r8 WER |
 | 10a | Augmentation: random noise mixing | met | `vaani/data/mixer.py`, a fresh mixture per training item; mixer v2 builds a battlefield scene per item |
 | 10b | Augmentation: reverberation | met | RIR banks (`vaani/data/rirs.py`, `scripts/make_rir_bank.py`): `bank_r3` (r7) and `bank_r8` (r8, with M6 armoured rooms) |
@@ -171,8 +171,8 @@ r8's FE loss (`vaani/losses.py::FELoss`, used through `ResynthesisFELoss` on the
 contracts) is a FastEnhancer-style mix on power-law compressed spectra (p = 0.3): magnitude,
 complex parts, waveform L1, a clamped absolute-SNR term, and a **differentiable PESQ term**
 (`torch_pesq`, weight 0.001). Every term is computed after re-synthesis through the contract's real
-synthesis window, so the loss sees the samples the listener hears. κ = 3 weights over-suppression
-(removing speech) three times more than residual noise. `pesq_required: true` makes a run refuse to
+synthesis window, so the loss sees the samples the listener hears. κ = 3 scales an over-suppression
+error (removing speech) by κ before squaring, so it costs κ² = 9 times a same-size residual-noise error. `pesq_required: true` makes a run refuse to
 start without `torch_pesq`, so the term cannot silently drop to zero.
 
 r7's `HybridLoss` had only the compressed-magnitude weighting (p = 0.5). Power-law compression

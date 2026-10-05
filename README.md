@@ -229,14 +229,55 @@ absent and ramps back in over 192 ms when it returns.
 
 ### Training objective
 
-All r8 runs use the FE loss (`loss: fe`) computed **after re-synthesis**, through the real
-low-delay synthesis window (`vaani/losses.py::FELoss`):
+All r8 runs use the FE loss (`loss: fe`, `vaani/losses.py::FELoss`). VAANI-LD computes it **after
+re-synthesis** (`loss_domain: resynthesis`, `vaani/enhance_low_delay.py::ResynthesisFELoss`). The
+predicted spectrum becomes a waveform $`\hat{y}`$ through the contract's real low-delay synthesis
+window, and the clean target $`y`$ is trimmed to the same samples. Both are then re-analysed with the
+512/256 STFT, $`\hat{S} = \mathrm{STFT}(\hat{y})`$ and $`S = \mathrm{STFT}(y)`$, so the loss scores
+the samples the listener hears, not the network's internal spectrum.
 
-- compressed-magnitude and complex-part terms on power-law compressed spectra (p = 0.3);
-- an asymmetric over-suppression weight (κ = 3) that charges removing speech three times more than
-  leaving noise;
-- a waveform L1 term and a clamped absolute-SNR term;
-- a differentiable PESQ term (`torch_pesq`, weight 0.001).
+Spectra are power-law **compressed**, keeping the phase:
+
+```math
+\tilde{S} = |S|^{p}\, e^{j\angle S}
+```
+
+```math
+\mathcal{L} \;=\;
+w_m\,\overline{g_\kappa\big(|S|^{p}-|\hat S|^{p}\big)^{2}}
+\;+\; w_c\,\overline{\big|\hat{\tilde S}-\tilde S\big|^{2}}
+\;+\; w_{\text{wave}}\,\overline{|\hat y - y|}
+\;+\; w_{\text{pesq}}\,D_{\text{PESQ}}(\hat y, y)
+\;-\; w_{\text{snr}}\,\overline{\min\!\big(\mathrm{SNR}_{\text{out}},\,30\ \mathrm{dB}\big)}
+```
+
+```math
+g_\kappa(x) = \begin{cases} \kappa\,x & x > 0\ \text{(output quieter than the target)} \\ x & x \le 0 \end{cases}
+```
+
+The overline is the mean over items and over bins and frames (or samples); $`\mathrm{SNR}_{\text{out}}`$
+is the absolute output SNR defined at the top.
+
+- **Compressed terms.** Compressing by $`|S|^p`$ before the spectral MSE is a perceptual weighting:
+  power-law compression approximates the compressive loudness response of hearing. The complex term
+  $`|\hat{\tilde S}-\tilde S|^2`$ is the squared error of the real and imaginary parts, so it also
+  carries phase. p = 0.3 is the upstream default; r7 used 0.5.
+- **Over-suppression (κ = 3).** $`g_\kappa`$ is VoiceFilter-Lite's asymmetric loss. It scales the
+  error by κ **before** squaring, so where the output is quieter than the target (speech removed) an
+  error costs κ² = 9 times a same-size error where it is louder (noise left). κ = 1 is plain
+  magnitude MSE.
+- **PESQ term.** $`D_{\text{PESQ}}`$ is `torch_pesq`'s differentiable distortion (0 = transparent),
+  averaged over items whose target is audible. The r8 configs set `pesq_required: true`, so a run
+  without `torch-pesq` refuses to start rather than training with the term silently at 0.
+- **Weights.** $`w_m = 0.3`$, $`w_c = 0.2`$, $`w_{\text{wave}} = 0.2`$, $`w_{\text{pesq}} = 0.001`$,
+  $`w_{\text{snr}} = 0.002`$, κ = 3, p = 0.3. $`w_{\text{snr}}`$ keeps r7's ratio of SNR weight to
+  spectral weight (0.2 against $`w_c + w_m = 100`$) on these unit-sum weights; the code records it as
+  an inferred starting point, not a tuned value.
+- **C0 and the consistency term.** The r8 C0 control (`r8_fe_mini`, legacy 512/256 contract) uses
+  `FELoss` on its own spectrum and adds an MP-SENet consistency term, weight 0.3: the compressed
+  spectrum of $`\mathrm{STFT}(\mathrm{iSTFT}(\hat S))`$ against $`\hat{\tilde S}`$. After
+  re-synthesis that term is zero up to rounding, so VAANI-LD sets its weight to 0. The `ld_s2_native`
+  ablation instead puts the spectral and consistency terms on the low-delay spectra.
 
 Training uses EMA weights (decay 0.999), and checkpoints are chosen by a composite val metric.
 
@@ -589,9 +630,37 @@ scripts/run_round.sh [1|2|3|3b|3c|3d|4]     # a whole ablation wave; resumes fro
 scripts/run_optimization.sh                 # INT8 and pruning, measured and rejected on the evidence
 ```
 
-The r1–r7 loss is `HybridLoss` (`vaani/losses.py`). It combines MSE on power-law compressed complex
-spectra (p = 0.5), compressed-magnitude MSE, SI-SNR, and an absolute SNR_out term clamped at
-30 dB. Comparators were `gtcrn_pretrained` / `gtcrn_finetuned`, `nlms_only`, `raw`, RNNoise and
+#### r1–r7 loss
+
+`HybridLoss` (`vaani/losses.py`) works on power-law **compressed** spectra. Writing
+$`S = |S|\,e^{j\angle S}`$ for a clean STFT and $`\hat{S}`$ for the estimate:
+
+```math
+\tilde{S} = |S|^{p}\, e^{j\angle S}
+```
+
+```math
+\mathcal{L} \;=\;
+w_c\Big[\mathrm{MSE}\big(\mathrm{Re}\hat{\tilde S},\mathrm{Re}\tilde S\big)
+      + \mathrm{MSE}\big(\mathrm{Im}\hat{\tilde S},\mathrm{Im}\tilde S\big)\Big]
+\;+\; w_m\,\mathrm{MSE}\big(|\hat S|^{p},\,|S|^{p}\big)
+\;+\; \mathcal{L}_{\text{SI-SNR}}
+\;-\; w_{\text{snr}}\,\min\!\big(\mathrm{SNR}_{\text{out}},\,30\ \mathrm{dB}\big)
+```
+
+- **Compressed-magnitude term.** Compressing by $`|S|^p`$ before the spectral MSE is a
+  **perceptual weighting**: power-law compression approximates the compressive loudness response of
+  human hearing, which is why it is the standard spectral loss in the DNS Challenge baselines and in
+  GTCRN. $`p = 0.5`$ here, against the upstream default of 0.3, weights quiet spectral detail more
+  heavily. It is not a PESQ or PMSQE surrogate.
+- **Absolute-SNR term.** SI-SNR is scale-blind and the target is absolute, so the absolute
+  $`\mathrm{SNR}_{\text{out}}`$ is added, clamped at 30 dB.
+- **Weights.** The r6/r7 configs use $`w_c = 50`$, $`w_m = 50`$, $`p = 0.5`$,
+  $`w_{\text{snr}} = 0.2`$.
+- **Speech-preservation variant** (`SpeechPreservationLoss`, not used by r7). Adds an L1 term to
+  the clean target on clean-bucket items.
+
+Comparators were `gtcrn_pretrained` / `gtcrn_finetuned`, `nlms_only`, `raw`, RNNoise and
 DeepFilterNet3 (in an isolated `.venv-dfn`). INT8 made the 52,747-parameter graph 19.7 % larger and
 1.45× slower, so it was rejected.
 
