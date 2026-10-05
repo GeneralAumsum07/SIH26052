@@ -64,7 +64,8 @@ def trial(a):
     variant = VARIANTS[a.variant]
     if a.no_amp:  # fp32 parity diagnosis: separates implementation bugs from bf16-AMP rounding
         cfg["amp"] = False
-    runtime.tune_backends(device, tf32=not variant["compile"])  # as train.main
+    # as train.main; fp32 diagnosis needs TF32 off too: cuDNN's GRU backward runs outside the model's fp32 island
+    runtime.tune_backends(device, tf32=not (variant["compile"] or a.no_amp))
     if variant["compile"] or variant["gru_kernel"] == "fused":
         from vaani.models.gru_fused import fused_available
         if not fused_available(device):
