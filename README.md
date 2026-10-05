@@ -246,10 +246,10 @@ M = {|S|}^{p}, \qquad S_c = M\, e^{j\angle S}
 ```
 
 ```math
-\mathcal{L} = w_m\,\bar{e}_{m} + w_c\,\bar{e}_{c} + w_{\text{wave}}\,\bar{e}_{\text{wave}} + w_{\text{pesq}}\,D_{\text{PESQ}}(\hat y, y) - w_{\text{snr}}\,\bar{e}_{\text{snr}}
+\mathcal{L} = w_m\,\langle e_{m}\rangle + w_c\,\langle e_{c}\rangle + w_{\text{wave}}\,\langle e_{\text{wave}}\rangle + w_{\text{pesq}}\,D_{\text{PESQ}}(\hat y, y) - w_{\text{snr}}\,\langle e_{\text{snr}}\rangle
 ```
 
-A bar is the mean over items and over bins and frames (or samples) of:
+$`\langle\cdot\rangle`$ is the mean over items and over bins and frames (or samples) of:
 
 ```math
 e_m = g_\kappa\big(M - \hat M\big)^{2}, \qquad g_\kappa(x) = \begin{cases} \kappa\,x & x > 0\ \text{(output quieter than the target)} \\ x & x \le 0 \end{cases}
