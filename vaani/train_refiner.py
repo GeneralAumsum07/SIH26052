@@ -6,7 +6,7 @@ reach the optimiser. Per-epoch model selection is a deterministic validation scr
 every bucket of data/eval_r2/val, anchor scored once on the same items): eligible epochs keep dSTOI >= -0.003 and the
 winner maximises dSNR_out + 5 * dPESQ, earliest epoch on ties. Nothing here ever touches the test split.
 """
-import hashlib, json, time
+import hashlib, json, os, time
 from pathlib import Path
 
 import numpy as np, torch, yaml
@@ -163,7 +163,7 @@ def _score_fe(model, ds, idx, cfg, device):
     return np.asarray(out, float)
 
 
-SCREEN_BATCH = 16   # clips per batched screen forward
+SCREEN_BATCH = int(os.environ.get("VAANI_SCREEN_BATCH", 16))   # clips per batched screen forward; lower it for big tiers (VRAM)
 
 
 @torch.no_grad()
