@@ -190,3 +190,28 @@ def test_overparam_graph_tracks_updated_factors():
             torch.testing.assert_close(q, p, rtol=1e-6, atol=1e-8, msg=f"weight after {step}: {name}")
     for (name, p), q in zip(m1.named_buffers(), m2.buffers()):
         torch.testing.assert_close(q, p, rtol=1e-6, atol=1e-7, msg=name)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+def test_native_domain_loss_captures_and_matches_eager():
+    """ld_s2_native failed capture on the 2026-09-30 box: its boundary weights were a host->device copy per step."""
+    from vaani import audio_contract as ac
+    from vaani.enhance_low_delay import build_fe_loss
+    from vaani.train_graph import GraphedStep
+    import copy
+    m1, _, mk = _ld_setup()
+    lf1 = build_fe_loss(dict(w_mag=0.3, w_complex=0.2, w_consistency=0.3, w_wave=0.2, w_pesq=0.001, w_snr=0.002,
+                             pesq_filters="fft"), {"audio_contract": ac.ARM_A_IDS[0]}, "native")
+    m2, lf2 = copy.deepcopy(m1), copy.deepcopy(lf1)
+    gs = GraphedStep(m2, lf2, "cuda", True, True)
+    for _ in range(3):
+        mix = torch.randn(4, 2, 16000, device="cuda") * 0.05
+        inputs = mk(mix, torch.ones(4, 16000, device="cuda"), m1.contract)
+        clean, ic = mix[:, 0] * 0.8, torch.zeros(4, dtype=torch.bool, device="cuda")
+        m1.zero_grad(set_to_none=True)
+        with torch.autocast("cuda", dtype=torch.bfloat16):
+            pred = m1(*inputs)
+        l1 = lf1(pred.float(), clean, None, ic); l1.backward()
+        m2.zero_grad(set_to_none=False)
+        l2 = gs.step(m2, inputs, clean, ic)
+        assert abs(float(l1) - float(l2)) <= 1e-6 * abs(float(l1))

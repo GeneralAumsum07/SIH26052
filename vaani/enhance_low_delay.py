@@ -263,6 +263,15 @@ class NativeFELoss(ResynthesisFELoss):
     def __init__(self, fe_loss, contract, w_consistency=0.3):
         super().__init__(fe_loss, contract)
         self.fe.w["consistency"] = w_consistency
+        self._w = {}   # (n, dtype, device) -> normalized weights; filled in eager warm-up, reused inside CUDA-graph capture
+
+    def _weights(self, n, like):
+        # a host->device copy inside capture is illegal (the 2026-09-30 box failure), so build the tensor once
+        k = (n, like.dtype, like.device)
+        if k not in self._w:
+            w = torch.as_tensor(ld.boundary_weights(n, self.contract), dtype=like.dtype, device=like.device)
+            self._w[k] = w / w.mean()
+        return self._w[k]
 
     def forward(self, pred, clean, frame_weight=None, is_clean=None, noisy=None, lengths=None, scored=None):
         if scored is not None:
@@ -273,8 +282,7 @@ class NativeFELoss(ResynthesisFELoss):
         y, mask = ld.synthesize(pred, lengths, c)
         yc = clean[:, :y.shape[-1]] * mask.to(clean.dtype)
         target = ld.analyze(yc, c)
-        w = torch.as_tensor(ld.boundary_weights(n, c), dtype=pred.dtype, device=pred.device)
-        w = (w / w.mean())[None].expand(pred.shape[0], -1)     # mean(x * w) == sum(x w) / sum(w) per bin
+        w = self._weights(n, pred)[None].expand(pred.shape[0], -1)     # mean(x * w) == sum(x w) / sum(w) per bin
         return self.fe(pred, target, w, is_clean, y_pred=y, y_true=yc, reanalyze=lambda s: ld.analyze(s, c))
 
 
