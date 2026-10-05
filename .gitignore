@@ -42,6 +42,10 @@ docs/*
 !docs/licences.md
 !docs/physical_test_schema.md
 !docs/requirements-traceability.md
+!docs/acoustic_latency.md
+
+# Board captures and measured timing reports are experiment outputs, not source.
+/pi_results/
 
 # native low-delay runtime: fetched dependencies and build trees
 native/vaani_ld/_deps/

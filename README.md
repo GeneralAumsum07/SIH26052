@@ -1,26 +1,66 @@
-# VAANI — dual-mic speech enhancement
+<div align="center">
 
-**SIH26052 · DRDO** — real-time speech enhancement for a two-microphone headset under stationary,
-changing and impulsive noise.
+# VAANI — low-delay, dual-microphone speech enhancement
 
-A time-domain NLMS front end on the reference mic feeds a GTCRN-derived network and a residual
-refiner. The shipping cascade has **52,747 parameters** and an estimated **82.460 matrix MMAC/s**
-(see [the counting convention and deployment measurements](deploy/CONTRACT.md)). The controller
-gates DSP adaptation. r7 has no trained single-channel mode: opt-in runtime guards (`--guards`,
-off by default) can switch it to a zeroed reference, and the r8 retrain trains a reference-absent
-mode into the next model (see [Retrain readiness](#retrain-readiness-r8)).
-VAANI cleans the **transmitted** voice; it is not ear-side active noise cancellation (see
-[What "ANC" means here](#what-anc-means-here)).
+**SIH 2026 · Problem SIH26052 · DRDO**<br/>
+Real-time speech enhancement for a two-microphone headset under stationary, changing and impulsive
+(gunfire, blast) noise. Adaptive NLMS filtering feeds a small streaming neural network, with
+**10 ms of algorithmic delay**.
+
+[![SIH: 2026](https://img.shields.io/badge/SIH-2026-2E7D32)](https://sih.gov.in/)
+[![Problem: SIH26052](https://img.shields.io/badge/Problem-SIH26052-1F6FEB)](docs/requirements-traceability.md)
+[![Organisation: DRDO](https://img.shields.io/badge/Organisation-DRDO-1E3A8A)](https://drdo.gov.in/drdo/)
+
+[![Language: Python 3.12](https://img.shields.io/badge/Language-Python%203.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Runtime: C++17](https://img.shields.io/badge/Runtime-C%2B%2B17-00599C?logo=cplusplus&logoColor=white)](native/vaani_ld/README.md)
+[![Deep learning: PyTorch 2.11](https://img.shields.io/badge/Deep%20learning-PyTorch%202.11-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org/)
+[![GPU: CUDA 12.8](https://img.shields.io/badge/GPU-CUDA%2012.8-76B900?logo=nvidia&logoColor=white)](https://developer.nvidia.com/cuda-toolkit)
+[![Inference: ONNX Runtime 1.30](https://img.shields.io/badge/Inference-ONNX%20Runtime%201.30-005CED?logo=onnx&logoColor=white)](https://onnxruntime.ai/)
+[![DSP JIT: Numba](https://img.shields.io/badge/DSP%20JIT-Numba-00A3E0?logo=numba&logoColor=white)](https://numba.pydata.org/)
+[![Room acoustics: pyroomacoustics](https://img.shields.io/badge/Room%20acoustics-pyroomacoustics-475569)](https://github.com/LCAV/pyroomacoustics)
+[![Packaging: uv](https://img.shields.io/badge/Packaging-uv-DE5FE9?logo=uv&logoColor=white)](https://docs.astral.sh/uv/)
+[![Tests: pytest](https://img.shields.io/badge/Tests-pytest-0A9EDC?logo=pytest&logoColor=white)](https://docs.pytest.org/)
+
+[![Edge target: Jetson AGX Orin 64GB](https://img.shields.io/badge/Edge%20target-Jetson%20AGX%20Orin%2064GB-76B900?logo=nvidia&logoColor=white)](https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/jetson-orin/)
+[![Dev board: Raspberry Pi 5](https://img.shields.io/badge/Dev%20board-Raspberry%20Pi%205-A22846?logo=raspberrypi&logoColor=white)](https://www.raspberrypi.com/products/raspberry-pi-5/)
+[![Live audio: ALSA](https://img.shields.io/badge/Live%20audio-ALSA-333333?logo=linux&logoColor=white)](https://www.alsa-project.org/)
+
+</div>
+
+---
+
+## The flagship: VAANI-LD with NLMS
+
+VAANI-LD is the r8 low-delay pipeline. It combines three parts:
+
+- a classical adaptive front end: limiter, blocking matrix and a **decoupled-cadence NLMS** that
+  estimates the noise from the reference mic;
+- a streaming **VaaniFE** network that reads the primary, the reference and the NLMS noise
+  estimate `n_hat`;
+- an asymmetric STFT: a 32 ms analysis window, an 8 ms hop and a 10 ms synthesis support. The
+  10 ms support is the whole algorithmic delay.
+
+This is the system the SIH submission proposes. In config terms it is the **Arm B contract with
+`inputs: pr_nhat`** (`configs/retraining/r8_ld_ablations/ld_b_nhat_s{0,1}.yaml`).
+
+> [!IMPORTANT]
+> **Status.** The flagship *as configured* (with `n_hat`) has **not been trained yet**. Every
+> component is built and tested: the NLMS, the front end, the network, export, the Python streaming
+> engine and the evaluation route. The same contract **without** `n_hat` (`inputs: pr`) **is**
+> trained: the Arm B Mini, 200,000 steps. The Arm B tier graphs are timed on a Raspberry Pi 5.
+> The native C++ runtime does not have an NLMS stage yet. Every result below says which variant
+> it comes from. See [Status](#status-what-is-built-trained-and-measured).
 
 | | |
 |---|---|
-| **Shipping model** | r7 cascade, exported as `deploy/r7/cascade.onnx` (sha256 `e67a2c42…`) |
-| **Checkpoints** | cascade `results_r2/runs/r7_e256_wr64_refiner/best.pt` (sha256 `121f0c3d…`), backbone `results_r2/runs/r7_e256_wr64/best.pt` (sha256 `0bea9818…`); full hashes in [`deploy/CONTRACT.md`](deploy/CONTRACT.md) |
-| **Lineage** | trained from scratch on our own data; no external pretrained weights |
-| **Size** | 50,249 (backbone) + 2,498 (refiner) = 52,747 parameters |
-| **Latency** | 32 ms algorithmic (16 ms hop + 16 ms STFT lookahead); compute deadline 16 ms per hop |
-| **Edge target** | NVIDIA Jetson AGX Orin 64GB (nothing measured on it yet); Raspberry Pi 5 is the development board |
-| **Report targets** | SNR_out > 15 dB · STOI > 0.85 · PESQ > 2.5 |
+| **Algorithmic delay** | **10 ms**: 32 ms analysis window, 8 ms hop, 10 ms synthesis support (contract `vaanife_ld_asym512_h128_s160_v1`) |
+| **Front end** | non-finite guard → reference policy → delay-free limiter → blocking matrix → NLMS `n_hat` (gated by the legacy controller) → 192 ms reconnect ramp |
+| **Network** | VaaniFE: sub-band encoder, K × (time GRU + frequency self-attention), decoder, unbounded complex mask + 3-tap deep filter over 0–4.5 kHz |
+| **Mini with `n_hat`** | 44,782 parameter entries, 89.220 MMAC/s: inside the Pi budget of 60,000 entries and 90.706 MMAC/s |
+| **Tiers** | Mini → Mid → Large → Large+ on one contract and one front end (≈30k to ≈530k parameters) |
+| **Pi 5 compute** | the four Arm B tier graphs (`pr`): **0.50 / 1.05 / 2.32 / 3.04 ms** mean per 8 ms hop on one core, native C++ runtime |
+| **Edge target** | NVIDIA Jetson AGX Orin 64GB (TensorRT). Nothing has been measured on an Orin |
+| **Design targets** | SNR_out > 15 dB · STOI > 0.85 · PESQ > 2.5 · < 15 ms latency |
 
 SNR_out is the **absolute** output SNR, not the SNR improvement:
 
@@ -28,26 +68,328 @@ SNR_out is the **absolute** output SNR, not the SNR improvement:
 \mathrm{SNR}_{\text{out}} = 10\log_{10}\frac{\lVert s\rVert^{2}}{\lVert \hat{s}-s\rVert^{2}}
 ```
 
-where $`s`$ is the clean primary-mic speech and $`\hat{s}`$ the enhanced output, so any distortion
+Here $`s`$ is the clean primary-mic speech and $`\hat{s}`$ the enhanced output, so any distortion
 counts as error.
 
-**Contents:** [Results](#results) · [What "ANC" means here](#what-anc-means-here) ·
-[Known limitations](#known-limitations) · [Setup](#setup) · [Data and eval sets](#data-and-eval-sets) ·
-[Train and evaluate](#train-and-evaluate) · [Deploy and run live](#deploy-and-run-live) ·
-[Scalable model family and AGX Orin target](#scalable-model-family-and-agx-orin-target) ·
-[Layout](#layout)
+**Scope.** VAANI cleans the **transmitted** voice before it reaches the radio. It does not cancel
+noise at the wearer's ear: no secondary-path model, no FxLMS and no error mic.
+
+## Contents
+
+- [How VAANI-LD works](#how-vaani-ld-works): [Per-hop pipeline](#per-hop-pipeline) ·
+  [Asymmetric STFT](#the-asymmetric-stft-why-10-ms) · [Decoupled-cadence NLMS](#decoupled-cadence-nlms) ·
+  [VaaniFE](#the-vaanife-network) · [Reference faults](#reference-faults-and-validity) · [Loss](#training-objective)
+- [Status: what is built, trained and measured](#status-what-is-built-trained-and-measured)
+- [Model family and edge compute](#model-family-and-edge-compute)
+- [Latency budget](#latency-budget)
+- [Results](#results): [r8 Minis](#r8-minis-val) · [Reference robustness](#reference-robustness-r7-against-r8) ·
+  [r7 baseline](#the-r7-baseline-32-ms)
+- [Known limitations](#known-limitations)
+- [Setup](#setup) · [Data](#data-and-eval-sets) · [Train](#train-and-evaluate) ·
+  [Native runtime and the Pi](#native-runtime-and-the-pi) · [Live capture](#live-capture)
+- [History: r1 to r8](#history-r1-to-r8) · [Layout](#layout) · [Licence](#licence)
+
+---
+
+## How VAANI-LD works
+
+### Per-hop pipeline
+
+```mermaid
+flowchart LR
+    subgraph mics["Headset (16 kHz)"]
+        P(["Primary mic"])
+        R(["Reference mic"])
+    end
+    subgraph fe["Front end: every 32-sample chunk, no delay"]
+        G["Non-finite guard<br/>+ reference policy"] --> LIM["Limiter"]
+        LIM --> BLK["Blocking matrix"] --> NLMS["NLMS<br/>noise estimate n_hat"]
+        LIM --> RMP["Reconnect ramp"]
+        NLMS --> RMP
+    end
+    subgraph ctl["Legacy cadence: 256 samples"]
+        FEAT["Frame features"] --> CTL["Controller"]
+    end
+    subgraph net["Every 8 ms hop"]
+        AN["Asymmetric analysis<br/>32 ms window"] --> FE["VaaniFE step<br/>mask + deep filter"]
+        V["Frame validity"] --> FE
+        FE --> SY["Synthesis<br/>10 ms support"]
+    end
+    P --> G
+    R --> G
+    RMP --> AN
+    RMP --> FEAT
+    CTL -. "adapt gate" .-> NLMS
+    G --> V
+    SY --> OUT(["Enhanced voice<br/>to the radio"])
+```
+
+The order within one hop matches `vaani/dsp/low_delay_frontend.py` and `vaani/low_delay_live.py`:
+
+1. **Guard.** Non-finite reference samples count as unavailable. A non-finite primary sample is
+   zeroed and flagged; the caller resets or bypasses on the flag.
+2. **Reference policy.** Unavailable reference samples are zeroed before the limiter.
+3. **Limiter.** The r8 limiter on 32-sample sub-blocks. It is delay-free and gives the same samples
+   whatever the hop size.
+4. **NLMS.** The blocking matrix and the NLMS run on the limited reference and produce `n_hat`. The
+   legacy features and controller gate adaptation on their own 256-sample cadence.
+5. **Ramp.** After a reference dropout, the reference and `n_hat` fade back in over 3,072 samples
+   (192 ms).
+6. **Network.** The asymmetric analysis feeds one VaaniFE step with the frame's validity. The
+   network's complex mask and deep filter are applied, then the synthesis window. The output is
+   released 10 ms after the input sample that completes it.
+
+The Python streaming engine (`LowDelayStreamEngine`) and the offline evaluation route
+(`vaani/enhance_low_delay.py`) run this same code, so training, scoring and streaming see identical
+samples (`tests/test_low_delay_stream.py`, `tests/test_low_delay_eval.py`).
+
+### The asymmetric STFT: why 10 ms
+
+A symmetric 512/256 STFT (r7 and the r8 C0 control) costs 32 ms of algorithmic delay, because
+every output sample waits for a full window. VAANI-LD splits the two windows:
+
+- the **analysis** window stays long: K = 512 samples = 32 ms, for frequency resolution;
+- the **synthesis** window is short: support L = 160 samples = 10 ms;
+- the **hop** is H = 128 samples = 8 ms. The crossfade X = L − H = 2 ms is held for the next hop.
+
+From `vaani/audio_contract.py`, with $`H < L \le 2H`$:
+
+```math
+a[n] = \begin{cases} \sin\!\big(\tfrac{\pi n}{2(K-H)}\big) & n < K-H \\ \cos\!\big(\tfrac{\pi (n-K+H)}{2H}\big) & n \ge K-H \end{cases}
+\qquad
+s[n] = \frac{p[n]}{a[n]}\ \text{where}\ a[n] > 0
+```
+
+Here $`p`$ is zero before $`K-L`$, has raised-cosine crossfades of $`X`$ samples, and overlap-adds
+to 1. A trained mask is specific to its synthesis support, so every network is stamped with its
+**audio contract**. The ONNX metadata, the `model_config.json` sidecar and the native runtime all
+refuse a graph run on any other contract.
+
+| Contract | Role | Hop | Algorithmic delay |
+|---|---|---:|---:|
+| `vaanife_r8_control_legacy512_h256_v1` | C0: r7's framing, the like-for-like control | 16 ms | 32 ms |
+| `vaanife_ld_asym512_h96_s{160,144,128}_v1` | Arm A (L = 10, 9 or 8 ms) | 6 ms | 8–10 ms |
+| **`vaanife_ld_asym512_h128_s160_v1`** | **Arm B: the flagship contract** | **8 ms** | **10 ms** |
+
+Only Arm B has room for `n_hat`: the Arm A Mini with `n_hat` has 63,798 entries, over the
+60,000-entry budget (R8 runbook, decision D5).
+
+### Decoupled-cadence NLMS
+
+The legacy pipeline runs the NLMS, the features and the controller together on 256-sample blocks,
+but the low-delay contracts use 96- or 128-sample hops. `vaani/dsp/decoupled_nlms.py` separates the
+two rates:
+
+- **NLMS** runs sample by sample on 32-sample chunks, using the unchanged kernels from
+  `vaani.dsp.nlms` and `vaani.dsp.blocking`. 32 divides every hop (96, 128, 256), so `n_hat` does
+  not depend on the hop size. The only look-ahead is inside the current chunk, so **no delay is
+  added**.
+- **Gate.** The unchanged legacy `FrameFeatures` and `Controller` run on their own 256-sample
+  cadence, using completed past frames only. The gate lags by at most one legacy frame and only
+  freezes adaptation (for example on speech or bursts); it never touches the audio path.
+- **Checks.** It is hop-invariant and causal. It is bit-exact with `pipeline.run` with the
+  controller off, and with the legacy controller on its cadence (`tests/test_decoupled_nlms.py`).
+
+`n_hat` enters the network as an extra pair of spectral planes, multiplied by reference validity
+like every other reference-derived plane. The network learns how far to trust the adaptive
+estimate.
+
+### The VaaniFE network
+
+`vaani/models/vaani_fe.py` holds a dual-mic RNNFormer-style network adapted from FastEnhancer. It
+streams one frame at a time:
+
+| Stage | What it does |
+|---|---|
+| Inputs (`pr_nhat`, 7 planes) | power-law compressed (\|X\|^0.3) real/imaginary planes of primary, reference and `n_hat`, plus validity. Reference-derived planes are multiplied by validity inside the model |
+| Encoder | frequency convolutions with time kernel 1 over **p32** sub-band windows, then L extra convolutions. A learned validity bias replaces the validity plane |
+| Blocks (× K) | a one-step **time GRU** per frequency token, then **multi-head self-attention across frequency** within the frame. The GRU hidden states (K × F × C2 floats) are the only recurrent state |
+| Decoder | mirrors the encoder back to full resolution |
+| Output | an **unbounded complex mask** on the compressed primary, which corrects phase as well as magnitude, plus a **3-tap deep filter** over the lowest 144 bins (0–4.5 kHz, lags 0, 2, 4) for the speech band |
+
+The exported step graph is loop-free: GRUs become Gemm cells, shapes are static, and there is no
+ScatterND and no Shape/Range. Every tier passes the G2 graph gate (`scripts/graph_gate.py`): fewer
+than 250 folded nodes, layout ops under 30 %, and ORT-vs-torch and streaming-vs-offline parity
+within 1e-5. That graph shape is what TensorRT and CUDA-graph capture need on the Orin. Whether a
+given TensorRT version builds these graphs is **not yet tested**.
+
+### Reference faults and validity
+
+A headset's reference mic can disconnect, clip, lag or pick up the talker. Training corrupts the
+reference on purpose:
+
+- `data.ref_corrupt` with p = 0.15, plus 0.15 fully absent;
+- fault types: dropout, burst, delay, gain, polarity, clip, unrelated noise, low-pass and speech
+  leak;
+- each fault carries a per-frame validity label.
+
+The network sees validity, so **one model is its own mono fallback**: with validity 0 it ignores
+the reference, and no second model ships. The front end freezes the NLMS while the reference is
+absent and ramps back in over 192 ms when it returns.
+
+### Training objective
+
+All r8 runs use the FE loss (`loss: fe`) computed **after re-synthesis**, through the real
+low-delay synthesis window. It has three terms:
+
+- a compressed-magnitude term;
+- an asymmetric over-suppression term (κ = 3) that charges removing speech three times more than
+  leaving noise;
+- a differentiable PESQ term (`torch_pesq`, weight 0.001).
+
+Training uses EMA weights (decay 0.999), and checkpoints are chosen by a composite val metric.
+
+<details>
+<summary><b>Training data (r8, mixer v2)</b></summary>
+
+- **Speech:** LibriSpeech (100 h), EARS, Common Voice Hindi and Lombard GRID.
+- **Noise:** ESC-50, DNS-5 Freesound, MAD (speech-filtered, `mad_v2`), the Zenodo 7004819 and
+  Cadre gunshots, DEMAND two-mic pairs, AVQ drone, C3GD and FSD50K.
+- **Synthetic impulses:** Friedlander blasts, bursts and click trains at 15–45 dB peaks
+  ([below](#artillery-and-gunshot-transients-are-synthesised-deliberately)).
+- **Mixer v2** (`MixConfig(version=2)`): SPL-calibrated battlefield scenes in which SNR is an output
+  of the scene, not an input. It adds a boom-to-reference transfer with a low-ILD tail (40 % share),
+  diffuse and near-field noise, wind, a microphone front end, Lombard tilt, clipping and the r8 RIR
+  bank.
+- **Held-out groups** for the pre-registered test set are excluded from training
+  (`configs/data/r8_heldout_exclude.json`).
+
+</details>
+
+---
+
+## Status: what is built, trained and measured
+
+| Item | State | Evidence |
+|---|---|---|
+| Decoupled-cadence NLMS for low-delay hops | **built, tested** | `vaani/dsp/decoupled_nlms.py`, `tests/test_decoupled_nlms.py` |
+| Low-delay front end, asymmetric STFT, audio contracts | **built, tested** | `vaani/dsp/low_delay_frontend.py`, `vaani/dsp/low_delay_stft.py`, `vaani/audio_contract.py`, `tests/test_low_delay_*.py` |
+| Python streaming engine and eval route (accept `pr_nhat`) | **built, tested** | `vaani/low_delay_live.py`, `vaani/enhance_low_delay.py` |
+| **Flagship: Arm B + `n_hat` (`ld_b_nhat_s{0,1}`)** | **configured, not trained** | it was queued as a P4 pilot and never reached. TBD: the full run and its comparison `arm_b_nhat_vs_arm_b` in `scripts/compare_r8_ld.py` |
+| Arm B Mini, `inputs: pr` | **trained**, 200,000 steps (7.3 h) | `r8_runs_final/r8_ld_fe_mini_armb/` (local only), 40,302 deploy parameters |
+| Arm A Mini, C0 Mini (`pr`) | **trained**, 200,000 steps each | `r8_runs_final/r8_ld_fe_mini/`, `r8_runs_final/r8_fe_mini/` (local only) |
+| Final Mid and Large+ on Arm B (`pr`) | **launched** 2026-10-05 on 2× RTX 5090 (`scripts/final_launch.sh`) | TBD: outcome not yet recorded in the repo |
+| Native C++ runtime (`native/vaani_ld`) | **built**, golden-vector parity, arm64 cross-build under qemu | `results_r2/r8_ld/native/arm64_build.json`. **No NLMS stage yet** |
+| Pi 5 timing of the Arm B tier graphs | **measured** 2026-10-05 (untrained `pr` graphs, native runtime) | board terminal output, not committed. TBD: commit `pi_results/tiers_armb/*.json` |
+| Gate 0a (latency eligibility) | **pending_board** | `results_r2/r8_ld/gate0/README.md` |
+| Acoustic mic-to-speaker delay | **not measured** | procedure in [`docs/acoustic_latency.md`](docs/acoustic_latency.md) |
+| Jetson AGX Orin / TensorRT | **not measured**, no hardware access | — |
+
+---
+
+## Model family and edge compute
+
+The tiers share the contract, the front end and the step-graph rules. Only width and depth change
+(C1 = encoder width, C2 = block width, F = frequency tokens, K = blocks, L = extra encoder stages;
+`configs/arch/vaani_fe_*.yaml`).
+
+| Tier | C1/C2/F/K/L | Parameters (Arm B graph) | Pi 5 mean / p99 / max (ms per 8 ms hop) | Intended board | Trained |
+|---|---|---:|---|---|---|
+| **Mini** | 32/24/16/2/1 | 29,597 (native tiling) · 40,302 (p32, trained) · 44,782 entries with `n_hat` | **0.50** / 0.53 / 0.70 | Raspberry Pi 5 | `pr`: yes · `pr_nhat`: no |
+| **Mid** | 48/40/32/3/2 | 107,934 · 123,910 (p32, final run) | **1.05** / 1.11 / 1.38 | Jetson AGX Orin | final run launched |
+| **Large** | 80/64/48/4/2 | 322,519 | **2.32** / 2.48 / 5.37 | Jetson AGX Orin | no |
+| **Large+** | 96/72/48/4/3 | 500,367 · 533,463 (p32, final run) | **3.04** / 3.29 / 7.30 | Jetson AGX Orin | final run launched |
+
+- **Parameter counts** are ONNX initializer entries of the folded step graphs in
+  `r8_runs_final/pi_bundle/tiers_armb/` and the Arm B Mini export (`export_report.json`). The
+  `n_hat` Mini figure is the training-form entry count from the R8 runbook (D5).
+- **How the Pi timing was taken.** `pi_bundle/tiers_armb/time_tiers.sh` ran `vld_step_bench` on a
+  Raspberry Pi 5:
+  - kernel 6.18.50+rpt-rpi-2712, not throttled (`get_throttled` 0x0);
+  - 7,500 hops per graph, one thread pinned to core 3, flush-to-zero on;
+  - random input on the 48 kHz path with the deploy resampler.
+
+  Each figure is the whole hop: resampling, front end, analysis, ORT step and synthesis. The graphs
+  are the **untrained** native-tiling tiers on `inputs: pr`, and timing does not depend on the
+  weights.
+- **Real-time scheduling.** Large+ under SCHED_FIFO with `mlockall` on core 3: mean 3.04, p99.9
+  3.44, max **3.63 ms**. The Python ORT route at 1 and 4 threads had 0 late hops.
+- **What is not timed:** the trained p32 graphs, the `n_hat` graph and the NLMS stage on the Pi.
+  The NLMS costs about 0.21 s of CPU per 4 s of audio on the dev machine, in the training loader
+  (*inferred*: about 5 % of one core; not a Pi measurement).
+- **Orin.** Every tier fits the Pi's 8 ms hop on one core. The Orin brings a GPU and TensorRT on top
+  of that. No Orin latency, power or larger-tier quality has been measured.
+
+---
+
+## Latency budget
+
+| Term | Arm B | Source |
+|---|---:|---|
+| Algorithmic delay (synthesis support) | 10.0 ms | contract |
+| Compute, worst case at Large+ under RT scheduling | 3.63 ms | Pi 5, above |
+| 48 kHz resampler pair (R1, maximum group delay over 300–4,000 Hz) | 0.407 ms | `results_r2/r8_ld/gate0/resampler.json` |
+| Converters (ADC + DAC) | 0.5 ms estimate; about 0.12 ms by datasheet for PCM512x + ICS-43434 | Gate 0a |
+
+- **Algorithmic delay plus measured compute** is 10 + 3.63 = 13.6 ms, under the 15 ms target.
+  That sum is not an acoustic measurement. Without real-time scheduling, Large+ peaked at 7.30 ms,
+  which still fits the 8 ms hop but gives 17.3 ms in the same sum.
+- **Gate 0a** uses a stricter 13.0 ms path budget. With the 0.5 ms converter estimate, L = 10 ms
+  comes to 13.007 ms, just over that budget, so the gate stays `pending_board`. A measured converter
+  path replaces the estimate (Gate 0b).
+- **End-to-end** mic-to-speaker delay has not been measured. `docs/acoustic_latency.md` is the
+  procedure: an independent two-mic recorder on one clock, and `scripts/acoustic_latency.py`.
 
 ---
 
 ## Results
 
-Every score below comes from **synthetic mixtures** made by the project's own mixer
-(`vaani/data/mixer.py`); no real noisy recording is scored on SNR, STOI or PESQ (the
-reference-free real-recording proxies are under [Known limitations](#known-limitations)).
-eval_r2 numbers are on its current
-render; eval_gen is a noise corpus never used in training. Brackets are 95 % bootstrap intervals
-over evaluation items; **bold** marks a target cleared on the interval. Rows without brackets are
-point estimates.
+Every SNR/STOI/PESQ score here comes from **synthetic mixtures** made by the project's own mixer.
+No real noisy recording is scored on those metrics. **VAL only for r8:** the eval_r2 test split is
+burned (`results_r2/r8/testset/PROTOCOL.md`). The pre-registered r8 test set (`data/eval_r8_test`,
+hash `ed024af085a2`, 2,308 items) is scored once, after val selection. **TBD: not yet scored.**
+
+### r8 Minis (val)
+
+These are the in-training val monitor rows: EMA weights, 200 dynamic val items, the last snapshot
+the scorer reached. They come from `scorer_state.json` in each local run directory. They are **not**
+the registered comparison (`scripts/compare_r8_ld.py`), which is TBD.
+
+| Run | Contract | Delay | Params (deploy) | Snapshot | SNR_out (dB) | STOI | PESQ-WB |
+|---|---|---:|---:|---:|---:|---:|---:|
+| C0 Mini (`r8_fe_mini`) | legacy 512/256 | 32 ms | 29,274 | 307 / 320 | 10.43 | 0.849 | 1.878 |
+| Arm A Mini (`r8_ld_fe_mini`) | asym, H 96, L 128 | 8 ms | 55,222 | 135 / 320 | 9.81 | 0.835 | 1.734 |
+| **Arm B Mini (`r8_ld_fe_mini_armb`)** | **asym, H 128, L 160** | **10 ms** | **40,302** | 164 / 320 | **10.05** | **0.839** | **1.785** |
+
+Reading (*inferred*; the snapshots differ and there is one seed per arm): cutting the algorithmic
+delay from 32 ms to 10 ms costs Arm B about 0.4 dB SNR_out and 0.01 STOI against C0 in this
+monitor. No Mini reaches the design targets on val. That gap is what the larger tiers and the
+`n_hat` input are meant to close, and neither has been shown to close it yet.
+
+### Reference robustness: r7 against r8
+
+A deterministic val run: 148 clips × 15 reference conditions, scored with
+`scripts/eval_refvalid.py` (committed tables:
+[`results_r2/r8/r7_refconditions_val.md`](results_r2/r8/r7_refconditions_val.md),
+[`results_r2/r8/r8_fe_mini_refconditions_val.md`](results_r2/r8/r8_fe_mini_refconditions_val.md)).
+The r8 row is the **C0 Mini**: mixer v2, reference corruption and validity, at r7's 32 ms
+framing. A clip fails if speech loss > 0.15 or SNR_out < SNR_in − 1 dB.
+
+| Condition | r7: SNR_out / STOI / fails of 148 | r8 C0 Mini: SNR_out / STOI / fails of 148 |
+|---|---|---|
+| reference present | **13.93 / 0.897 / 21** | 10.28 / 0.850 / 32 |
+| reference absent | 7.39 / 0.783 / 54 | **8.71 / 0.816 / 44** |
+| reference gain −12 dB | 5.09 / 0.822 / 16 | **9.63 / 0.843 / 33** |
+| reference low-pass | 3.27 / 0.791 / 15 | **9.08 / 0.833 / 36** |
+| talker leaks into the reference (−2 dB) | 0.13 / 0.489 / **148** | **7.99 / 0.811 / 52** |
+| equal level on both mics (ILD 0 dB) | −0.02 / 0.535 / **148** | **6.54 / 0.797 / 65** |
+
+r7 tells speech from noise almost entirely by the level difference between the mics. Its training
+mixer made that cue nearly perfect (ILD-only AUC 0.989). When the reference hears the talker, r7
+erases speech: speech loss is 0.953 under talker leak and 1.000 at ILD 0 dB. With mixer v2's
+low-ILD tail and reference faults, the r8 Mini keeps working in every condition, at the price of
+3.7 dB on the clean-reference case. The G1 data gate checks this cue before training: ILD-only AUC
+0.727 and 0.697 under mixer v2, against a 0.75 limit
+([`results_r2/r8/data_gates/`](results_r2/r8/data_gates/README.md)).
+
+### The r7 baseline (32 ms)
+
+r7 is the last model trained on the legacy pipeline. It is a GTCRN-derived backbone plus a residual
+refiner, **52,747 parameters** and 82.460 MMAC/s, exported as `deploy/r7/cascade.onnx` (sha256
+`e67a2c42…`; full hashes in [`deploy/CONTRACT.md`](deploy/CONTRACT.md)). It was trained from
+scratch on our data with no external pretrained weights. It has the best clean-reference scores in
+the repository, which is why it stays the control. Brackets are 95 % bootstrap intervals over
+items; **bold** marks a target cleared on the interval.
 
 | r7 cascade | n | SNR_out (dB) | STOI | PESQ-WB |
 |---|---|---|---|---|
@@ -55,152 +397,81 @@ point estimates.
 | eval_r2 full test split | 2,280 | 12.778 [12.520, 13.023] | **0.870** [0.866, 0.874] | 2.138 [2.106, 2.169] |
 | eval_gen, registered stationary grid | 102 | 14.295 [13.760, 14.857] | **0.932** [0.923, 0.940] | 2.490 [2.393, 2.588] |
 | eval_gen, changing grid (added to the protocol later) | 99 | **18.370** [17.497, 19.316] | **0.970** [0.964, 0.976] | **3.153** [3.026, 3.269] |
-| loud transients, input 0/5 dB (synthetic bursts at +24 / +36 dB peak re speech RMS, plus a clipped-overload bucket) | 240 | 10.866 [10.494, 11.206] | 0.848 [0.837, 0.858] | 1.797 [1.753, 1.843] |
-| matched no-burst control, input 0/5 dB (`fault_none`) | 80 | 12.771 | 0.882 | 2.103 |
+| loud transients, input 0/5 dB | 240 | 10.866 [10.494, 11.206] | 0.848 [0.837, 0.858] | 1.797 [1.753, 1.843] |
 
-Sources: [`results_r2/r7/breakdown.md`](results_r2/r7/breakdown.md) (eval_r2 rows, per class x
-input SNR, fault buckets, paired gain over raw) and
-[`results_r2/generalisation/per_grid.md`](results_r2/generalisation/per_grid.md) (eval_gen per
-grid), both regenerated by `uv run python scripts/r7_breakdown.py`. The intervals above are
-bootstrap over clips. Clips from one seed at one input SNR share speech and room across classes, so
-both files also give a scene-clustered interval (`vaani.report.cluster_ci`, clusters of snr_in and
-id), which is wider: nominal SNR_out [14.421, 15.339], full split [12.292, 13.264].
+<details>
+<summary><b>r7 details: sources, per-clip pass rates, defence noise, lineage</b></summary>
 
-- **eval_r2 nominal:** STOI clears its target on the interval; SNR and PESQ miss at the point
-  estimate.
-- **eval_gen:** the pre-registered stationary grid (`results_r2/generalisation/PROTOCOL.md`)
-  misses SNR and PESQ. Only the changing grid, added after registration, clears all three. The
-  pooled 201-clip means (16.302 / 0.951 / 2.817) mix the two grids and are not the registered
-  analysis.
-- **Transients:** all three targets fail. Against the matched no-burst control at the same input
-  SNRs, the bursts themselves cost 1.9 dB SNR_out, 0.034 STOI and 0.31 PESQ; the rest of the gap to
-  the nominal row is the lower input SNR.
-- **Per clip, not per mean:** only **35.5 %** of nominal clips meet all three targets at once,
-  **24.1 %** of the full test split, and **3.8 %** of the transient clips (row intervals
-  [31.8, 39.1], [22.5, 25.9] and [1.7, 6.2] %; `results_r2/r7/breakdown.md`). On eval_gen the
-  registered stationary grid passes on 40.2 % of clips and the changing grid on 70.7 %
-  (`results_r2/generalisation/per_grid.md`).
-- **Gain over the unprocessed input**, paired on the same nominal clips: +11.5 to +14.2 dB SNR_out
-  depending on noise class (`results_r2/r7/breakdown.md`, last table; raw passthrough scored into
-  `results_r2/r7/raw_eval_r2_relabel.csv`).
-- **What "impulsive" means in the nominal rows.** The nominal envelope's impulsive classes (416 of
-  the 617 clips) carry transients at **−6 to +12 dB peak re speech RMS** (median +3.3 dB), with no
-  room path and no soft-clip. Training draws **15-45 dB** peaks with both on. The recorded impulses
-  in the `recorded_impulsive` buckets are ESC-50 **household transients** (can opening, mouse
-  clicks, keyboard typing, fireworks, footsteps, clock ticks), not gunfire.
-- One refiner seed; the intervals describe evaluation-item variation, not training-seed
-  uncertainty.
+**Sources.** [`results_r2/r7/breakdown.md`](results_r2/r7/breakdown.md) and
+[`results_r2/generalisation/per_grid.md`](results_r2/generalisation/per_grid.md), both from
+`uv run python scripts/r7_breakdown.py`. The scene-clustered intervals are wider: nominal SNR_out
+[14.421, 15.339].
 
-Details:
+**Per clip, not per mean.** All three targets are met at once on 35.5 % of nominal clips, 24.1 %
+of the full split and 3.8 % of transient clips. On eval_gen: 40.2 % (stationary) and 70.7 %
+(changing).
 
-- **Lineage.** A backbone trained from scratch on our own data for 256 epochs (`r6_e256`),
-  warm-restarted for one further 64-epoch cycle (`r7_e256_wr64`), with the 2,498-parameter
-  residual refiner trained on top of the frozen result.
-- **Operating envelope** (based on means): starts at input SNR +5 dB for changing noise and for
-  impulsive noise at −6 to +12 dB peaks, and +10 dB for stationary noise. It says nothing about
-  loud transients, which fail all three targets at both tested input SNRs (0 and 5 dB).
-- **Against the previous candidate**, the tier46 cascade (14.753 / 0.915 / 2.473 nominal;
-  16.023 / 0.950 / 2.835 pooled eval_gen), paired per clip: SNR_out **+0.110 dB [+0.061, +0.163]**
-  on eval_r2 and **+0.278 dB [+0.185, +0.388]** on pooled eval_gen; PESQ **−0.012 [−0.021, −0.001]**
-  and **−0.019 [−0.036, −0.002]**; STOI level. The warm restart itself added +0.095 dB to the
-  backbone and +0.038 dB [+0.018, +0.060] to the cascade over `r6_e256`. r7 was scored on eval_gen
-  without the checkpoint registration the protocol asks for.
-- **Reference gain loss is unresolved.** At −12 dB reference gain the cascade's 6.862 dB is below
-  the single-channel baseline's 8.858 dB (`gtcrn_finetuned`).
-- **Measured limitations.** The controller did not improve nominal quality across three r3 seeds.
-  Removing limiter/blocking DSP improved the single tested r3 ablation, and wider wave-4 data did
-  not outperform the same-data control. The fresh r6/r7 runs kept limiter and blocking anyway, and
-  no r6/r7-era ablation has re-tested them.
+**Gain over the unprocessed input** on the same nominal clips: +11.5 to +14.2 dB SNR_out by noise
+class.
 
-> **Which eval render.** The eval_r2 numbers above are from the current render of eval_r2, re-made
-> from the crest-audit relabelled manifests (EVALSET_HASH `17a9414959bb` on Windows, `aa96a28a9955`
-> on Linux: the same audio, the hash digests float text), which every score in
-> [results_r2/r6/](results_r2/r6/) and [results_r2/r7/](results_r2/r7/) uses. The ablation
-> [matrix](results_r2/matrix.md), which separates point estimates from interval-supported passes,
-> is scored on the same render. The external baselines and WER were measured only on the earlier
-> frozen render and stay in [matrix_prerelabel.md](results_r2/matrix_prerelabel.md). The two
-> renders differ at 606 of the 617 nominal items, so scores are comparable within one render and
-> not across them.
+**Transients.** Against a matched no-burst control at the same input SNRs, the bursts themselves
+cost 1.9 dB SNR_out, 0.034 STOI and 0.31 PESQ.
 
-Further reading:
+**Defence noise** ([`results_r2/defence/table.md`](results_r2/defence/table.md), 1,296 items:
+6 categories × 6 input SNRs × 36):
+- All three targets are cleared on the interval only at the easy end: blasts and helicopter at
+  15 dB input, vehicle and siren at 10 and 15 dB.
+- Recorded gunshots never clear them.
+- No category passes at −10 to 0 dB input.
+- r7 beats raw passthrough on SNR_out and STOI in all 36 cells.
 
-- [Requirements traceability](docs/requirements-traceability.md) maps every clause of SIH26052 to
-  the file and measurement that answers it, including the clauses that are not met (board
-  deployment, a microphone prototype, power, radio integration, several named defence noises) and
-  the two that are met with negative results (quantization, pruning).
-- [Corpus licences](docs/licences.md) are generated from the manifests: three corpora in the
-  deployed recipe are non-commercial and three more have unresolved terms, which constrains a
-  transfer claim but not the research result.
+**Lineage.**
+- Backbone: 256 epochs from scratch (`r6_e256`), plus one 64-epoch warm restart (`r7_e256_wr64`).
+- Refiner: 2,498 parameters, trained on the frozen backbone.
+- Against the earlier tier46 cascade, paired per clip: SNR_out +0.110 dB [+0.061, +0.163] on
+  eval_r2.
 
----
+**Which render.** eval_r2 is the crest-audit relabelled render (`17a9414959bb` on Windows,
+`aa96a28a9955` on Linux). External baselines and WER exist only on the earlier render
+([`results_r2/matrix_prerelabel.md`](results_r2/matrix_prerelabel.md)). The two renders differ at
+606 of 617 nominal items.
 
-## What "ANC" means here
+**Test-split use.** The eval_r2 test split informed r7's launch (r6 scored 14.83 dB on it), so it is
+not an untouched held-out set for r7. r8 does not use it at all.
 
-The problem statement's title says "adaptive noise cancellation (ANC)". VAANI reads that as
-**transmit-path speech enhancement**: it cleans the wearer's voice before it is sent, which is what
-the statement's SNR, STOI and PESQ targets and its mask-estimation clause measure. It does **not**
-cancel noise at the wearer's ear.
+**r7's NLMS showed no measurable benefit.** On the earlier render, `nlms_only` scored 1.115 dB
+against 1.974 dB for raw input. Zeroing `n_hat` inside r7 cost only 0.030 dB SNR_out on val
+([`results_r2/r7/diag/README.md`](results_r2/r7/diag/README.md)). r7 relied on the ILD cue instead,
+as shown above. This is why VAANI-LD tests `n_hat` as a controlled ablation (`ld_b_nhat` against
+`ld_b`), now that mixer v2 removes the near-perfect ILD shortcut.
 
-Ear-side ANC would be a separate subsystem, and none of it exists here:
-
-- a reference mic outside the earcup and an error mic inside it, placed for the acoustic path;
-- identification of the secondary path (speaker to error mic), and tracking it as the fit changes;
-- an FxLMS-family controller running at a far lower latency than a 16 ms hop;
-- a closed-loop stability analysis and margins;
-- acoustic measurement of the attenuation actually delivered at the ear.
-
-Timing results for the communications model say nothing about hearing protection.
+</details>
 
 ---
 
 ## Known limitations
 
-- **Defence noise fails the targets below +10 dB input.** The defence-noise set
-  (local render `data/eval_defence/test`, hash `d033568bdf98`, 1,296 items: 6 categories x 6 input SNRs x 36)
-  mixes recorded test-split noise (Zenodo 7004819 and Cadre gunshots, MAD helicopter and vehicle
-  beds, ESC-50 sirens) and synthetic blasts with test speech. r7 clears all three targets on the
-  interval only at the easy end: small-arms blast, artillery blast and helicopter at 15 dB input,
-  vehicle and siren at 10 and 15 dB. Recorded gunshots never do (15 dB input: SNR_out 14.90
-  [13.26, 16.59], PESQ 2.49 [2.29, 2.72]), and no category passes at −10 to 0 dB input. r7 beats raw
-  passthrough on SNR_out and STOI in all 36 cells. Source:
-  [`results_r2/defence/table.md`](results_r2/defence/table.md), commands in
-  [`results_r2/defence/README.md`](results_r2/defence/README.md). Not covered: drone (every
-  DroneAudioDataset row is in train), NOISEX-92 (0 test rows), wind, Lombard speech; siren has only
-  two test recordings, so treat it as anecdotal.
-- **Scores with a clean reference are all synthetic mixtures.** The two-channel physics of every
-  SNR/STOI/PESQ item come from the project's mixer. The only real recordings scored are 192 MAD
-  "communication" clips and one two-channel web WAV, with reference-free proxies (DNSMOS P.835 and
-  an attenuation proxy), not SNR/STOI/PESQ. On MAD, DNSMOS OVRL is 1.79 [1.72, 1.88] raw, 2.25
-  [2.19, 2.31] for `gtcrn_pretrained`, 2.04 [1.98, 2.09] for r7 with the reference zeroed and 1.98
-  [1.96, 2.00] for r7 with the primary duplicated into the reference. That last condition cuts
-  100 % of active frames by more than 20 dB while OVRL stays near raw + 0.2, so DNSMOS alone hides
-  speech deletion. Source: [`results_r2/real/table.md`](results_r2/real/table.md), command
-  `CUDA_VISIBLE_DEVICES=-1 uv run --with numba python scripts/score_real.py --workers 2`. The web
-  WAV itself is local-only (not in the repository).
-- **The NLMS alone is worse than passthrough:** 1.115 dB SNR_out for `nlms_only` against 1.974 dB
-  for raw input (`results_r2/matrix_prerelabel.md`, earlier render).
-- **Real two-channel audio can erase speech.** A two-channel web recording whose "reference"
-  channel carried the talker at primary level had 79 % of its active frames cut by more than 20 dB
-  through r7; with the reference zeroed, 14 % (`results_r2/real/table.md`). Clean-reference tests
-  on eval_r2 val confirm the cause: r7 tells speech from noise by the level difference between the
-  mics. Speech loss is 0.054 with the talker at −8 dB in the reference, 0.744 at −4 dB and 1.000 at
-  0 dB, and 0.953 when the talker leaks into the reference at −2 dB
-  ([`results_r2/r8/r7_refconditions_val.md`](results_r2/r8/r7_refconditions_val.md), 148 clips per
-  condition). r7's training mixer made that cue almost perfect: ILD alone separates speech bins from
-  noise bins with AUC 0.989 (parametric path) and 0.874 (room path)
-  ([`results_r2/r8/data_gates/`](results_r2/r8/data_gates/README.md)). The G4 field-acceptance
-  baseline fails for r7, as expected: speech loss 1.000 on duplicated mono and 0.976 / 0.979 on
-  web-stereo constructions ([`results_r2/field/README.md`](results_r2/field/README.md)). The fix
-  (mixer v2 and a trained reference-absent mode) is in the r8 retrain, which has not run, so no
-  reference-validity Mini result exists yet.
-- **Reference failure loses to a mono model:** at −12 dB reference gain the cascade scores
-  6.862 dB against 8.858 dB for the single-channel `gtcrn_finetuned`.
-- **The enhanced output is the wearer's own voice.** `scripts/capture_loop.py` therefore plays
-  nothing by default (`--output-route off`). `--output-route far-end --out-device <listener device>`
-  sends it to a listener or uplink device; `--output-route wearer` plays it into the wearer's own
-  headset only as an explicit opt-in, with a warning. No radio or PTT path exists.
-- **The eval_r2 test split informed development.** r7 was launched after r6 scored 14.83 dB on it
-  (`configs/retraining/r7_e256_wr64.yaml`), so it is not an untouched held-out set.
+- **The flagship is untrained.** No VAANI-LD-with-NLMS result exists yet, and the gain from `n_hat`
+  on the low-delay path is unmeasured. On r7, the NLMS contribution was not measurable (above).
+- **The native runtime has no NLMS stage.** On a board today, `pr_nhat` runs only through the Python
+  engine (`LowDelayStreamEngine` with ONNX Runtime and numba). Porting the decoupled NLMS to
+  `native/vaani_ld` is TBD.
+- **No trained model meets all three targets on val.** The r8 Minis reach about 10 dB SNR_out,
+  0.84 STOI and 1.8 PESQ. r7 reaches 14.9 dB, 0.917 and 2.46 on eval_r2 nominal.
+- **Synthetic scores only.** The only real recordings scored are 192 MAD "communication" clips and
+  one two-channel web WAV, with reference-free proxies (DNSMOS P.835, attenuation). DNSMOS alone
+  can hide speech deletion ([`results_r2/real/table.md`](results_r2/real/table.md)).
+- **Waiting on the unscored r8 test set:** drone, NOISEX-92, EARS loud speech and the windy-ridge
+  scene are held out for it, so no score covers them yet.
+- **Latency is not measured end to end.** See [Latency budget](#latency-budget).
+- **Hardware.** There is no Orin access, no radio or PTT path, no power measurement, and no physical
+  microphone prototype result. The enhanced output is the wearer's own voice, so the live loop plays
+  nothing unless `--output-route` says where.
+- **Licences.** Several training corpora are non-commercial or have unresolved terms; see
+  [Licence](#licence).
+
+[`docs/requirements-traceability.md`](docs/requirements-traceability.md) maps every clause of
+SIH26052 to the file and measurement that answers it, including the clauses that are not met.
 
 ---
 
@@ -211,475 +482,193 @@ need it); CPU-only machines still install and run.
 
 ```bash
 uv sync --all-extras
-uv run pytest -q     # CUDA tests skip when no GPU; VAANI_REQUIRE_CUDA=1 makes them fail instead
+uv run pytest -q     # CUDA tests skip without a GPU; VAANI_REQUIRE_CUDA=1 makes them fail instead
 ```
 
-Last full CPU run (2026-09-24, 78 test files, each file run as
-`CUDA_VISIBLE_DEVICES=-1 uv run --with pytest --with pytest-timeout --with numba python -m pytest tests/<file>.py -q -p no:cacheprovider --timeout=600`):
-584 passed, 9 skipped (CUDA-only, or needing the rendered eval_r2 split), 1 expected xfail, 0 failed.
-Test files added after that run were run on their own by the changes that added them.
-`tests/test_r7_artifact.py` pins the shipped graph (sha256 prefix `e67a2c42`, live vs offline
-< 1e-5, engine run with torch imports blocked).
-
-- `pesq` ships as a vendored Windows wheel in `wheels/`; on Linux/macOS uv builds it from PyPI,
+- `pesq` ships as a vendored Windows wheel in `wheels/`. On Linux and macOS, uv builds it from PyPI,
   which needs a C compiler.
-- For a rented GPU host, `scripts/remote_setup.sh` does the sync; code travels as a `git bundle`
-  and data as rsync (the host is not persistent).
-- The target board does **not** use this environment — see [Deploy and run live](#deploy-and-run-live).
+- `tests/test_r7_artifact.py` pins the r7 graph: sha256 prefix `e67a2c42`, live vs offline < 1e-5,
+  and the engine run with torch imports blocked.
+- The board does **not** use this environment; see [Native runtime and the Pi](#native-runtime-and-the-pi).
 
 ---
 
 ## Data and eval sets
 
-Everything under `data/` (manifests, the RIR bank, eval renders) is git-ignored and local-only.
-The commands below regenerate it, and each eval set's hash checks the render.
+Everything under `data/` (manifests, RIR banks, eval renders) is git-ignored. The commands below
+regenerate it, and each eval set's hash checks the render.
 
 ```bash
-uv run python scripts/fetch_data.py                 # downloads what it can, writes data/manifests/*.parquet
-uv run python scripts/fetch_data.py --only demand   # rescan one source (a full rescan takes ~1 h)
+uv run python scripts/fetch_data.py                # r1-r7 corpora -> data/manifests/*.parquet
+uv run python scripts/r8_datasets.py plan          # r8 registry (configs/data/r8_datasets.yaml): sizes and order
+bash scripts/r8_box_setup.sh                       # rented GPU box: banks, mirror, datasets, pack, preflight
 ```
 
-`scripts/render_eval_sets.py` needs `--manifests` and `--split` when rendering (run bare, it
-errors), and it refuses to overwrite a frozen set (`data/eval`, `data/eval_r2*`, `data/eval_gen`).
-A missing `--bank` (default `data/rirs/bank.npz`) is an error; `--no-bank` renders on the
-parametric room path deliberately. `scripts/render_all_eval_sets.sh` holds the original recipe for
-`data/eval` and `data/eval_r2`. To reproduce a frozen set, render it to a new `--out`:
-
-```bash
-M2="data/manifests/librispeech.parquet data/manifests/esc50.parquet data/manifests/cv_hi.parquet \
-    data/manifests/mad.parquet data/manifests/dns_datasets_fullband.noise_fullband.freesound_000.tar.parquet"
-uv run python scripts/render_eval_sets.py --manifests $M2 --split val  --out <new>/eval_r2
-uv run python scripts/render_eval_sets.py --manifests $M2 --split test --out <new>/eval_r2 --faults
-# eval_gen (as scripts/run_r6.sh)
-uv run python scripts/render_eval_sets.py --manifests data/manifests/librispeech_100h.parquet \
-    data/manifests/cv_hi.parquet data/manifests/vehicle_interior.parquet --split test --out <new>/eval_gen --per-bucket 40
-uv run python scripts/verify_eval_set.py <new>/eval_r2/test <hash>
-```
-
-- The current eval_r2 render is `data/eval_r2_relabel` (hash `17a9414959bb` on Windows), made from
-  the crest-audit relabelled manifests; the earlier frozen render `data/eval_r2` is `eda217ab2a38`.
-  With today's relabelled manifests the commands above target the current render (*inferred*;
-  not re-rendered). EVALSET_HASH digests float text, so it is not portable across platforms.
-- TBD: were `data/eval_r2` and `data/eval_gen` rendered with `data/rirs/bank.npz` present? The clip
-  metadata does not record it, and it decides whether these commands need `--no-bank`.
-- TBD: did the eval_gen render pass `--classes stationary changing`? Check the render log of that run.
-
-Further eval sets, both git-ignored and rendered locally:
-
-| Set | Hash | Items | Use | Record |
-|---|---|---:|---|---|
-| `data/eval_defence/test` | `d033568bdf98` | 1,296 | defence-noise categories, scored for r7, raw and `gtcrn_pretrained` | [`results_r2/defence/README.md`](results_r2/defence/README.md) |
-| `data/eval_r8_test/test` | `ed024af085a2` | 2,308 | the pre-registered r8 test set, **not scored**; scored once after val selection | [`results_r2/r8/testset/PROTOCOL.md`](results_r2/r8/testset/PROTOCOL.md) |
-
----
-
-### Sources
-
-See `configs/data/round1.yaml` for URLs and licences.
-
-| Role | Corpora |
-|---|---|
-| Speech | LibriSpeech, Common Voice Hindi, EARS |
-| Noise | ESC-50, NOISEX-92, MAD, DNS-5 noise shards, the Zenodo 7004819 gunshot set (Kabealo et al. 2023) and DroneAudioDataset |
-| Two-mic noise | **DEMAND** — a 16-mic grid; channels 1 and 9 are 11.9 cm apart, matching the rig's 12 cm spacing, so their stereo rows are used verbatim on both mics. Not in the r7 recipe |
-| Gunshots | **Cadre Forensics** — Zoom H4N stereo, NIJ 2016-DN-BX-0183, registration required. Not in the r7 recipe; its test rows are in the defence set's `gunshot` category |
-
-Two of them need helper scripts because the hosts sit behind a login or serve odd rates:
-
-```bash
-scripts/fetch_cadre.sh     # Box shared links from the Cadre download page (log in first)
-scripts/fetch_demand.sh    # Zenodo 1227121; SCAFE only exists at 48 kHz and is resampled at scan time
-```
-
----
+| Set | Hash | Items | Use |
+|---|---|---:|---|
+| eval_r2 val | — | val split | r8 model selection; the reference-condition tables use 148 of its clips |
+| eval_r2 test (`data/eval_r2_relabel`) | `17a9414959bb` | 2,280 | r7 results; **burned**, not used by r8 |
+| `data/eval_defence/test` | `d033568bdf98` | 1,296 | defence-noise categories ([README](results_r2/defence/README.md)) |
+| `data/eval_r8_test/test` | `ed024af085a2` | 2,308 | pre-registered r8 test set, **not yet scored** ([PROTOCOL](results_r2/r8/testset/PROTOCOL.md)) |
 
 ### Artillery and gunshot transients are synthesised, deliberately
 
-The public artillery recordings we could obtain are YouTube-sourced. `scripts/crest_audit.py`
-measures MAD's `shelling` class at **12.3 dB** event crest, against **13 dB** for ordinary speech:
-after loudness normalisation and lossy coding the transient is simply gone, so `MAD_CLASS_MAP`
-labels it `changing` rather than `impulsive`.
-
-Impulsive training material is therefore generated from the **Friedlander blast wave**
-(`vaani/data/blast.py`):
+The public artillery recordings we could obtain come from YouTube. After loudness normalisation and
+lossy coding, the transient is gone: MAD's `shelling` class measures **12.3 dB** event crest,
+against **13 dB** for ordinary speech (`scripts/crest_audit.py`). Impulsive training material is
+therefore generated from the **Friedlander blast wave** (`vaani/data/blast.py`):
 
 ```math
 p(t) = P_0 \left(1 - \frac{t}{T}\right) e^{-t/T}, \qquad t \ge 0
 ```
 
-| Symbol | Meaning |
-|---|---|
-| $`P_0`$ | peak overpressure, reached effectively instantaneously |
-| $`T`$ | positive-phase duration: the zero crossing at $`t = T`$ is followed by a negative (rarefaction) phase. Roughly 0.15–0.6 ms for small arms at close range, several ms for artillery |
+$`P_0`$ is the peak overpressure. $`T`$ is the positive-phase duration: roughly 0.15–0.6 ms for
+small arms at close range, several ms for artillery. The waveform is shaped in three steps:
 
-On top of that waveform:
+1. it is synthesised at 192 kHz and decimated, so the rise does not alias;
+2. a ground reflection arrives 1–9 ms later;
+3. a distance-dependent low-pass is applied.
 
-1. **Oversampling.** It is synthesised at 192 kHz and then decimated, so the near-instantaneous
-   rise does not alias at 16 kHz.
-2. **Ground reflection.** An inverted, attenuated copy arrives 1–9 ms later, giving real gunshot
-   recordings their characteristic doublet.
-3. **Distance.** A distance-dependent first-order low-pass: high frequencies are absorbed faster,
-   so a distant shot is duller and has a lower crest.
-
-The result measures **~26.5 dB** event crest, against **15.2 dB** for the previous synthetic burst.
-Every impulse corpus must pass the crest gate before an adapter is written for it. See
-[requirements traceability §3.1](docs/requirements-traceability.md).
-
-The r7 recipe draws impulses from `blast, blast, burst, click_train` at 15-45 dB peaks, with the
-room path and soft-clip on. Two later changes, both affecting future training data only:
-
-- **Bug fix:** the ballistic N-wave of the synthetic blast was always zeroed; it is now generated
-  (`518a029`). No frozen eval set uses the blast.
-- **Physics v2** (`impulses.generate(..., physics="v2")`, default off, v1 bit-exact): a same-sign
-  ground reflection, ISO 9613-1 air absorption over distance, SPL-referenced levels (small arms
-  150-160 dB SPL at 1 m over 1-300 m; artillery by Kinney-Graham over 30-3000 m) and bursts of
-  3-30 rounds at 650-700 rpm.
-
-The defence set's `blast_small_arms` and `blast_artillery` categories use physics v2 at r7's
-training mix (15-45 dB peaks, room path and soft-clip on; the transient is peak-normalised, so v2
-sets its shape, not its level). r7 passes all three targets there only at 15 dB input
-(`results_r2/defence/table.md`). r7 was trained on v1 blasts, so these rows also measure a shift in
-blast realism.
-
----
+Physics v2 adds ISO 9613-1 air absorption, SPL-referenced levels (small arms 150–160 dB SPL at
+1 m; artillery by Kinney-Graham) and bursts of 3–30 rounds at 650–700 rpm. The result measures
+about **26.5 dB** event crest. Every impulse corpus must pass the crest gate before an adapter is
+written for it.
 
 ### Splits
 
-Manifests split by source recording (speaker / recording group), drop byte-identical files so
-nothing appears in two splits, and store posix paths so a manifest built on Windows loads on Linux.
+Manifests split by source recording (speaker or recording group) and drop byte-identical files, so
+nothing appears in two splits. They store POSIX paths, so a manifest built on Windows loads on
+Linux.
 
 ---
 
 ## Train and evaluate
 
 ```bash
+# the flagship (Arm B + n_hat), one seed
+uv run --with numba python -m vaani.train configs/retraining/r8_ld_ablations/ld_b_nhat_s0.yaml
+
+# the trained Arm B Mini recipe (inputs pr)
+uv run --with numba python -m vaani.train configs/retraining/r8_ld_fe_mini_armb.yaml
+
+# the low-delay queue on a rented box: plan, start, status, decisions
+bash scripts/run_r8.sh ld-plan
+bash scripts/run_r8.sh ld-start pilots
+bash scripts/run_r8.sh ld-status
+
+# final Mid + Large+ on Arm B, one per GPU, until stopped (or TRAIN_END="YYYY-MM-DD HH:MM" for a time box)
+bash scripts/final_launch.sh
+bash scripts/final_launch.sh status
+bash scripts/final_launch.sh export
+bash scripts/final_launch.sh stop
+```
+
+- **Configs.** `scripts/gen_r8_configs.py --low-delay` generates every low-delay config from the C0
+  config and the Gate 0a record. `--check` fails on any drift. Do not edit the generated files by
+  hand ([`r8_ld_ablations/README.md`](configs/retraining/r8_ld_ablations/README.md)).
+- **Runbook.** The decisions (D2 margins, D5 NLMS on the low-delay path, D8/D9) and every box
+  command are in [`configs/retraining/R8_RUNBOOK.md`](configs/retraining/R8_RUNBOOK.md).
+- **Resuming.** Checkpoints are written then renamed, so `export` is safe mid-run and `launch`
+  resumes from `last.pt`.
+- **Scoring.** `scripts/eval_refvalid.py --system ckpt:<run>/best.pt` gives the reference-condition
+  tables. `scripts/compare_r8_ld.py` runs the registered seed-plus-clip comparison between arms.
+- **Speed.** Training uses CUDA graphs, `torch.compile` and a fused GRU kernel; Large+ uses cuDNN
+  because the fused kernel needs more than sm_120's 99 KB of shared memory. Mixing runs on CPU
+  stream servers.
+
+<details>
+<summary><b>r1–r7 commands (legacy pipeline)</b></summary>
+
+```bash
 uv run python -m vaani.train configs/exp/vaani_full_r3_e32.yaml
 uv run python -m vaani.eval --system vaani_full_r3_e32 --split test --eval-root data/eval_r2 \
     --workers 8 --asr --asr-device cuda --dnsmos
-uv run python -m vaani.report "results_r2/r6_local/*_eval_r2.csv" "results_r2/r6/*_eval_r2.csv" \
-    "results_r2/r7/*_eval_r2.csv" --out results_r2/matrix.md --note "..."   # the notes as in the file
+uv run python -m vaani.report "results_r2/r7/*_eval_r2.csv" --out results_r2/matrix.md
+scripts/run_round.sh [1|2|3|3b|3c|3d|4]     # a whole ablation wave; resumes from last.pt
+scripts/run_optimization.sh                 # INT8 and pruning, measured and rejected on the evidence
 ```
 
-- `scripts/run_round.sh [1|2|3|3b|3c|3d|4]` runs a whole ablation wave and drops a `ROUND*_DONE`
-  marker; it resumes from `last.pt` and skips evals whose CSV exists.
-- Round 1 scored on `data/eval` (`results/`); every later round scores on the frozen
-  `data/eval_r2` test split (`results_r2/`, 2280 items) so rows stay comparable across waves.
-  **The directory suffix names the eval set, not the training round.**
-- Per-system CSVs, `matrix.md`, `matrix_prerelabel.md` and the clean test ASR reference are versioned report inputs. The
-  report records the ASR reference hash, excludes `.partial*.csv` snapshots and rejects duplicate
-  evaluation/reference keys. Eval logs, other ASR dumps and run markers are ignored.
-- WER appears in `matrix_prerelabel.md`, for systems scored on the earlier render only. The r7 CSVs have an
-  empty `asr_text` column, so no WER is reported for r7.
-- Val STOI printed during training is **not** comparable across seeds or across runs with different
-  noise pools (val is rendered from the run's own pool); only the test-split matrix is.
-- `vaani.eval --resume` keeps the rows already in `--out` and scores only the missing clips. If a
-  worker process dies, the run writes every finished row, names the last one on stderr and exits
-  with code 3; rerun the same command with `--resume`. When the eval set has an `index.csv`, the CSV
-  gains `category`, `noise_source` and `impulse_source` columns.
+The r1–r7 loss is `HybridLoss` (`vaani/losses.py`). It combines MSE on power-law compressed complex
+spectra (p = 0.5), compressed-magnitude MSE, SI-SNR, and an absolute SNR_out term clamped at
+30 dB. Comparators were `gtcrn_pretrained` / `gtcrn_finetuned`, `nlms_only`, `raw`, RNNoise and
+DeepFilterNet3 (in an isolated `.venv-dfn`). INT8 made the 52,747-parameter graph 19.7 % larger and
+1.45× slower, so it was rejected.
 
-r8 entry points (not yet run; see [Retrain readiness](#retrain-readiness-r8)):
-
-```bash
-uv run --with numba python -m vaani.train configs/retraining/r8_fe_mini.yaml       # VaaniFE Pi-Mini
-uv run --with numba python -m vaani.train configs/retraining/r8_refvalid_v2.yaml   # fallback: r7-shaped C16 + validity
-```
-
-New config keys, all absent from the r7 configs, which keep r7's behaviour bit-exact: `loss: fe` with
-`loss_cfg`, `ema {decay, warmup}`, `val.select stoi|composite` with `val.composite {...}`,
-`data.exclude_groups_file`, `data.scene_weights`, `data.ref_corrupt`, `dsp.ref_policy`,
-`model_cfg.ref_validity` and `log_every`. The 22 ablation pilots are in
-[`configs/retraining/r8_ablations/`](configs/retraining/r8_ablations/README.md).
+</details>
 
 ---
 
-### Loss
+## Native runtime and the Pi
 
-`HybridLoss` (`vaani/losses.py`) works on power-law **compressed** spectra. Writing
-$`S = |S|\,e^{j\angle S}`$ for a clean STFT and $`\hat{S}`$ for the estimate:
+`native/vaani_ld` is a C++17 runtime for the low-delay contracts. It runs the following stages per
+hop, all checked against the Python golden vectors in `deploy/dsp_reference/vectors_ld/`:
 
-```math
-\tilde{S} = |S|^{p}\, e^{j\angle S}
+1. the R0/R1/R2 resamplers;
+2. the front end (non-finite guard, reference policy, limiter and ramp);
+3. frame validity;
+4. the asymmetric analysis (PocketFFT);
+5. the ONNX Runtime 1.30 step;
+6. the synthesis.
+
+```bash
+native/vaani_ld/deps/fetch_ort.sh                                   # x64 or aarch64, sha256-checked
+cmake -S native/vaani_ld -B native/vaani_ld/build -DCMAKE_BUILD_TYPE=Release
+cmake --build native/vaani_ld/build -j
+native/vaani_ld/build/vaani_ld_run wav --model M.folded.onnx --contract vaanife_ld_asym512_h128_s160_v1 \
+    --in mix.wav --out enhanced.wav
+native/vaani_ld/build/vld_step_bench --model M.folded.onnx --contract vaanife_ld_asym512_h128_s160_v1 \
+    --hops 7500 --input random --fz on --resampler deploy/resampler/r1_minphase_kaiser193_v1.json --cpu 3
 ```
 
-```math
-\mathcal{L} \;=\;
-w_c\Big[\mathrm{MSE}\big(\mathrm{Re}\hat{\tilde S},\mathrm{Re}\tilde S\big)
-      + \mathrm{MSE}\big(\mathrm{Im}\hat{\tilde S},\mathrm{Im}\tilde S\big)\Big]
-\;+\; w_m\,\mathrm{MSE}\big(|\hat S|^{p},\,|S|^{p}\big)
-\;+\; \mathcal{L}_{\text{SI-SNR}}
-\;-\; w_{\text{snr}}\,\min\!\big(\mathrm{SNR}_{\text{out}},\,30\ \mathrm{dB}\big)
-```
-
-- **Compressed-magnitude term.** Compressing by $`|S|^p`$ before the spectral MSE is a
-  **perceptual weighting**: power-law compression approximates the compressive loudness response of
-  human hearing, which is why it is the standard spectral loss in the DNS Challenge baselines and in
-  GTCRN. $`p = 0.5`$ here, against the upstream default of 0.3, weights quiet spectral detail more
-  heavily. It is not a PESQ or PMSQE surrogate.
-- **Absolute-SNR term.** SI-SNR is scale-blind and the target is absolute, so the absolute
-  $`\mathrm{SNR}_{\text{out}}`$ is added, clamped at 30 dB.
-- **Weights.** The r6/r7 configs use $`w_c = 50`$, $`w_m = 50`$, $`p = 0.5`$,
-  $`w_{\text{snr}} = 0.2`$.
-- **Speech-preservation variant** (`SpeechPreservationLoss`, not used by r7). Adds an L1 term to
-  the clean target on clean-bucket items.
+- **`vaani_ld_run live`** runs ALSA duplex on linked hardware PCMs. It uses SCHED_FIFO,
+  `mlockall`, a pinned CPU and denormal flushing. A deadline miss falls back to a
+  **delay-matched bypass**, so the radio never goes silent. Each run writes a JSON report with
+  `qualifies`.
+- **`vaani_ld_run simulate`** models early, late and jittered step times and refuses settings that
+  cannot meet the budget.
+- **No allocations.** The DSP makes no allocations after warm-up. ONNX Runtime's `Run` does
+  allocate, and the count is reported.
+- **Missing pieces.** The NLMS stage is TBD, and the runtime guards (duplicated-mono, never-vanish)
+  exist only in Python.
+- **Pi setup.** `scripts/pi_setup.sh` builds `.venv-board`: numpy, onnxruntime and numba, with no
+  torch. [`deploy/PI_SETUP.md`](deploy/PI_SETUP.md) explains each step.
 
 ---
 
-### Optimization (ONNX, INT8, pruning)
+## Live capture
 
 ```bash
-scripts/run_optimization.sh          # ~1.5 h: quantize, prune, evaluate each on the frozen split
-```
+# low-delay graph through the Python engine (supports inputs pr and pr_nhat)
+python -c "from vaani.low_delay_live import LowDelayStreamEngine; help(LowDelayStreamEngine.from_config)"
 
-Writes `results_r2/optim/optimization.md`. Both INT8 dynamic quantization and global magnitude
-pruning were implemented, measured on the tier46 cascade and **rejected on the evidence**. At
-52,747 parameters the graph's bytes are mostly node protobuf rather than weights, so INT8 makes the
-file larger (+19.7 %) and slower (×1.45; `deploy/tier46/int8_report.json`), and there is too
-little learned capacity for pruning to give up.
-
-`vaani.eval --system onnx:<graph>@<ckpt>` scores an exported graph directly, so an optimized export
-is measured in SNR/STOI/PESQ rather than only in bytes.
-
----
-
-### Comparators
-
-| System | What it is |
-|---|---|
-| `gtcrn_pretrained` / `gtcrn_finetuned` | the parent architecture |
-| `nlms_only`, `raw` | DSP-only and passthrough floors |
-| `deepfilternet3` | mono 48 kHz, ~45× the parameter budget. Lives in an isolated `.venv-dfn` (py3.11, `deepfilternet==0.5.6`, `torch==2.0.1` cpu, `soundfile`) because its pins conflict with the main env; `scripts/dfn_worker.py` loads it once per eval process |
-
-The external baselines were scored on the earlier render only, and `gtcrn_finetuned` had 12+6
-training epochs against 256+64 for VAANI. DeepFilterNet3 beats VAANI on DNSMOS (OVRL 2.851 against
-2.702 for tier46, `results_r2/matrix_prerelabel.md`), while tier46 leads on SNR_out, STOI and PESQ there.
-
----
-
-## Deploy and run live
-
-The board runs the exported ONNX graph with **no deep-learning framework**: numpy, onnxruntime and
-numba only ([`requirements-deploy.txt`](requirements-deploy.txt)).
-
-```bash
-bash scripts/pi_setup.sh            # on the Pi: .venv-board, pinned binary wheels, torch-free import check, r7 hash check
-bash scripts/pi_setup.sh --timing   # the same, then scripts/board_timing.py -> deploy/board_timing.json
-```
-
-[`deploy/PI_SETUP.md`](deploy/PI_SETUP.md) explains each step. Raspberry Pi OS marks the system
-Python externally managed (PEP 668), so the script builds a venv on Python 3.12 and installs
-[`requirements-deploy.txt`](requirements-deploy.txt) binary-only (pins: numpy 2.5.3, onnxruntime
-1.30.0, numba 0.67.0, llvmlite 0.49.0, from `uv.lock`). The aarch64 wheels are **unverified on a
-board**: no Pi install, timing run or live capture has been recorded with this script. TBD: which
-board and OS (Pi 4 or Pi 5; Bookworm or Trixie).
-
-**Per-hop timing.** `scripts/hop_benchmark.py` times the complete hop exactly as the live loop runs
-it (limiter, blocking matrix, NLMS, features, controller, STFT, model, iSTFT and overlap-add,
-optionally the 48 kHz resamplers), stage by stage, against the 16 ms deadline.
-`scripts/board_timing.py` is a thin wrapper over it for the board:
-
-```bash
-python scripts/board_timing.py --seconds 30 --resample48 --out deploy/board_timing.json
-python scripts/hop_benchmark.py --models r7,fe-mini,fe-mid,fe-large,fe-large_plus --backends ort-cpu,torch-cpu --out hop.json
-```
-
-No reportable complete-hop number exists yet. The only runs were smokes on the shared, loaded
-development laptop, kept outside the repository and labelled non-reportable in their JSON. TBD:
-an idle-laptop run and a board run, committed with their JSON. The `fe-*` rows are untrained
-exports and measure cost only.
-
-`scripts/capture_loop.py` runs the whole system live, one 16 ms hop at a time. It captures both mics
-through ALSA as one interleaved stream on one clock and runs `vaani.live.StreamEngine`. The output
-is the wearer's own voice, so nothing is played unless `--output-route` says where:
-
-```bash
-# live: ICS-43434 pair on the Pi's I2S bus, a listener's device on a USB sound card
+# r7 / C0 graphs: live on ALSA, or block by block on a WAV file
 python scripts/capture_loop.py --device hw:0,0 --output-route far-end --out-device plughw:1,0
-
-# no microphones yet: feed a recorded pair through the ALSA loopback card
-python scripts/capture_loop.py --device hw:Loopback,1,0 --format S16_LE --output-route far-end --out-device plughw:1,0
-
-# any OS, no audio hardware: the same block-by-block code path on a WAV file
 python scripts/capture_loop.py --in-wav mix.wav --out-wav enhanced.wav
 
-# a VaaniFE export: the backend is picked from the graph's input names
-python scripts/capture_loop.py --onnx <tier>.folded.onnx --config <dir>/model_config.json --in-wav mix.wav --out-wav out.wav
+# score enhanced WAVs brought back from the Pi
+python scripts/score_pi_outputs.py pi_results/audio --clips r8_runs_final/pi_bundle/clips --out pi_results/scores.csv
 ```
 
-- **Enter** toggles enhanced ↔ bypass for A/B demos. `--record-dir` keeps the capture and the
-  output (bounded, streamed to disk) so a live session can be scored afterwards.
-- `--guards` (off by default) turns on the runtime guards in `vaani/guards.py`. A duplicated-mono
-  detector (|corr| > 0.97 and |ILD| < 1 dB for 0.5 s) and a never-vanish guard (speech-band output
-  more than 25 dB below input for over 0.5 s of detected speech) switch to the reference-absent
-  path and log a fallback event. For r7 that path is a zeroed reference. The thresholds are the
-  plan's and are not tuned on real audio.
-- Overload never re-emits old audio: a bounded hop queue drops the oldest hops (`--queue-hops 8`)
-  and bypass hops are logged (`--bypass-depth 4`). File mode flushes the tail, so output length
-  equals input length.
-- **numba is required on the board.** Without it the NLMS runs as the pure-Python reference, which
-  alone costs more than the 16 ms hop on a loaded laptop, so the live loop refuses to start unless
-  forced with `--allow-slow-dsp`.
-- The 48 kHz path adds 4 ms of resampler group delay on top of the 32 ms algorithmic latency,
-  before audio buffering and compute. End-to-end mic-to-ear latency has not been measured.
-- `deploy/r7/model_config.json` carries the DSP configuration the weights were trained behind,
-  because the graph does not encode it and the board cannot read a checkpoint without torch.
-- `tests/test_live.py` holds the streaming engine to the offline eval path within 1e-5, so a live
-  run is the same system the eval scores.
-- The per-frame contract (inputs, cache shapes, order of operations) is in
-  [`deploy/CONTRACT.md`](deploy/CONTRACT.md).
+- **Engines by contract.** `LowDelayStreamEngine.from_config(onnx, model_config)` runs low-delay
+  graphs, and `vaani.live.StreamEngine` runs the 16 ms-hop C0 and r7 graphs. Each one refuses the
+  other's contracts. TBD: a low-delay CLI equivalent of `capture_loop.py`.
+- **Live-loop controls.** **Enter** toggles enhanced and bypass for A/B demos. `--record-dir` keeps
+  the capture and the output. `--guards` turns on the duplicated-mono and never-vanish guards; they
+  are off by default and their thresholds are not tuned on real audio.
+- **Hardware.** The live examples assume an ICS-43434 pair on the Pi's I²S bus and a listener device
+  on a USB sound card.
 
 ---
 
-## Scalable model family and AGX Orin target
+## History: r1 to r8
 
-On 24 Sep 2026 the deployment target was confirmed as the **NVIDIA Jetson AGX Orin 64GB**, the
-board the problem statement names ("Jetson AGX Orin or similar"). There is no Orin hardware access,
-and nothing has been measured on one. The **Raspberry Pi 5** is the development board on which
-the r7 graph has run.
-
-**The chosen family is VaaniFE** ([`vaani/models/vaani_fe.py`](vaani/models/vaani_fe.py)), a
-dual-mic RNNFormer-style network adapted from FastEnhancer. Only its smallest tier, the
-**Pi-Mini, is to be trained**, in the r8 retrain, which has not run. The Orin tiers are
-**projections**: architecture definitions with parameter and MAC counts, graph checks on untrained
-exports and laptop timing. No Orin tier is trained, and none carries a latency, power or quality
-claim.
-
-How VaaniFE differs from r7:
-
-- **Per frame:** frequency convolutions with time kernel 1, then K blocks. Each block runs a
-  one-step time GRU over F frequency tokens, followed by multi-head self-attention across the F
-  tokens of the same frame. The GRU hidden states (K x F x C2 floats) are the only state.
-- **Inputs** (default `pr`): power-law compressed (|X|^0.3) primary and reference spectra plus a
-  per-frame validity plane. Reference-derived planes are multiplied by validity inside the model,
-  so validity 0 ignores the reference. The same network, trained with reference dropout, is the
-  mono fallback; there is no second model to ship. n_hat and a bounded level-difference plane are
-  ablation inputs (`pr_nhat`, `pr_pld`).
-- **Output:** an unbounded complex mask on the compressed primary (r7's mask is bounded). There is
-  no deep-filter head by default (a 0-2 kHz deep filter is an ablation) and no refiner.
-- **Knobs:** C1 = encoder/decoder conv width, C2 = block width, F = frequency tokens, K = blocks,
-  L = extra encoder convs (and matching decoder stages). Tier files: `configs/arch/vaani_fe_*.yaml`.
-
-| Tier | Status | C1/C2/F/K/L | Params (deploy / training form) | MMAC/s | FP32 state | ONNX nodes (folded) | G2 | Laptop ORT CPU mean / p99 (ms), idle |
-|---|---|---|---:|---:|---:|---:|---|---:|
-| Pi-Mini | to be trained in r8 | 32/24/16/2/1 | 29,274 / 29,914 | 69.76 | 3,072 B | 116 | pass | 0.29 / 0.64 |
-| Orin-Mid | projection, not trained | 48/40/32/3/2 | 107,610 / 109,146 | 320.384 | 15,360 B | 158 | pass | 0.44 / 0.62 |
-| Orin-Large | projection, not trained | 80/64/48/4/2 | 322,194 / 324,754 | 1,156.608 | 49,152 B | 193 | pass | 1.05 / 1.61 |
-| Orin-Large+ | projection, not trained | 96/72/48/4/3 | 500,042 / 504,266 | 1,827.84 | 55,296 B | 200 | pass | not measured |
-| r7 cascade (shipping) | trained | GTCRN C16 + refiner | 52,747 | 82.460 | 115,368 B | 539 | **fail** | 1.034 / 1.732 |
-
-- **Counts, state, nodes and G2** come from
-  [`results_r2/fe_tiers/tiers.json`](results_r2/fe_tiers/README.md), produced by
-  `.venv/Scripts/python.exe scripts/fe_tiers.py --seed 0 --hops 500` on untrained, seeded exports.
-  "Deploy" params are the exported step graph with BatchNorm folded; "training form" counts the
-  unfolded BN entries. The Mini is under the spec budget of 60,000 entries and 90.706 MMAC/s in both
-  forms (`tests/test_vaani_fe.py` asserts it). r7's 115,368 B is its explicit cache state
-  ([`results_r2/r8/budget.json`](results_r2/r8/budget.md), `state_entries` x 4).
-- **G2 graph gate** (`python scripts/graph_gate.py <onnx> --tier <t>`; exits 1 on failure): folded
-  nodes < 250; no Loop, Scan, If, GRU, LSTM or RNN nodes; no ScatterND; no symbolic dims and no
-  Shape/Range nodes; layout ops under 30 % of nodes; ORT-vs-torch FP32 parity and
-  streaming-vs-offline both within 1e-5. All four tiers pass (layout share 0.259-0.264, parity
-  error at most 4.5e-8). r7's `deploy/r7/cascade.onnx` fails on node count, loops (14 GRU),
-  ScatterND (18) and layout share (0.586). The 30-step r8 smoke checkpoint of the Mini also exported
-  and passed G2 (116 nodes); those are smoke weights, not a trained model.
-- **Laptop timing, labelled as such.** The VaaniFE figures are the idle-machine measurements of the
-  untrained research prototype (plan 11.3; ORT CPU, one thread). Their source JSON is local-only,
-  not in the repository. The committed re-run in `tiers.json` was taken on a loaded, shared machine
-  and is a non-reportable smoke (Mini 0.39 / 1.10 ms). The r7 row is the trained graph on ORT 1.30.0,
-  one thread, 100 warm-up plus 2,000 timed hops on synthetic inputs (median 0.981 ms, max 2.447 ms);
-  its source, `docs/research/2026-09-24/scaling_profile.json`, is also local-only. The cloud-x86
-  figure in `deploy/r7/cascade_parity_timing.json` (1.135 ms mean, ORT 1.25) is a different machine
-  and software stack. All of these are model-only: no DSP, FFT or audio I/O, and neither a Pi nor
-  an Orin result. TBD: an idle re-run of `scripts/fe_tiers.py`, committed.
-- **Complete hop:** not measured reportably (see [Deploy and run live](#deploy-and-run-live)).
-
-Why VaaniFE rather than a wider r7:
-
-- **Width scaling of r7 is dispatch-bound on a CPU.** Its folded graph has the same node count at
-  every width, so MACs grow much faster than time. The r7 width profiles below were instantiated
-  and counted as **measurements only**; they are not the scaling path, and only C16 (r7's own
-  shape) is trained.
-- **Graph rules for the GPU path.** VaaniFE exports one-step GRUs as Gemm cells, has no
-  frequency-axis recurrence, and uses static shapes (Slice+Concat, not ScatterND, for the optional
-  deep-filter frame cache). TensorRT lowers ONNX GRU nodes to loops, which block CUDA-graph capture;
-  r7's graph has 14 GRU and 18 ScatterND nodes. Whether a given TensorRT version builds the VaaniFE
-  graphs is untested (no TensorRT is installed).
-- **Quality scaling is untested on our data.** The only evidence that quality grows with tier size
-  is FastEnhancer's published curve on VoiceBank-DEMAND. Whether the larger tiers help on defence
-  noise is unknown without training one.
-- **Fallback.** If the VaaniFE Pi-Mini fails its gates, the reference-validity r7-shaped Mini
-  (C16) is the fallback, and r7 stays the shipping control either way. The Orin projection would
-  then have no family validated at Mini size.
-
-r7 width profiles with the reference-validity input (untrained except C16; counts, not the chosen
-family), from [`results_r2/r8/budget.md`](results_r2/r8/budget.md), command
-`python scripts/audit_budget.py`:
-
-| Profile | Total entries | Learnable entries | Matrix MMAC/s | FP32 explicit state (bytes) | Within 60,000 / 90.706 |
-|---|---:|---:|---:|---:|---|
-| C16, r7 (trained, shipping) | 52,747 | 28,171 | 82.460 | 115,368 | yes |
-| C16 + ref_validity, the fallback Mini (not yet trained) | 53,147 | 28,571 | 85.621 | 115,368 | yes |
-| C32 + ref_validity (untrained) | 110,683 | 86,107 | 152.064 | 187,560 | no |
-| C64 + ref_validity (untrained) | 320,219 | 295,643 | 387.622 | 331,944 | no |
-| C96 + ref_validity (untrained) | 655,707 | 631,131 | 760.076 | 476,328 | no |
-
-- "Total entries" includes the fixed ERB matrices (24,576 entries), which are not learned. MACs
-  count dense Conv/Linear/GRU matrix work with padding, using the same convention as
-  `deploy/CONTRACT.md`; they exclude activations, normalization, elementwise ops, DSP and FFT. State
-  plus weights is not total runtime RAM. The reference-validity extension is a zero-initialised
-  Conv2d(5, 16, (1, 5)) with no bias: 400 entries and 26,000 MAC per hop at C16.
-- The refiner is 2,498 entries but 39.578 of r7's 82.460 MMAC/s, because it runs densely over all
-  257 bins. A small parameter count does not mean small compute.
-
-The claim this supports, and no more:
-
-> Our current trained baseline has 52,747 total parameter entries and a stateful streaming
-> implementation. The next Mini, the smallest tier of the VaaniFE family, validates sensor-failure
-> handling and the deployment contract. AGX Orin 64GB is the selected deployment target. Larger
-> tiers are projections from counts, graph checks and laptop timing; no Orin latency, power or
-> larger-model quality is measured, and no larger model is trained.
-
-Every Orin figure in this repository is a projection or a laptop measurement. More compute does not
-by itself fix the reference-fault and transient failures above.
-
-### The "hybrid" question
-
-The problem statement asks for adaptive filtering combined with deep learning. r7 has an NLMS front
-end, but its contribution is not demonstrated: `nlms_only` is worse than passthrough (1.115 against
-1.974 dB SNR_out, `results_r2/matrix_prerelabel.md`, earlier render), and zeroing n_hat in r7 costs
-0.030 dB [0.008, 0.051] SNR_out and 0.0003 STOI on eval_r2 val
-([`results_r2/r7/diag/README.md`](results_r2/r7/diag/README.md)). Zeroing the reference costs
-7.094 dB. A dropout-safe NLMS kernel now exists (`dsp.ref_policy`, default off), and the NLMS
-primary-delay option stays at 0 because the pipeline does not realign the primary.
-
-The VaaniFE Mini is planned with a classical front end (limiter, reference gain, validity, runtime
-guards) feeding a learned complex mask. Its default inputs (`pr`) do not include n_hat, and
-`r8_fe_mini` does not run the NLMS. Ablation 2 (`pr_nhat`) measures whether the fixed n_hat helps.
-**TBD (Rachit): does the NLMS stay in the default path?** Until that ablation runs, "hybrid" for r8
-means the classical front end plus the learned mask, not an adaptive filter shown to help.
-
-### Retrain readiness (r8)
-
-The r8 retrain has **not run**. It is set up to run on rented GPUs from one runbook, and every
-default-off change keeps r7 bit-exact.
-
-| Item | State | Where |
+| Round | What changed | Outcome |
 |---|---|---|
-| Runbook | exact commands for environment, G1, pilots, full runs, val selection, G3/G4, G2 export, G6 | [`configs/retraining/R8_RUNBOOK.md`](configs/retraining/R8_RUNBOOK.md) |
-| Configs | `r8_fe_mini.yaml` (VaaniFE Pi-Mini, FE loss, EMA, composite val selection), `r8_refvalid_v2.yaml` (fallback: C16 + ref_validity on mixer v2, warm start from r7's backbone), 22 ablation pilots at 15 % of the schedule | `configs/retraining/`, [`r8_ablations/README.md`](configs/retraining/r8_ablations/README.md) |
-| G1 data gate | **pass**. ILD-only speech-vs-noise AUC is 0.727 (parametric) and 0.697 (room) with mixer v2, against the 0.75 gate; mixer v1 was 0.989 / 0.874. Margin is thin: AUC varies by about ±0.03 between samples (*inferred*) | [`results_r2/r8/data_gates/README.md`](results_r2/r8/data_gates/README.md), `uv run --with numba python scripts/data_gates.py --versions 1 2 --items 48 --seed 55` |
-| Mixer v2 | `MixConfig(version=2)`, default off (v1 bit-exact): SPL-calibrated scenes where SNR is an output, boom-to-reference transfer with a low-ILD, mono and produced-stereo tail, diffuse and near-field noise, wind, a microphone front end, Lombard tilt; 8 weighted battlefield scenes (`vaani/data/scenes.py`); speech-free MAD manifest (Silero VAD flagged 477 of 6,483 MAD noise clips) | `vaani/data/mixer.py`, `vaani/data/calib.py`, [`results_r2/r8/mad_speech_filter.json`](results_r2/r8/mad_speech_filter.json) |
-| Reference faults | M9 augmentation (`data.ref_corrupt`: dropout, burst, delay, gain, polarity, clip, unrelated noise, low-pass, speech leak) with validity labels; r7's baseline under 15 reference conditions on val | [`results_r2/r8/r7_refconditions_val.md`](results_r2/r8/r7_refconditions_val.md) |
-| Field acceptance (G4) | tool `scripts/field_accept.py`; **r7 fails Part 1 and Part 2**: speech loss 1.000 on duplicated mono (M) and 0.976 / 0.979 on web-stereo (W); Part 2's longest stretch attenuated by > 30 dB is 2.38 s against a 1.0 s limit. Whisper and VAD rows are TBD (faster-whisper not importable) | [`results_r2/field/README.md`](results_r2/field/README.md) |
-| Pre-registered test set (G6) | `data/eval_r8_test/test`, hash `ed024af085a2`, 2,308 items: v1 nominal, defence categories, held-out drone and NOISEX, EARS loud speech, faults, mixer-v2 scenes. Fresh seeds and an eval-only 1,000-room RIR bank. Scored once, after val selection; eval_r2 test is used for nothing in r8 | [`results_r2/r8/testset/PROTOCOL.md`](results_r2/r8/testset/PROTOCOL.md) |
-| Held-out groups | drone (52 recordings), NOISEX `buccaneer2` / `m109` / `destroyerengine`, EARS speaker p004, MAD test videos; dropped from r8 train/val by `data.exclude_groups_file` (a missing file only warns) | [`configs/data/r8_heldout_exclude.json`](configs/data/r8_heldout_exclude.json) |
-| Laptop smokes (non-reportable) | 30-step smokes of both configs with resume; the Mini's smoke export passes G2. Loader 16.5-17.3 items/s per worker (fe_mini), GPU step 68 ms at B 32 x 4 s (RTX 5060, bf16) | [`results_r2/r8/loader_bench.json`](results_r2/r8/loader_bench.json), [`results_r2/r8/step_time.json`](results_r2/r8/step_time.json) |
-
-Open decisions, all Rachit's: the rental's vCPU count, the final selection metric (`composite` or
-`stoi`), whether NLMS stays in the default path, whether to install torch_pesq (until then the FE
-loss's PESQ weight is 0), and dataset downloads (Lombard GRID, DEMAND pairs, the AudioSet label
-CSV). The refvalid C16 exports with a per-frame `ref_avail` graph input
-(`vaani.export.export_refvalid`, parity in `vaani.export.refvalid_parity`, tested in `tests/test_export.py`);
-`OrtBackend` feeds it and `scripts/eval_refvalid.py`'s `onnx:` runner scores it. It keeps r7's graph structure,
-so like r7 it is a CPU/ORT (Pi) graph, not a G2/TensorRT candidate.
+| r1–r4 | NLMS + GTCRN-derived network, controller, refiner and data ablations | built the eval stack; INT8 and pruning rejected |
+| r5–r6 | width, SNR curriculum and refiner sweeps; 256-epoch backbone | r6_e256 |
+| **r7** | warm restart + residual refiner, 52,747 parameters, 32 ms | shipping control; strong with a clean reference, fails when the reference hears the talker |
+| r8 C0 | VaaniFE Mini, mixer v2, reference faults and validity, FE loss, 32 ms | robust to reference faults; −3.7 dB on a clean reference vs r7 |
+| **r8-LD** | asymmetric STFT (Arm A 8 ms, **Arm B 10 ms**), native C++ runtime, decoupled NLMS, four tiers | Arm B Mini trained; tiers timed on the Pi; **NLMS arm and larger tiers are the next runs** |
 
 ---
 
@@ -687,19 +676,30 @@ so like r7 it is a CPU/ORT (Pi) graph, not a G2/TensorRT candidate.
 
 | Path | Contents |
 |---|---|
-| `vaani/dsp/` | NLMS, frame features, controller; `deploy/dsp_reference/vectors/` holds float32 golden vectors that `tests/test_golden_vectors.py` replays |
-| `vaani/data/` | manifests, sources (one `scan_*` per corpus), mixer (v1 and the default-off v2), SPL calibration (`calib.py`), battlefield scenes (`scenes.py`), impulse synthesis, datasets |
-| `vaani/models/` | VaaniNet (r7, with the default-off `ref_validity` input), VaaniFE (`vaani_fe.py`, the r8 family), the GTCRN baseline, comparator wrappers |
-| `vaani/eval.py`, `vaani/report.py`, `vaani/metrics.py` | bucketed metrics with bootstrap CIs |
-| `vaani/export.py`, `vaani/quantize.py`, `vaani/prune.py` | streaming ONNX export, INT8 dynamic quantization and magnitude pruning, each with its own measurement report |
-| `vaani/live.py`, `vaani/backend.py`, `vaani/guards.py` | the streaming runtime (DSP front end, model step, overlap-add, one hop at a time), the versioned stream state and ONNX/Torch step backends, and the runtime guards |
-| `deploy/r7/` | the shipping graph, its DSP config and its parity/timing record |
-| `results_r2/runs/r7_e256_wr64*/` | the r7 backbone and cascade checkpoints the shipping graph was exported from |
-| `results_r2/r7/` | r7 per-clip result CSVs on eval_r2 and eval_gen, the per-class breakdown and the val diagnostics (`diag/`) |
-| `results_r2/defence/`, `results_r2/real/`, `results_r2/field/` | defence-noise scores, real-recording proxies, the G4 field-acceptance baseline |
-| `results_r2/fe_tiers/`, `results_r2/r8/` | VaaniFE tier counts and G2, the budget audit, r8 data gates, loader and step-time smokes, the pre-registered r8 test set |
-| `configs/exp/`, `configs/retraining/`, `configs/arch/` | one yaml per run; `R8_RUNBOOK.md`; VaaniFE tier architectures |
-| `configs/data/` | corpus URLs, licences, splits, the r8 held-out groups |
-| `scripts/` | fetchers, round runner, live capture loop, complete-hop and board timing, Pi setup, diagnostics (`ceiling_analysis.py`, `mask_phase_probe.py`, `diag_*.py`, `r7_breakdown.py`), gates (`data_gates.py`, `graph_gate.py`, `field_accept.py`) |
-| `docs/` | requirements traceability, corpus licences, physical test schema |
-| `NOTICE`, `deploy/dnsmos/NOTICE.md` | code licence, trained-weight terms, DNSMOS attribution |
+| `vaani/dsp/` | limiter, blocking matrix, NLMS, **decoupled-cadence NLMS**, features, controller, **low-delay front end and STFT** |
+| `vaani/audio_contract.py` | registered contracts, window definitions and hashes, ONNX metadata stamping |
+| `vaani/models/vaani_fe.py` | VaaniFE (all tiers, p18/p32 tilings, deep filter); `gru_fused.py` is the fused GRU kernel |
+| `vaani/enhance_low_delay.py`, `vaani/low_delay_live.py` | low-delay eval route and streaming engine |
+| `vaani/data/` | manifests, mixer v1/v2 (+ GPU render), SPL calibration, battlefield scenes, impulse synthesis, stream server |
+| `vaani/train.py`, `vaani/losses.py`, `vaani/scorer.py` | training loop, FE and hybrid losses, in-training val scorer |
+| `vaani/export.py` | streaming ONNX export (`export_fe`) with parity checks |
+| `vaani/live.py`, `vaani/backend.py`, `vaani/guards.py` | legacy 16 ms streaming runtime, step backends, runtime guards |
+| `native/vaani_ld/` | C++ low-delay runtime, benches, golden and unit tests |
+| `deploy/` | r7 graph and contract, DSP golden vectors, resampler coefficients, RIR bank records, Pi setup |
+| `configs/retraining/` | r5–r8 run configs, `R8_RUNBOOK.md`, `r8_ld_ablations/`, `r8_final_*.yaml` |
+| `configs/arch/`, `configs/data/` | VaaniFE tier architectures; corpus registry, licences, held-out groups |
+| `results_r2/` | r7 results, defence, real-recording proxies, field acceptance, `r8/` gates and reference tables, `r8_ld/` Gate 0a and native build records |
+| `scripts/` | fetchers, box setup, queues and launchers, gates (`data_gates.py`, `graph_gate.py`, `ld_gate0.py`, `field_accept.py`), timing, scoring, live capture |
+| `docs/` | requirements traceability, corpus licences, physical test schema, acoustic latency procedure |
+
+---
+
+## Licence
+
+Source code is released under the [MIT License](LICENSE). The licence does **not** extend to
+trained weights (every checkpoint and exported graph, including `deploy/r7/cascade.onnx`). They are
+provided for research and evaluation only, because several training corpora carry non-commercial or
+unresolved redistribution terms. See [`NOTICE`](NOTICE) for the per-corpus terms and
+[`docs/licences.md`](docs/licences.md) for the generated table. The DNSMOS P.835 model in
+`deploy/dnsmos/` is Microsoft's, used for evaluation only
+([`deploy/dnsmos/NOTICE.md`](deploy/dnsmos/NOTICE.md)).
