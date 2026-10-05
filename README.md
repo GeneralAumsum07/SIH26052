@@ -1,6 +1,6 @@
 <div align="center">
 
-# VAANI — low-delay, dual-microphone speech enhancement
+# VAANI — Dual-Mic AI/ML enabled Speech Enhancement in Real Time
 
 **SIH 2026 · Problem SIH26052 · DRDO**<br/>
 Real-time speech enhancement for a two-microphone headset under stationary, changing and impulsive
@@ -230,11 +230,12 @@ absent and ramps back in over 192 ms when it returns.
 ### Training objective
 
 All r8 runs use the FE loss (`loss: fe`) computed **after re-synthesis**, through the real
-low-delay synthesis window. It has three terms:
+low-delay synthesis window (`vaani/losses.py::FELoss`):
 
-- a compressed-magnitude term;
-- an asymmetric over-suppression term (κ = 3) that charges removing speech three times more than
+- compressed-magnitude and complex-part terms on power-law compressed spectra (p = 0.3);
+- an asymmetric over-suppression weight (κ = 3) that charges removing speech three times more than
   leaving noise;
+- a waveform L1 term and a clamped absolute-SNR term;
 - a differentiable PESQ term (`torch_pesq`, weight 0.001).
 
 Training uses EMA weights (decay 0.999), and checkpoints are chosen by a composite val metric.
@@ -268,7 +269,7 @@ Training uses EMA weights (decay 0.999), and checkpoints are chosen by a composi
 | **Flagship: Arm B + `n_hat` (`ld_b_nhat_s{0,1}`)** | **configured, not trained** | it was queued as a P4 pilot and never reached. TBD: the full run and its comparison `arm_b_nhat_vs_arm_b` in `scripts/compare_r8_ld.py` |
 | Arm B Mini, `inputs: pr` | **trained**, 200,000 steps (7.3 h) | `r8_runs_final/r8_ld_fe_mini_armb/` (local only), 40,302 deploy parameters |
 | Arm A Mini, C0 Mini (`pr`) | **trained**, 200,000 steps each | `r8_runs_final/r8_ld_fe_mini/`, `r8_runs_final/r8_fe_mini/` (local only) |
-| Final Mid and Large+ on Arm B (`pr`) | **launched** 2026-10-05 on 2× RTX 5090 (`scripts/final_launch.sh`) | TBD: outcome not yet recorded in the repo |
+| Final Mid and Large+ on Arm B (`pr`) | **configured, not trained** | the 2026-10-05 rental was stopped before its setup finished. TBD (Rachit): their step budget on the laptop queue (`configs/retraining/laptop_queue.txt`) |
 | Native C++ runtime (`native/vaani_ld`) | **built**, golden-vector parity, arm64 cross-build under qemu | `results_r2/r8_ld/native/arm64_build.json`. **No NLMS stage yet** |
 | Pi 5 timing of the Arm B tier graphs | **measured** 2026-10-05 (untrained `pr` graphs, native runtime) | board terminal output, not committed. TBD: commit `pi_results/tiers_armb/*.json` |
 | Gate 0a (latency eligibility) | **pending_board** | `results_r2/r8_ld/gate0/README.md` |
@@ -286,9 +287,9 @@ The tiers share the contract, the front end and the step-graph rules. Only width
 | Tier | C1/C2/F/K/L | Parameters (Arm B graph) | Pi 5 mean / p99 / max (ms per 8 ms hop) | Intended board | Trained |
 |---|---|---:|---|---|---|
 | **Mini** | 32/24/16/2/1 | 29,597 (native tiling) · 40,302 (p32, trained) · 44,782 entries with `n_hat` | **0.50** / 0.53 / 0.70 | Raspberry Pi 5 | `pr`: yes · `pr_nhat`: no |
-| **Mid** | 48/40/32/3/2 | 107,934 · 123,910 (p32, final run) | **1.05** / 1.11 / 1.38 | Jetson AGX Orin | final run launched |
+| **Mid** | 48/40/32/3/2 | 107,934 · 123,910 (p32, final run) | **1.05** / 1.11 / 1.38 | Jetson AGX Orin | no (final run configured) |
 | **Large** | 80/64/48/4/2 | 322,519 | **2.32** / 2.48 / 5.37 | Jetson AGX Orin | no |
-| **Large+** | 96/72/48/4/3 | 500,367 · 533,463 (p32, final run) | **3.04** / 3.29 / 7.30 | Jetson AGX Orin | final run launched |
+| **Large+** | 96/72/48/4/3 | 500,367 · 533,463 (p32, final run) | **3.04** / 3.29 / 7.30 | Jetson AGX Orin | no (final run configured) |
 
 - **Parameter counts** are ONNX initializer entries of the folded step graphs in
   `r8_runs_final/pi_bundle/tiers_armb/` and the Arm B Mini export (`export_report.json`). The
