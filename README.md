@@ -314,6 +314,7 @@ Training uses EMA weights (decay 0.999), and checkpoints are chosen by a composi
 | Native C++ runtime (`native/vaani_ld`) | **built**, golden-vector parity, arm64 cross-build under qemu | `results_r2/r8_ld/native/arm64_build.json`. **No NLMS stage yet** |
 | Pi 5 timing of the Arm B tier graphs | **measured** 2026-10-05 (untrained `pr` graphs, native runtime) | board terminal output, not committed. TBD: commit `pi_results/tiers_armb/*.json` |
 | Gate 0a (latency eligibility) | **pending_board** | `results_r2/r8_ld/gate0/README.md` |
+| Live prototype demo | **demonstrated** 2026-10-05 | [video](https://www.youtube.com/watch?v=fU0WlnBnaoY). TBD (Rachit): which model and contract ran, on which board, with which microphones (one or both) and which output device |
 | Acoustic mic-to-speaker delay | **not measured** | procedure in [`docs/acoustic_latency.md`](docs/acoustic_latency.md) |
 | Jetson AGX Orin / TensorRT | **not measured**, no hardware access | — |
 
@@ -506,9 +507,10 @@ as shown above. This is why VAANI-LD tests `n_hat` as a controlled ablation (`ld
 - **Waiting on the unscored r8 test set:** drone, NOISEX-92, EARS loud speech and the windy-ridge
   scene are held out for it, so no score covers them yet.
 - **Latency is not measured end to end.** See [Latency budget](#latency-budget).
-- **Hardware.** There is no Orin access, no radio or PTT path, no power measurement, and no physical
-  microphone prototype result. The enhanced output is the wearer's own voice, so the live loop plays
-  nothing unless `--output-route` says where.
+- **Hardware.** There is no Orin access, no radio or PTT path, no power measurement, and no scored
+  physical recording; the live prototype demo ([video](https://www.youtube.com/watch?v=fU0WlnBnaoY))
+  is qualitative. The enhanced output is the wearer's own voice, so the live loop plays nothing
+  unless `--output-route` says where.
 - **Licences.** Several training corpora are non-commercial or have unresolved terms; see
   [Licence](#licence).
 
