@@ -4,7 +4,7 @@
 
 **SIH 2026 · Problem SIH26052 · DRDO**<br/>
 Real-time speech enhancement for a two-microphone headset under stationary, changing and impulsive
-(gunfire, blast) noise. Adaptive NLMS filtering feeds a small streaming neural network, with
+(gunfire, blast) noise. An adaptive filter feeds a small streaming neural network, with
 **10 ms of algorithmic delay**.
 
 [![SIH: 2026](https://img.shields.io/badge/SIH-2026-2E7D32)](https://sih.gov.in/)
@@ -29,14 +29,13 @@ Real-time speech enhancement for a two-microphone headset under stationary, chan
 
 ---
 
-## The flagship: VAANI-LD with NLMS
+## The flagship: VAANI-LD
 
 VAANI-LD is the r8 low-delay pipeline. It combines three parts:
 
-- a classical adaptive front end: limiter, blocking matrix and a **decoupled-cadence NLMS** that
-  estimates the noise from the reference mic;
-- a streaming **VaaniFE** network that reads the primary, the reference and the NLMS noise
-  estimate `n_hat`;
+- a classical adaptive front end: limiter, blocking matrix and an adaptive filter that estimates
+  the noise `n_hat` from the reference mic;
+- a streaming **VaaniFE** network that reads the primary, the reference and `n_hat`;
 - an asymmetric STFT: a 32 ms analysis window, an 8 ms hop and a 10 ms synthesis support. The
   10 ms support is the whole algorithmic delay.
 
@@ -45,13 +44,12 @@ This is the system the SIH submission proposes. In config terms it is the **Arm 
 
 > [!IMPORTANT]
 > **Status.** The flagship *as configured* (with `n_hat`) has **not been trained yet**. Every
-> component is built and tested: the NLMS, the front end, the network, export, the Python streaming
+> component is built and tested, from the front end and network to export, the Python streaming
 > engine and the evaluation route. The same contract **without** `n_hat` (`inputs: pr`) **is**
 > trained: the Arm B Mini, 200,000 steps, and it ran live on a Raspberry Pi 5 with two ICS-43434
 > microphones in the [prototype demo](https://www.youtube.com/watch?v=fU0WlnBnaoY). The Arm B tier
-> graphs are timed on the Pi 5.
-> The native C++ runtime does not have an NLMS stage yet. Every result below says which variant
-> it comes from. See [Status](#status-what-is-built-trained-and-measured).
+> graphs are timed on the Pi 5. Every result below says which variant it comes from. See
+> [Status](#status-what-is-built-trained-and-measured).
 
 | | |
 |---|---|
@@ -317,7 +315,7 @@ Training uses EMA weights (decay 0.999), and checkpoints are chosen by a composi
 | Arm B Mini, `inputs: pr` | **trained**, 200,000 steps (7.3 h) | `r8_runs_final/r8_ld_fe_mini_armb/` (local only), 40,302 deploy parameters |
 | Arm A Mini, C0 Mini (`pr`) | **trained**, 200,000 steps each | `r8_runs_final/r8_ld_fe_mini/`, `r8_runs_final/r8_fe_mini/` (local only) |
 | Final Mid and Large+ on Arm B (`pr`) | **configured, not trained** | the 2026-10-05 rental was stopped before its setup finished. TBD (Rachit): their step budget on the laptop queue (`configs/retraining/laptop_queue.txt`) |
-| Native C++ runtime (`native/vaani_ld`) | **built**, golden-vector parity, arm64 cross-build under qemu | `results_r2/r8_ld/native/arm64_build.json`. **No NLMS stage yet** |
+| Native C++ runtime (`native/vaani_ld`) | **built**, golden-vector parity, arm64 cross-build under qemu | `results_r2/r8_ld/native/arm64_build.json`. No `n_hat` stage yet |
 | Pi 5 timing of the Arm B tier graphs | **measured** 2026-10-05 (untrained `pr` graphs, native runtime) | board terminal output, not committed. TBD: commit `pi_results/tiers_armb/*.json` |
 | Gate 0a (latency eligibility) | **pending_board** | `results_r2/r8_ld/gate0/README.md` |
 | Live prototype demo | **demonstrated** 2026-10-05 | [video](https://www.youtube.com/watch?v=fU0WlnBnaoY): the trained Arm B Mini (`inputs: pr`, contract `vaanife_ld_asym512_h128_s160_v1`) on a Raspberry Pi 5, two ICS-43434 microphones, output to a Bluetooth speaker. Qualitative; nothing scored |
@@ -500,10 +498,9 @@ as shown above. This is why VAANI-LD tests `n_hat` as a controlled ablation (`ld
 
 ## Known limitations
 
-- **The flagship is untrained.** No VAANI-LD-with-NLMS result exists yet, and the gain from `n_hat`
-  on the low-delay path is unmeasured. On r7, the NLMS contribution was not measurable (above).
-- **The native runtime has no NLMS stage.** On a board today, `pr_nhat` runs only through the Python
-  engine (`LowDelayStreamEngine` with ONNX Runtime and numba). Porting the decoupled NLMS to
+- **The flagship is untrained.** The gain from `n_hat` on the low-delay path is unmeasured (on r7
+  it was not measurable, above). On a board today, `pr_nhat` runs only through the Python engine
+  (`LowDelayStreamEngine` with ONNX Runtime and numba); porting the `n_hat` stage to
   `native/vaani_ld` is TBD.
 - **No trained model meets all three targets on val.** The r8 Minis reach about 10 dB SNR_out,
   0.84 STOI and 1.8 PESQ. r7 reaches 14.9 dB, 0.917 and 2.46 on eval_r2 nominal.
@@ -746,7 +743,7 @@ python scripts/score_pi_outputs.py pi_results/audio --clips r8_runs_final/pi_bun
 | r5–r6 | width, SNR curriculum and refiner sweeps; 256-epoch backbone | r6_e256 |
 | **r7** | warm restart + residual refiner, 52,747 parameters, 32 ms | shipping control; strong with a clean reference, fails when the reference hears the talker |
 | r8 C0 | VaaniFE Mini, mixer v2, reference faults and validity, FE loss, 32 ms | robust to reference faults; −3.7 dB on a clean reference vs r7 |
-| **r8-LD** | asymmetric STFT (Arm A 8 ms, **Arm B 10 ms**), native C++ runtime, decoupled NLMS, four tiers | Arm B Mini trained; tiers timed on the Pi; **NLMS arm and larger tiers are the next runs** |
+| **r8-LD** | asymmetric STFT (Arm A 8 ms, **Arm B 10 ms**), native C++ runtime, decoupled NLMS, four tiers | Arm B Mini trained; tiers timed on the Pi; **the `n_hat` arm and larger tiers are the next runs** |
 
 ---
 
@@ -754,7 +751,7 @@ python scripts/score_pi_outputs.py pi_results/audio --clips r8_runs_final/pi_bun
 
 | Path | Contents |
 |---|---|
-| `vaani/dsp/` | limiter, blocking matrix, NLMS, **decoupled-cadence NLMS**, features, controller, **low-delay front end and STFT** |
+| `vaani/dsp/` | limiter, blocking matrix, NLMS (legacy and decoupled-cadence), features, controller, **low-delay front end and STFT** |
 | `vaani/audio_contract.py` | registered contracts, window definitions and hashes, ONNX metadata stamping |
 | `vaani/models/vaani_fe.py` | VaaniFE (all tiers, p18/p32 tilings, deep filter); `gru_fused.py` is the fused GRU kernel |
 | `vaani/enhance_low_delay.py`, `vaani/low_delay_live.py` | low-delay eval route and streaming engine |
